@@ -45,7 +45,9 @@ chaquopy {
     defaultConfig {
         version = "3.11"
         pip {
-            install("tinytuya") // Chaquopy downloads and bundles it for you!
+            // Keep the Python/Android boundary reproducible. Upgrade deliberately
+            // after running the bridge and real-device compatibility checks.
+            install("tinytuya==1.20.0")
         }
     }
 }

@@ -5,6 +5,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.prfd.tinytuya.data.lan.LanDiscoveredDevice
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LocalDataPoint
+import com.prfd.tinytuya.data.lan.LocalDataPointKind
+import com.prfd.tinytuya.data.lan.LocalPollDeviceState
+import com.prfd.tinytuya.data.lan.LocalPollResult
+import com.prfd.tinytuya.data.lan.LocalPolledDevice
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -97,7 +102,7 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         val rawBytes = store.catalogFile.readBytes()
         val loaded = store.load()
 
-        assertEquals(2, merged.schemaVersion)
+        assertEquals(3, merged.schemaVersion)
         assertEquals(FIXED_IMPORT_TIME, merged.lastDiscoveryAtEpochMillis)
         assertEquals(2, merged.lanDevices.size)
         assertFalse(rawBytes.containsSequence(LAN_IP.toByteArray()))
@@ -107,6 +112,43 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
             UNMATCHED_DEVICE_ID,
             loaded?.lanDevices?.first { it.id == UNMATCHED_DEVICE_ID }?.id,
         )
+    }
+
+    @Test
+    fun localStatusIsMergedAndKeptInsideCiphertext() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+        store.mergeLanDiscovery(sampleDiscovery())
+
+        val merged = store.mergeLocalPoll(sampleLocalPoll())
+        val rawBytes = store.catalogFile.readBytes()
+        val loaded = store.load()
+
+        assertEquals(3, merged.schemaVersion)
+        assertEquals(FIXED_IMPORT_TIME, merged.lastLocalPollAtEpochMillis)
+        assertEquals(LocalPollDeviceState.RESPONDED, merged.localStatus.single().state)
+        assertFalse(rawBytes.containsSequence(SENSITIVE_DP_VALUE.toByteArray()))
+        assertEquals(
+            SENSITIVE_DP_VALUE,
+            loaded?.localStatus?.single()?.dataPoints?.single()?.value,
+        )
+    }
+
+    @Test
+    fun localStatusRejectsDeviceWhichWasNotFreshlyDiscovered() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+        store.mergeLanDiscovery(sampleDiscovery())
+        val invalid = sampleLocalPoll().copy(
+            devices = listOf(
+                sampleLocalPoll().devices.single().copy(id = UNMATCHED_DEVICE_ID)
+            ),
+        )
+
+        try {
+            store.mergeLocalPoll(invalid)
+            throw AssertionError("Expected stale local status to be rejected")
+        } catch (error: DeviceCatalogStorageException) {
+            assertEquals("CATALOG_INVALID", error.code)
+        }
     }
 
     @Test
@@ -229,6 +271,31 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         ),
     )
 
+    private fun sampleLocalPoll() = LocalPollResult(
+        contractVersion = 1,
+        deviceCount = 1,
+        respondedDeviceCount = 1,
+        offlineDeviceCount = 0,
+        errorDeviceCount = 0,
+        durationMillis = 48L,
+        warnings = emptyList(),
+        devices = listOf(
+            LocalPolledDevice(
+                id = DEVICE_ID,
+                state = LocalPollDeviceState.RESPONDED,
+                errorCode = "",
+                durationMillis = 48L,
+                dataPoints = listOf(
+                    LocalDataPoint(
+                        id = "1",
+                        kind = LocalDataPointKind.STRING,
+                        value = SENSITIVE_DP_VALUE,
+                    )
+                ),
+            )
+        ),
+    )
+
     private fun androidKeyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply {
         load(null)
     }
@@ -247,5 +314,6 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         const val LOCAL_KEY = "private-local-key-value"
         const val LAN_IP = "192.0.2.14"
         const val UNMATCHED_DEVICE_ID = "unmatched-device-id"
+        const val SENSITIVE_DP_VALUE = "encrypted-local-status-value"
     }
 }

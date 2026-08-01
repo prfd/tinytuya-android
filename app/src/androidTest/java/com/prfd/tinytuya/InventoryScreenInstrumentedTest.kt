@@ -8,6 +8,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
+import com.prfd.tinytuya.data.local.LocalStatusRecord
+import com.prfd.tinytuya.data.lan.LocalDataPoint
+import com.prfd.tinytuya.data.lan.LocalDataPointKind
+import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
@@ -53,7 +57,7 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(onDiscoverLan = { scanCalled = true })
 
         assertFalse(scanCalled)
-        composeRule.onNodeWithText("Scan this Wi-Fi").performClick()
+        composeRule.onNodeWithText("Scan & read status").performClick()
         composeRule.runOnIdle { assertTrue(scanCalled) }
     }
 
@@ -81,6 +85,46 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Unlinked Tuya device").assertExists()
         composeRule.onNodeWithText("Cloud key unavailable").assertExists()
         composeRule.onNodeWithText("192.168.10.21", substring = true).assertExists()
+        composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun mappedSwitchStatusIsRenderedWithoutRawSecrets() {
+        val catalog = sampleCatalog().copy(
+            schemaVersion = 3,
+            devices = listOf(
+                sampleCatalog().devices.single().copy(
+                    category = "kg",
+                    mappingJson = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}",
+                )
+            ),
+            lastDiscoveryAtEpochMillis = 9L,
+            lanDevices = listOf(lanRecord(id = "office-lamp", ip = "192.168.10.20")),
+            lastLocalPollAtEpochMillis = 10L,
+            localStatus = listOf(
+                LocalStatusRecord(
+                    id = "office-lamp",
+                    state = LocalPollDeviceState.RESPONDED,
+                    errorCode = "",
+                    durationMillis = 42L,
+                    dataPoints = listOf(
+                        LocalDataPoint(
+                            id = "1",
+                            kind = LocalDataPointKind.BOOLEAN,
+                            value = "true",
+                        )
+                    ),
+                    polledAtEpochMillis = 10L,
+                )
+            ),
+        )
+
+        setInventoryContent(catalog = catalog)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Last local response").assertExists()
+        composeRule.onNodeWithText("Power").assertExists()
+        composeRule.onNodeWithText("On").assertExists()
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
     }
 

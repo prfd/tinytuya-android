@@ -2,7 +2,11 @@ package com.prfd.tinytuya
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
+import com.prfd.tinytuya.data.lan.LanDiscoveryOutcome
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LocalPollResult
+import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.LanDeviceRecord
@@ -25,7 +29,11 @@ import org.junit.runner.RunWith
 class AppViewModelInstrumentedTest {
     @Test
     fun missingCatalogRoutesToOnboarding() = runBlocking {
-        val viewModel = AppViewModel(FakeCatalogStore(), FakeLanDiscoveryCoordinator())
+        val viewModel = AppViewModel(
+            FakeCatalogStore(),
+            FakeLanDiscoveryCoordinator(),
+            FakeLocalStatusCoordinator(),
+        )
 
         val state = withTimeout(5_000) {
             viewModel.state.first { it !is AppUiState.Loading }
@@ -40,6 +48,7 @@ class AppViewModelInstrumentedTest {
         val viewModel = AppViewModel(
             FakeCatalogStore(catalog),
             FakeLanDiscoveryCoordinator(),
+            FakeLocalStatusCoordinator(),
         )
 
         val state = withTimeout(5_000) {
@@ -54,7 +63,11 @@ class AppViewModelInstrumentedTest {
     @Test
     fun deletingLocalDataReturnsToOnboarding() = runBlocking {
         val store = FakeCatalogStore(sampleCatalog())
-        val viewModel = AppViewModel(store, FakeLanDiscoveryCoordinator())
+        val viewModel = AppViewModel(
+            store,
+            FakeLanDiscoveryCoordinator(),
+            FakeLocalStatusCoordinator(),
+        )
         withTimeout(5_000) {
             viewModel.state.first { it is AppUiState.Inventory }
         }
@@ -87,7 +100,12 @@ class AppViewModelInstrumentedTest {
             ),
         )
         val coordinator = FakeLanDiscoveryCoordinator(discovered)
-        val viewModel = AppViewModel(FakeCatalogStore(original), coordinator)
+        val localStatusCoordinator = FakeLocalStatusCoordinator(discovered)
+        val viewModel = AppViewModel(
+            FakeCatalogStore(original),
+            coordinator,
+            localStatusCoordinator,
+        )
         withTimeout(5_000) {
             viewModel.state.first { it is AppUiState.Inventory }
         }
@@ -101,6 +119,7 @@ class AppViewModelInstrumentedTest {
         } as AppUiState.Inventory
         assertEquals("192.168.10.42", state.catalog.lanDevices.single().ip)
         assertEquals(1, coordinator.callCount)
+        assertEquals(1, localStatusCoordinator.callCount)
     }
 
     private class FakeLanDiscoveryCoordinator(
@@ -108,7 +127,24 @@ class AppViewModelInstrumentedTest {
     ) : LanDiscoveryCoordinator {
         var callCount = 0
 
-        override suspend fun discover(catalog: DeviceCatalog): DeviceCatalog {
+        override suspend fun discover(catalog: DeviceCatalog): LanDiscoveryOutcome {
+            callCount += 1
+            return LanDiscoveryOutcome(
+                catalog = result ?: catalog,
+                network = NETWORK,
+            )
+        }
+    }
+
+    private class FakeLocalStatusCoordinator(
+        private val result: DeviceCatalog? = null,
+    ) : LocalStatusCoordinator {
+        var callCount = 0
+
+        override suspend fun poll(
+            catalog: DeviceCatalog,
+            network: LanNetworkContext,
+        ): DeviceCatalog {
             callCount += 1
             return result ?: catalog
         }
@@ -127,6 +163,9 @@ class AppViewModelInstrumentedTest {
         override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
             error("LAN replacement is not used by this app-routing test.")
 
+        override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
+            error("Local status is not used by this app-routing test.")
+
         override suspend fun deleteAll() {
             deleted = true
             catalog = null
@@ -134,6 +173,13 @@ class AppViewModelInstrumentedTest {
     }
 
     private companion object {
+        val NETWORK = LanNetworkContext(
+            interfaceName = "wlan0",
+            localIpv4 = "192.168.10.5",
+            prefixLength = 24,
+            broadcastIpv4 = "192.168.10.255",
+        )
+
         fun sampleCatalog() = DeviceCatalog(
             schemaVersion = 1,
             importedAtEpochMillis = 1L,

@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
+import com.prfd.tinytuya.data.local.LocalStatusRecord
+import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
@@ -75,7 +77,8 @@ fun InventoryScreen(
                 record.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
         }
     }
-    val isScanning = discovery is LanDiscoveryUiState.Scanning
+    val isBusy = discovery is LanDiscoveryUiState.Scanning ||
+        discovery is LanDiscoveryUiState.ReadingStatus
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -125,7 +128,10 @@ fun InventoryScreen(
                     InventoryDeviceCard(
                         device = device,
                         lastDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis,
+                        lastLocalPollAtEpochMillis = catalog.lastLocalPollAtEpochMillis,
                         lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
+                        localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
+                        discovery = discovery,
                     )
                 }
                 if (unmatchedLanDevices.isNotEmpty()) {
@@ -148,7 +154,7 @@ fun InventoryScreen(
                 }
                 item {
                     DataControls(
-                        enabled = !isScanning,
+                        enabled = !isBusy,
                         onImportFromCloud = onImportFromCloud,
                         onDeleteAllLocalData = { confirmDelete = true },
                     )
@@ -291,10 +297,22 @@ private fun LanDiscoveryCard(
                 .format(Date(timestamp))
         }
     }
+    val lastStatusRead = remember(catalog.lastLocalPollAtEpochMillis) {
+        catalog.lastLocalPollAtEpochMillis?.let { timestamp ->
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(timestamp))
+        }
+    }
     val currentDeviceCount = catalog.lanDevices.count {
         it.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
     }
+    val currentResponseCount = catalog.localStatus.count { status ->
+        status.state == LocalPollDeviceState.RESPONDED &&
+            status.polledAtEpochMillis >= (catalog.lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+    }
     val isScanning = discovery is LanDiscoveryUiState.Scanning
+    val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
+    val isBusy = isScanning || isReadingStatus
     val error = discovery as? LanDiscoveryUiState.Error
 
     OutlinedCard(
@@ -312,7 +330,7 @@ private fun LanDiscoveryCard(
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 ) {
                     Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-                        if (isScanning) {
+                        if (isBusy) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(22.dp),
                                 strokeWidth = 2.5.dp,
@@ -327,7 +345,12 @@ private fun LanDiscoveryCard(
                     Text(
                         text = when {
                             isScanning -> "Listening for Tuya devices"
+                            isReadingStatus -> "Reading local device status"
                             error != null -> lanErrorTitle(error.code)
+                            lastStatusRead != null && currentDeviceCount == 1 ->
+                                "1 device found · $currentResponseCount answered"
+                            lastStatusRead != null ->
+                                "$currentDeviceCount devices found · $currentResponseCount answered"
                             lastScan != null && currentDeviceCount == 1 ->
                                 "1 device heard on the LAN"
                             lastScan != null -> "$currentDeviceCount devices heard on the LAN"
@@ -339,7 +362,11 @@ private fun LanDiscoveryCard(
                         text = when {
                             isScanning ->
                                 "Listening on UDP 6666, 6667, and 7000 for up to six seconds."
+                            isReadingStatus ->
+                                "Connecting directly over TCP 6668. Tuya Cloud is not contacted."
                             error != null -> error.message
+                            lastStatusRead != null ->
+                                "Last local refresh $lastStatusRead. Discovery and status stayed on this Wi-Fi."
                             lastScan != null ->
                                 "Last scan $lastScan. Only local broadcasts were used."
                             else ->
@@ -365,14 +392,14 @@ private fun LanDiscoveryCard(
             }
             OutlinedButton(
                 onClick = onDiscoverLan,
-                enabled = !isScanning,
+                enabled = !isBusy,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp)
                     .height(50.dp)
                     .testTag("lan_scan_button"),
             ) {
-                Text(if (lastScan == null) "Scan this Wi-Fi" else "Scan again")
+                Text(if (lastScan == null) "Scan & read status" else "Refresh local devices")
             }
         }
     }
@@ -382,11 +409,19 @@ private fun LanDiscoveryCard(
 private fun InventoryDeviceCard(
     device: CloudImportedDevice,
     lastDiscoveryAtEpochMillis: Long?,
+    lastLocalPollAtEpochMillis: Long?,
     lanRecord: LanDeviceRecord?,
+    localStatus: LocalStatusRecord?,
+    discovery: LanDiscoveryUiState,
 ) {
+    val isOnCurrentLan = lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
+    val isCurrentStatus = isOnCurrentLan &&
+        localStatus != null &&
+        localStatus.polledAtEpochMillis >= (lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE) &&
+        localStatus.polledAtEpochMillis == lastLocalPollAtEpochMillis
     val lanStatus = when {
         lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
-        lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis -> "On local network" to true
+        isOnCurrentLan -> "On local network" to true
         else -> "Not found in last scan" to false
     }
     OutlinedCard(
@@ -434,6 +469,121 @@ private fun InventoryDeviceCard(
                     positive = !device.localKey.isBlank,
                 )
                 StatusPill(text = lanStatus.first, positive = lanStatus.second)
+            }
+            LocalStatusPanel(
+                device = device,
+                status = localStatus,
+                isCurrentStatus = isCurrentStatus,
+                isOnCurrentLan = isOnCurrentLan,
+                isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LocalStatusPanel(
+    device: CloudImportedDevice,
+    status: LocalStatusRecord?,
+    isCurrentStatus: Boolean,
+    isOnCurrentLan: Boolean,
+    isReadingStatus: Boolean,
+) {
+    if (!isOnCurrentLan) return
+    val updatedAt = remember(status?.polledAtEpochMillis) {
+        status?.polledAtEpochMillis?.let { timestamp ->
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(timestamp))
+        }
+    }
+    val presentedDataPoints = remember(device.mappingJson, status?.dataPoints) {
+        status?.let { presentLocalDataPoints(device, it.dataPoints) }.orEmpty()
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                text = when {
+                    isReadingStatus -> "Reading status…"
+                    !isCurrentStatus -> "Local status not read yet"
+                    status?.state == LocalPollDeviceState.RESPONDED -> "Last local response"
+                    status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
+                    else -> "Status could not be decoded"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isCurrentStatus && status?.state == LocalPollDeviceState.RESPONDED) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            when {
+                isReadingStatus -> Text(
+                    text = "Using the encrypted local key directly on this Wi-Fi.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                !isCurrentStatus -> Text(
+                    text = "Refresh local devices to read its current data points.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                status?.state == LocalPollDeviceState.RESPONDED -> {
+                    if (presentedDataPoints.isEmpty()) {
+                        Text(
+                            text = "The device answered but did not return readable data points.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    } else {
+                        presentedDataPoints.forEach { dataPoint ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 7.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = dataPoint.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = dataPoint.value,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                    updatedAt?.let {
+                        Text(
+                            text = "Read locally $it · ${status.durationMillis} ms",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+                }
+                else -> Text(
+                    text = localStatusMessage(status?.errorCode.orEmpty()),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
     }
@@ -561,9 +711,22 @@ private fun lanErrorTitle(code: String): String = when (code) {
     "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
     "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"
     "LAN_NETWORK_UNAVAILABLE" -> "Wi-Fi changed during the scan"
+    "LOCAL_POLL_FAILED", "LOCAL_POLL_INPUT_INVALID", "LOCAL_POLL_NETWORK_INVALID",
+    "LOCAL_POLL_DEVICES_INVALID" -> "Local status could not be read"
     "CATALOG_MISSING", "CATALOG_WRITE_FAILED", "CATALOG_ENCRYPT_FAILED" ->
         "Discovery could not be saved"
     else -> "Local discovery did not complete"
+}
+
+private fun localStatusMessage(code: String): String = when (code) {
+    "LOCAL_DEVICE_OFFLINE" -> "The device was found but did not accept a local connection."
+    "LOCAL_DEVICE_TIMEOUT", "LOCAL_DEVICE_NO_RESPONSE" ->
+        "The device was found but did not answer before the local timeout."
+    "LOCAL_KEY_OR_VERSION_INVALID" ->
+        "The saved local key or protocol version was rejected. A cloud sync may refresh it."
+    "LOCAL_PROTOCOL_ERROR" ->
+        "The response could not be decoded safely with the detected Tuya protocol."
+    else -> "The local status request did not complete safely."
 }
 
 private fun deviceDescription(device: CloudImportedDevice): String =

@@ -5,6 +5,10 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LocalDataPoint
+import com.prfd.tinytuya.data.lan.LocalDataPointKind
+import com.prfd.tinytuya.data.lan.LocalPollDeviceState
+import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -32,6 +36,8 @@ data class DeviceCatalog(
     val devices: List<CloudImportedDevice>,
     val lastDiscoveryAtEpochMillis: Long? = null,
     val lanDevices: List<LanDeviceRecord> = emptyList(),
+    val lastLocalPollAtEpochMillis: Long? = null,
+    val localStatus: List<LocalStatusRecord> = emptyList(),
 )
 
 data class LanDeviceRecord(
@@ -44,6 +50,20 @@ data class LanDeviceRecord(
     val lastSeenAtEpochMillis: Long,
 )
 
+data class LocalStatusRecord(
+    val id: String,
+    val state: LocalPollDeviceState,
+    val errorCode: String,
+    val durationMillis: Long,
+    val dataPoints: List<LocalDataPoint>,
+    val polledAtEpochMillis: Long,
+) {
+    override fun toString(): String =
+        "LocalStatusRecord(id=[REDACTED], state=$state, errorCode=$errorCode, " +
+            "durationMillis=$durationMillis, dataPointCount=${dataPoints.size}, " +
+            "polledAtEpochMillis=$polledAtEpochMillis)"
+}
+
 class DeviceCatalogStorageException(
     val code: String,
     message: String,
@@ -55,6 +75,8 @@ interface DeviceCatalogStore {
     suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog
 
     suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog
+
+    suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog
 
     suspend fun deleteAll()
 }
@@ -86,6 +108,7 @@ class EncryptedDeviceCatalogStore internal constructor(
             mutex.withLock {
                 validateDevices(result.devices)
                 val previous = loadLocked()
+                val importedIds = result.devices.mapTo(mutableSetOf()) { it.id }
                 val catalog = DeviceCatalog(
                     schemaVersion = CATALOG_SCHEMA_VERSION,
                     importedAtEpochMillis = currentTimeMillis(),
@@ -93,6 +116,60 @@ class EncryptedDeviceCatalogStore internal constructor(
                     devices = result.devices,
                     lastDiscoveryAtEpochMillis = previous?.lastDiscoveryAtEpochMillis,
                     lanDevices = previous?.lanDevices.orEmpty(),
+                    lastLocalPollAtEpochMillis = previous?.lastLocalPollAtEpochMillis,
+                    localStatus = previous?.localStatus.orEmpty().filter { it.id in importedIds },
+                )
+                writeCatalogLocked(catalog)
+                catalog
+            }
+        }
+
+    override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                validateLocalPollResult(result)
+                val previous = loadLocked() ?: throw storageError(
+                    code = "CATALOG_MISSING",
+                    message = "Import devices before saving local status.",
+                )
+                val lastDiscoveryAt = previous.lastDiscoveryAtEpochMillis ?: throw storageError(
+                    code = "CATALOG_INVALID",
+                    message = "Discover devices before saving local status.",
+                )
+                val knownIds = previous.devices.mapTo(mutableSetOf()) { it.id }
+                val currentLanIds = previous.lanDevices
+                    .filter { it.lastSeenAtEpochMillis == lastDiscoveryAt && it.id in knownIds }
+                    .mapTo(mutableSetOf()) { it.id }
+                if (result.devices.any { it.id !in currentLanIds }) {
+                    throw storageError(
+                        code = "CATALOG_INVALID",
+                        message = "Local status was returned for a stale device address.",
+                    )
+                }
+
+                val previousPoll = previous.lastLocalPollAtEpochMillis
+                val polledAt = maxOf(
+                    currentTimeMillis(),
+                    lastDiscoveryAt,
+                    previousPoll?.plus(1) ?: 0L,
+                )
+                val polledRecords = result.devices.associate { device ->
+                    device.id to LocalStatusRecord(
+                        id = device.id,
+                        state = device.state,
+                        errorCode = device.errorCode,
+                        durationMillis = device.durationMillis,
+                        dataPoints = device.dataPoints,
+                        polledAtEpochMillis = polledAt,
+                    )
+                }
+                val retainedRecords = previous.localStatus.filter { record ->
+                    record.id in knownIds && record.id !in polledRecords
+                }
+                val catalog = previous.copy(
+                    schemaVersion = CATALOG_SCHEMA_VERSION,
+                    lastLocalPollAtEpochMillis = polledAt,
+                    localStatus = (polledRecords.values + retainedRecords).sortedBy { it.id },
                 )
                 writeCatalogLocked(catalog)
                 catalog
@@ -377,6 +454,13 @@ class EncryptedDeviceCatalogStore internal constructor(
                 catalog.lanDevices.forEach { device -> put(device.toJson()) }
             }
         )
+        catalog.lastLocalPollAtEpochMillis?.let { put("last_local_poll_at_epoch_ms", it) }
+        put(
+            "local_status",
+            JSONArray().apply {
+                catalog.localStatus.forEach { status -> put(status.toJson()) }
+            }
+        )
     }.toString()
 
     private fun decodeCatalog(json: String): DeviceCatalog {
@@ -423,6 +507,20 @@ class EncryptedDeviceCatalogStore internal constructor(
                     add(lanDevicesJson.getJSONObject(index).toLanDevice())
                 }
             }
+            val lastLocalPollAt = root.optLong("last_local_poll_at_epoch_ms", 0L)
+                .takeIf { it > 0L }
+            val localStatusJson = root.optJSONArray("local_status") ?: JSONArray()
+            if (localStatusJson.length() > MAX_LOCAL_STATUS_COUNT) {
+                throw storageError(
+                    code = "CATALOG_INVALID",
+                    message = "The saved catalog contains too many local status records.",
+                )
+            }
+            val localStatus = buildList(localStatusJson.length()) {
+                for (index in 0 until localStatusJson.length()) {
+                    add(localStatusJson.getJSONObject(index).toLocalStatus())
+                }
+            }
             val catalog = DeviceCatalog(
                 schemaVersion = schemaVersion,
                 importedAtEpochMillis = root.getLong("imported_at_epoch_ms"),
@@ -430,6 +528,8 @@ class EncryptedDeviceCatalogStore internal constructor(
                 devices = devices,
                 lastDiscoveryAtEpochMillis = lastDiscoveryAt,
                 lanDevices = lanDevices,
+                lastLocalPollAtEpochMillis = lastLocalPollAt,
+                localStatus = localStatus,
             )
             validateCatalog(catalog)
             return catalog
@@ -471,6 +571,28 @@ class EncryptedDeviceCatalogStore internal constructor(
         put("last_seen_at_epoch_ms", lastSeenAtEpochMillis)
     }
 
+    private fun LocalStatusRecord.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("state", state.wireValue)
+        put("error_code", errorCode)
+        put("duration_ms", durationMillis)
+        put("polled_at_epoch_ms", polledAtEpochMillis)
+        put(
+            "data_points",
+            JSONArray().apply {
+                dataPoints.forEach { dataPoint ->
+                    put(
+                        JSONObject().apply {
+                            put("id", dataPoint.id)
+                            put("kind", dataPoint.kind.wireValue)
+                            put("value", dataPoint.value)
+                        }
+                    )
+                }
+            }
+        )
+    }
+
     private fun JSONObject.toDevice(): CloudImportedDevice = CloudImportedDevice(
         id = getString("id"),
         name = getString("name"),
@@ -499,6 +621,48 @@ class EncryptedDeviceCatalogStore internal constructor(
         lastSeenAtEpochMillis = getLong("last_seen_at_epoch_ms"),
     )
 
+    private fun JSONObject.toLocalStatus(): LocalStatusRecord {
+        val stateCode = getString("state")
+        val state = LocalPollDeviceState.entries.firstOrNull { it.wireValue == stateCode }
+            ?: throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The saved catalog contains an unknown local status state.",
+            )
+        val dataPointsJson = getJSONArray("data_points")
+        if (dataPointsJson.length() > MAX_LOCAL_DATA_POINT_COUNT) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The saved catalog contains too many local data points.",
+            )
+        }
+        val dataPoints = buildList(dataPointsJson.length()) {
+            for (index in 0 until dataPointsJson.length()) {
+                val dataPoint = dataPointsJson.getJSONObject(index)
+                val kindCode = dataPoint.getString("kind")
+                val kind = LocalDataPointKind.entries.firstOrNull { it.wireValue == kindCode }
+                    ?: throw storageError(
+                        code = "CATALOG_INVALID",
+                        message = "The saved catalog contains an unknown data point type.",
+                    )
+                add(
+                    LocalDataPoint(
+                        id = dataPoint.getString("id"),
+                        kind = kind,
+                        value = dataPoint.getString("value"),
+                    )
+                )
+            }
+        }
+        return LocalStatusRecord(
+            id = getString("id"),
+            state = state,
+            errorCode = getString("error_code"),
+            durationMillis = getLong("duration_ms"),
+            dataPoints = dataPoints,
+            polledAtEpochMillis = getLong("polled_at_epoch_ms"),
+        )
+    }
+
     private fun validateDevices(devices: List<CloudImportedDevice>) {
         if (devices.size > MAX_DEVICE_COUNT ||
             devices.any { it.id.isBlank() } ||
@@ -513,6 +677,7 @@ class EncryptedDeviceCatalogStore internal constructor(
 
     private fun validateCatalog(catalog: DeviceCatalog) {
         validateDevices(catalog.devices)
+        val knownIds = catalog.devices.mapTo(mutableSetOf()) { it.id }
         if (
             catalog.schemaVersion !in MIN_SUPPORTED_CATALOG_SCHEMA_VERSION..CATALOG_SCHEMA_VERSION ||
             catalog.importedAtEpochMillis <= 0L ||
@@ -530,14 +695,86 @@ class EncryptedDeviceCatalogStore internal constructor(
                     record.origin != "broadcast" ||
                     record.lastSeenAtEpochMillis <= 0L ||
                     record.lastSeenAtEpochMillis > (catalog.lastDiscoveryAtEpochMillis ?: 0L)
+            } ||
+            catalog.localStatus.size > MAX_LOCAL_STATUS_COUNT ||
+            catalog.localStatus.map { it.id }.toSet().size != catalog.localStatus.size ||
+            (catalog.lastLocalPollAtEpochMillis == null && catalog.localStatus.isNotEmpty()) ||
+            catalog.lastLocalPollAtEpochMillis?.let { it <= 0L || it == Long.MAX_VALUE } == true ||
+            catalog.localStatus.any { record ->
+                record.id !in knownIds || invalidLocalStatusRecord(
+                    record = record,
+                    lastLocalPollAtEpochMillis = catalog.lastLocalPollAtEpochMillis ?: 0L,
+                )
             }
         ) {
             throw storageError(
                 code = "CATALOG_INVALID",
-                message = "The device catalog contains invalid local discovery data.",
+                message = "The device catalog contains invalid local data.",
             )
         }
     }
+
+    private fun validateLocalPollResult(result: LocalPollResult) {
+        if (
+            result.deviceCount != result.devices.size ||
+            result.deviceCount !in 1..MAX_LOCAL_STATUS_COUNT ||
+            minOf(
+                result.respondedDeviceCount,
+                result.offlineDeviceCount,
+                result.errorDeviceCount,
+            ) < 0 ||
+            result.respondedDeviceCount + result.offlineDeviceCount + result.errorDeviceCount !=
+                result.deviceCount ||
+            result.respondedDeviceCount !=
+                result.devices.count { it.state == LocalPollDeviceState.RESPONDED } ||
+            result.offlineDeviceCount !=
+                result.devices.count { it.state == LocalPollDeviceState.OFFLINE } ||
+            result.errorDeviceCount !=
+                result.devices.count { it.state == LocalPollDeviceState.ERROR } ||
+            result.durationMillis !in 0..MAX_LOCAL_POLL_DURATION_MILLIS ||
+            result.devices.map { it.id }.toSet().size != result.devices.size ||
+            result.devices.any { device ->
+                invalidLocalStatusRecord(
+                    record = LocalStatusRecord(
+                        id = device.id,
+                        state = device.state,
+                        errorCode = device.errorCode,
+                        durationMillis = device.durationMillis,
+                        dataPoints = device.dataPoints,
+                        polledAtEpochMillis = 1L,
+                    ),
+                    lastLocalPollAtEpochMillis = 1L,
+                )
+            }
+        ) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The local status result contains invalid devices.",
+            )
+        }
+    }
+
+    private fun invalidLocalStatusRecord(
+        record: LocalStatusRecord,
+        lastLocalPollAtEpochMillis: Long,
+    ): Boolean =
+        record.id.isBlank() ||
+            record.id.length > 128 ||
+            record.errorCode.length > 64 ||
+            record.durationMillis !in 0..MAX_SINGLE_LOCAL_POLL_DURATION_MILLIS ||
+            record.polledAtEpochMillis <= 0L ||
+            record.polledAtEpochMillis > lastLocalPollAtEpochMillis ||
+            (record.state == LocalPollDeviceState.RESPONDED && record.errorCode.isNotEmpty()) ||
+            (record.state != LocalPollDeviceState.RESPONDED && record.errorCode.isBlank()) ||
+            (record.state != LocalPollDeviceState.RESPONDED && record.dataPoints.isNotEmpty()) ||
+            record.dataPoints.size > MAX_LOCAL_DATA_POINT_COUNT ||
+            record.dataPoints.map { it.id }.toSet().size != record.dataPoints.size ||
+            record.dataPoints.any { dataPoint ->
+                dataPoint.id.isBlank() ||
+                    dataPoint.id.length > 8 ||
+                    dataPoint.id.any { !it.isDigit() } ||
+                    dataPoint.value.length > MAX_LOCAL_DATA_POINT_VALUE_LENGTH
+            }
 
     private fun validateLanResult(result: LanDiscoveryResult) {
         if (
@@ -581,10 +818,15 @@ class EncryptedDeviceCatalogStore internal constructor(
         const val CATALOG_DIRECTORY = "device_catalog"
         const val CATALOG_FILE = "catalog.v1.enc"
         const val MIN_SUPPORTED_CATALOG_SCHEMA_VERSION = 1
-        const val CATALOG_SCHEMA_VERSION = 2
+        const val CATALOG_SCHEMA_VERSION = 3
         const val ENVELOPE_VERSION = 1
         const val MAX_CATALOG_BYTES = 16L * 1024L * 1024L
         const val MAX_DEVICE_COUNT = 1_000
+        const val MAX_LOCAL_STATUS_COUNT = 32
+        const val MAX_LOCAL_DATA_POINT_COUNT = 256
+        const val MAX_LOCAL_DATA_POINT_VALUE_LENGTH = 8192
+        const val MAX_SINGLE_LOCAL_POLL_DURATION_MILLIS = 30_000L
+        const val MAX_LOCAL_POLL_DURATION_MILLIS = 120_000L
         const val MIN_IV_BYTES = 12
         const val MAX_IV_BYTES = 32
         const val GCM_TAG_BITS = 128

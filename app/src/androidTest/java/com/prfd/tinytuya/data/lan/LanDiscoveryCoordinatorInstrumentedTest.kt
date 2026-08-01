@@ -29,9 +29,11 @@ class LanDiscoveryCoordinatorInstrumentedTest {
         val radio = FakeRadio()
         val coordinator = coordinator(gateway, store, radio)
 
-        val catalog = coordinator.discover(sampleCatalog())
+        val outcome = coordinator.discover(sampleCatalog())
+        val catalog = outcome.catalog
 
         assertEquals("192.168.10.42", catalog.lanDevices.single().ip)
+        assertEquals("192.168.10.5", outcome.network.localIpv4)
         assertEquals(6, gateway.request?.timeoutSeconds)
         assertEquals(listOf("known-device"), gateway.request?.knownDevices?.map { it.id })
         assertFalse(gateway.request.toString().contains(LOCAL_KEY))
@@ -93,6 +95,9 @@ class LanDiscoveryCoordinatorInstrumentedTest {
             this.request = request
             return discover(request)
         }
+
+        override suspend fun pollLocal(request: LocalPollRequest): LocalPollResult =
+            error("Not used")
     }
 
     private class FakeStore : DeviceCatalogStore {
@@ -117,6 +122,9 @@ class LanDiscoveryCoordinatorInstrumentedTest {
                     )
                 },
             )
+
+        override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
+            error("Not used")
 
         override suspend fun deleteAll() = Unit
     }

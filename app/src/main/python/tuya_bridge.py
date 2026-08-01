@@ -14,7 +14,6 @@ import platform
 import threading
 import time
 
-
 CONTRACT_VERSION = 1
 SUPPORTED_CLOUD_REGIONS = frozenset(("cn", "us", "us-e", "eu", "eu-w", "in", "sg"))
 CLOUD_CONNECT_TIMEOUT_SECONDS = 5
@@ -62,7 +61,8 @@ def _cloud_failure(details):
     if "timeout" in text or "timed out" in text:
         return _failure("CLOUD_TIMEOUT", "Tuya Cloud did not respond in time.")
     if "1004" in text or "sign invalid" in text:
-        return _failure("CLOUD_CREDENTIALS_INVALID", "Tuya rejected the Client ID or Client Secret.")
+        return _failure("CLOUD_CREDENTIALS_INVALID",
+                        "Tuya rejected the Client ID or Client Secret.")
     if "1106" in text or "permission deny" in text or "permission denied" in text:
         return _failure(
             "CLOUD_PERMISSION_DENIED",
@@ -71,8 +71,10 @@ def _cloud_failure(details):
     if "28841004" in text or "quota" in text and "exhaust" in text:
         return _failure("CLOUD_QUOTA_EXHAUSTED", "The Tuya Cloud trial quota has been exhausted.")
     if "1010" in text or "subscription" in text and "expir" in text:
-        return _failure("CLOUD_SUBSCRIPTION_INACTIVE", "The Tuya Cloud service is inactive or expired.")
-    if any(marker in text for marker in ("connection", "network", "dns", "name resolution", "unreachable")):
+        return _failure("CLOUD_SUBSCRIPTION_INACTIVE",
+                        "The Tuya Cloud service is inactive or expired.")
+    if any(marker in text for marker in
+           ("connection", "network", "dns", "name resolution", "unreachable")):
         return _failure("CLOUD_NETWORK_ERROR", "The app could not reach Tuya Cloud.")
     return _failure("CLOUD_IMPORT_FAILED", "Tuya Cloud could not import the linked devices.")
 
@@ -84,7 +86,8 @@ def _parse_cloud_input(credentials_json, previous_devices_json):
         return None, None, _failure("CLOUD_INPUT_INVALID", "Cloud credentials are not valid JSON.")
 
     if not isinstance(credentials, dict):
-        return None, None, _failure("CLOUD_INPUT_INVALID", "Cloud credentials must be a JSON object.")
+        return None, None, _failure("CLOUD_INPUT_INVALID",
+                                    "Cloud credentials must be a JSON object.")
 
     region = str(credentials.get("region") or "").strip().lower()
     client_id = str(credentials.get("client_id") or "").strip()
@@ -92,24 +95,30 @@ def _parse_cloud_input(credentials_json, previous_devices_json):
     device_id = str(credentials.get("device_id") or "").strip()
 
     if region not in SUPPORTED_CLOUD_REGIONS:
-        return None, None, _failure("CLOUD_REGION_INVALID", "Select a supported Tuya Cloud data center.")
+        return None, None, _failure("CLOUD_REGION_INVALID",
+                                    "Select a supported Tuya Cloud data center.")
     if not client_id or not client_secret:
-        return None, None, _failure("CLOUD_CREDENTIALS_REQUIRED", "Client ID and Client Secret are required.")
+        return None, None, _failure("CLOUD_CREDENTIALS_REQUIRED",
+                                    "Client ID and Client Secret are required.")
     if max(len(client_id), len(client_secret), len(device_id)) > 512:
-        return None, None, _failure("CLOUD_INPUT_INVALID", "A cloud credential field is unexpectedly long.")
+        return None, None, _failure("CLOUD_INPUT_INVALID",
+                                    "A cloud credential field is unexpectedly long.")
 
     try:
         previous_devices = json.loads(previous_devices_json or "[]")
     except (TypeError, ValueError):
-        return None, None, _failure("PREVIOUS_DEVICES_INVALID", "The saved device catalog is invalid.")
+        return None, None, _failure("PREVIOUS_DEVICES_INVALID",
+                                    "The saved device catalog is invalid.")
 
     if not isinstance(previous_devices, list) or len(previous_devices) > 1000:
-        return None, None, _failure("PREVIOUS_DEVICES_INVALID", "The saved device catalog is invalid.")
+        return None, None, _failure("PREVIOUS_DEVICES_INVALID",
+                                    "The saved device catalog is invalid.")
 
     old_devices = []
     for item in previous_devices:
         if not isinstance(item, dict) or not item.get("id"):
-            return None, None, _failure("PREVIOUS_DEVICES_INVALID", "The saved device catalog is invalid.")
+            return None, None, _failure("PREVIOUS_DEVICES_INVALID",
+                                        "The saved device catalog is invalid.")
         old_item = dict(item)
         if "local_key" in old_item and "key" not in old_item:
             old_item["key"] = old_item.pop("local_key")
@@ -203,7 +212,8 @@ def _parse_lan_input(network_json, known_devices_json):
         return None, None, _failure("LAN_INPUT_INVALID", "Local discovery input is not valid JSON.")
 
     if not isinstance(network, dict) or not isinstance(known_devices, list):
-        return None, None, _failure("LAN_INPUT_INVALID", "Local discovery input has an invalid shape.")
+        return None, None, _failure("LAN_INPUT_INVALID",
+                                    "Local discovery input has an invalid shape.")
 
     try:
         local_address = ipaddress.IPv4Address(str(network.get("local_ipv4") or ""))
@@ -215,41 +225,49 @@ def _parse_lan_input(network_json, known_devices_json):
 
     interface_name = str(network.get("interface_name") or "").strip()
     if not interface_name or len(interface_name) > 64:
-        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi interface is invalid.")
+        return None, None, _failure("LAN_NETWORK_INVALID",
+                                    "The selected Wi-Fi interface is invalid.")
     if prefix_length not in range(1, 31):
-        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi prefix cannot broadcast.")
+        return None, None, _failure("LAN_NETWORK_INVALID",
+                                    "The selected Wi-Fi prefix cannot broadcast.")
     if timeout_seconds not in range(LAN_MIN_SCAN_SECONDS, LAN_MAX_SCAN_SECONDS + 1):
-        return None, None, _failure("LAN_TIMEOUT_INVALID", "The local discovery interval is out of range.")
+        return None, None, _failure("LAN_TIMEOUT_INVALID",
+                                    "The local discovery interval is out of range.")
 
     interface = ipaddress.IPv4Interface(f"{local_address}/{prefix_length}")
     if (
-        local_address.is_loopback
-        or local_address.is_multicast
-        or local_address.is_unspecified
-        or local_address in (interface.network.network_address, interface.network.broadcast_address)
-        or broadcast_address != interface.network.broadcast_address
+            local_address.is_loopback
+            or local_address.is_multicast
+            or local_address.is_unspecified
+            or local_address in (interface.network.network_address,
+                                 interface.network.broadcast_address)
+            or broadcast_address != interface.network.broadcast_address
     ):
-        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi addresses are inconsistent.")
+        return None, None, _failure("LAN_NETWORK_INVALID",
+                                    "The selected Wi-Fi addresses are inconsistent.")
 
     if not known_devices or len(known_devices) > LAN_MAX_DEVICE_COUNT:
-        return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is empty or too large.")
+        return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
+                                    "The encrypted device catalog is empty or too large.")
 
     scanner_devices = []
     known_ids = set()
     for device in known_devices:
         if not isinstance(device, dict):
-            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is invalid.")
+            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
+                                        "The encrypted device catalog is invalid.")
         device_id = str(device.get("id") or "").strip()
         name = str(device.get("name") or "").strip()
         mac = str(device.get("mac") or "").strip()
         if (
-            not device_id
-            or len(device_id) > 128
-            or len(name) > 512
-            or len(mac) > 64
-            or device_id in known_ids
+                not device_id
+                or len(device_id) > 128
+                or len(name) > 512
+                or len(mac) > 64
+                or device_id in known_ids
         ):
-            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is invalid.")
+            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
+                                        "The encrypted device catalog is invalid.")
         known_ids.add(device_id)
         # TinyTuya uses this lookup to label broadcasts. Polling is disabled,
         # so local keys never need to cross this discovery boundary.
@@ -329,9 +347,11 @@ def health():
         gcm_available = bool(tinytuya.AESCipher.CRYPTOLIB_HAS_GCM)
 
         if not crypto_self_test:
-            return _failure("CRYPTO_SELF_TEST_FAILED", "The bundled AES implementation failed its self-test.")
+            return _failure("CRYPTO_SELF_TEST_FAILED",
+                            "The bundled AES implementation failed its self-test.")
         if not gcm_available:
-            return _failure("GCM_UNAVAILABLE", "The bundled crypto library cannot operate Tuya 3.5 devices.")
+            return _failure("GCM_UNAVAILABLE",
+                            "The bundled crypto library cannot operate Tuya 3.5 devices.")
 
         return _success(
             {
@@ -350,13 +370,15 @@ def health():
         # Do not expose implementation details or a traceback across the public
         # bridge. Detailed diagnostics may be added later behind a local-only,
         # explicitly enabled debug facility with redaction.
-        return _failure("BRIDGE_HEALTH_FAILED", "The embedded TinyTuya runtime could not be initialized.")
+        return _failure("BRIDGE_HEALTH_FAILED",
+                        "The embedded TinyTuya runtime could not be initialized.")
 
 
 def import_cloud(credentials_json, previous_devices_json="[]"):
     """Import linked devices and DP mappings from the user's Tuya project."""
 
-    config, previous_devices, input_error = _parse_cloud_input(credentials_json, previous_devices_json)
+    config, previous_devices, input_error = _parse_cloud_input(credentials_json,
+                                                               previous_devices_json)
     if input_error:
         return input_error
 
@@ -475,8 +497,323 @@ def discover_lan(network_json, known_devices_json):
             return _failure("LAN_PERMISSION_DENIED", "Android blocked local network discovery.")
         if exc.errno == errno.EADDRINUSE:
             return _failure("LAN_PORT_UNAVAILABLE", "A Tuya discovery port is already in use.")
-        if exc.errno in (errno.EADDRNOTAVAIL, errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTUNREACH):
-            return _failure("LAN_NETWORK_UNAVAILABLE", "The selected Wi-Fi network became unavailable.")
+        if exc.errno in (errno.EADDRNOTAVAIL, errno.ENETDOWN, errno.ENETUNREACH,
+                         errno.EHOSTUNREACH):
+            return _failure("LAN_NETWORK_UNAVAILABLE",
+                            "The selected Wi-Fi network became unavailable.")
         return _failure("LAN_SCAN_FAILED", "Local Tuya discovery could not be completed.")
     except Exception:
         return _failure("LAN_SCAN_FAILED", "Local Tuya discovery could not be completed.")
+
+
+# Local status polling intentionally lives after discovery so its additions can
+# be reviewed independently from TinyTuya's scanner integration. Imports stay
+# local to these helpers to keep this boundary easy to package and test.
+LOCAL_POLL_MAX_DEVICE_COUNT = 32
+LOCAL_POLL_MAX_DATA_POINT_COUNT = 256
+LOCAL_POLL_SOCKET_TIMEOUT_SECONDS = 1.5
+LOCAL_POLL_WORKER_COUNT = 4
+LOCAL_POLL_PROTOCOLS = frozenset(("3.1", "3.2", "3.3", "3.4", "3.5"))
+
+
+def _parse_local_poll_input(network_json, devices_json):
+    try:
+        network = json.loads(network_json)
+        devices = json.loads(devices_json)
+    except (TypeError, ValueError):
+        return None, None, _failure(
+            "LOCAL_POLL_INPUT_INVALID",
+            "Local status input is not valid JSON.",
+        )
+
+    if not isinstance(network, dict) or not isinstance(devices, list):
+        return None, None, _failure(
+            "LOCAL_POLL_INPUT_INVALID",
+            "Local status input has an invalid shape.",
+        )
+
+    try:
+        local_address = ipaddress.IPv4Address(str(network.get("local_ipv4") or ""))
+        prefix_length = int(network.get("prefix_length"))
+        broadcast_address = ipaddress.IPv4Address(str(network.get("broadcast_ipv4") or ""))
+    except (TypeError, ValueError, ipaddress.AddressValueError):
+        return None, None, _failure(
+            "LOCAL_POLL_NETWORK_INVALID",
+            "The selected Wi-Fi network is invalid.",
+        )
+
+    interface_name = str(network.get("interface_name") or "").strip()
+    if not interface_name or len(interface_name) > 64 or prefix_length not in range(1, 31):
+        return None, None, _failure(
+            "LOCAL_POLL_NETWORK_INVALID",
+            "The selected Wi-Fi network cannot be used for local status.",
+        )
+
+    interface = ipaddress.IPv4Interface(f"{local_address}/{prefix_length}")
+    if (
+        local_address.is_loopback
+        or local_address.is_multicast
+        or local_address.is_unspecified
+        or local_address in (interface.network.network_address, interface.network.broadcast_address)
+        or broadcast_address != interface.network.broadcast_address
+    ):
+        return None, None, _failure(
+            "LOCAL_POLL_NETWORK_INVALID",
+            "The selected Wi-Fi addresses are inconsistent.",
+        )
+
+    if not devices or len(devices) > LOCAL_POLL_MAX_DEVICE_COUNT:
+        return None, None, _failure(
+            "LOCAL_POLL_DEVICES_INVALID",
+            "The local status request is empty or too large.",
+        )
+
+    normalized = []
+    seen_ids = set()
+    for item in devices:
+        if not isinstance(item, dict):
+            return None, None, _failure(
+                "LOCAL_POLL_DEVICES_INVALID",
+                "The local status request contains an invalid device.",
+            )
+        device_id = str(item.get("id") or "").strip()
+        local_key = str(item.get("local_key") or "")
+        protocol_version = str(item.get("protocol_version") or "").strip()
+        try:
+            address = ipaddress.IPv4Address(str(item.get("ip") or ""))
+            local_key.encode("latin1")
+        except (UnicodeEncodeError, ipaddress.AddressValueError):
+            return None, None, _failure(
+                "LOCAL_POLL_DEVICES_INVALID",
+                "The local status request contains an invalid device.",
+            )
+
+        if (
+            not device_id
+            or len(device_id) > 128
+            or device_id in seen_ids
+            or len(local_key) != 16
+            or protocol_version not in LOCAL_POLL_PROTOCOLS
+            or address not in interface.network
+            or address in (local_address, interface.network.network_address, interface.network.broadcast_address)
+        ):
+            return None, None, _failure(
+                "LOCAL_POLL_DEVICES_INVALID",
+                "The local status request contains an invalid device.",
+            )
+        seen_ids.add(device_id)
+        normalized.append(
+            {
+                "id": device_id,
+                "ip": str(address),
+                "local_key": local_key,
+                "protocol_version": protocol_version,
+            }
+        )
+
+    return interface.network, normalized, None
+
+
+def _normalize_local_data_points(dps):
+    import math
+
+    if not isinstance(dps, dict):
+        return [], ["NO_DATA_POINTS"]
+
+    normalized = []
+    warnings = []
+    sortable = sorted(
+        dps.items(),
+        key=lambda item: (
+            0,
+            int(str(item[0])),
+        ) if str(item[0]).isdigit() else (1, str(item[0])),
+    )
+    for raw_id, raw_value in sortable:
+        data_point_id = str(raw_id).strip()
+        if (
+            not data_point_id.isdigit()
+            or len(data_point_id) > 8
+            or int(data_point_id) <= 0
+        ):
+            warnings.append("UNSUPPORTED_DATA_POINT")
+            continue
+
+        kind = None
+        value = None
+        if isinstance(raw_value, bool):
+            kind = "boolean"
+            value = "true" if raw_value else "false"
+        elif isinstance(raw_value, int):
+            kind = "integer"
+            value = str(raw_value)
+        elif isinstance(raw_value, float) and math.isfinite(raw_value):
+            kind = "decimal"
+            value = repr(raw_value)
+        elif isinstance(raw_value, str) and len(raw_value) <= 4096:
+            kind = "string"
+            value = raw_value
+        elif raw_value is None:
+            kind = "null"
+            value = ""
+        elif isinstance(raw_value, (dict, list)):
+            try:
+                encoded = json.dumps(
+                    raw_value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError):
+                encoded = ""
+            if encoded and len(encoded) <= 8192:
+                kind = "json"
+                value = encoded
+
+        if kind is None:
+            warnings.append("UNSUPPORTED_DATA_POINT")
+            continue
+        if len(value) > 8192:
+            warnings.append("UNSUPPORTED_DATA_POINT")
+            continue
+        normalized.append({"id": data_point_id, "kind": kind, "value": value})
+        if len(normalized) >= LOCAL_POLL_MAX_DATA_POINT_COUNT:
+            warnings.append("DATA_POINTS_TRUNCATED")
+            break
+
+    if not normalized:
+        warnings.append("NO_DATA_POINTS")
+    return normalized, sorted(set(warnings))
+
+
+def _local_poll_error(error_number):
+    error_number = str(error_number or "")
+    if error_number in ("901", "905"):
+        return "offline", "LOCAL_DEVICE_OFFLINE"
+    if error_number == "902":
+        return "offline", "LOCAL_DEVICE_TIMEOUT"
+    if error_number == "914":
+        return "error", "LOCAL_KEY_OR_VERSION_INVALID"
+    if error_number in ("900", "904", "908"):
+        return "error", "LOCAL_PROTOCOL_ERROR"
+    return "error", "LOCAL_STATUS_FAILED"
+
+
+def _poll_one_local_device(tinytuya, config):
+    import socket
+
+    started_at = time.monotonic()
+    device = None
+    state = "error"
+    error_code = "LOCAL_STATUS_FAILED"
+    data_points = []
+    warnings = []
+    try:
+        device = tinytuya.Device(
+            config["id"],
+            address=config["ip"],
+            local_key=config["local_key"],
+            version=float(config["protocol_version"]),
+            persist=False,
+            connection_timeout=LOCAL_POLL_SOCKET_TIMEOUT_SECONDS,
+            connection_retry_limit=1,
+            connection_retry_delay=0,
+        )
+        device.set_retry(False)
+        status = device.status()
+        if isinstance(status, dict) and status.get("Err") is not None:
+            state, error_code = _local_poll_error(status.get("Err"))
+        elif isinstance(status, dict):
+            state = "responded"
+            error_code = ""
+            data_points, warnings = _normalize_local_data_points(status.get("dps"))
+        else:
+            state = "offline"
+            error_code = "LOCAL_DEVICE_NO_RESPONSE"
+    except (socket.timeout, TimeoutError):
+        state = "offline"
+        error_code = "LOCAL_DEVICE_TIMEOUT"
+    except OSError:
+        state = "offline"
+        error_code = "LOCAL_DEVICE_OFFLINE"
+    except Exception:
+        state = "error"
+        error_code = "LOCAL_STATUS_FAILED"
+    finally:
+        if device is not None:
+            try:
+                device.close()
+            except Exception:
+                pass
+            try:
+                device.local_key = b""
+                device.real_local_key = b""
+            except Exception:
+                pass
+
+    duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+    return {
+        "id": config["id"],
+        "state": state,
+        "error_code": error_code,
+        "duration_ms": duration_ms,
+        "data_points": data_points,
+    }, warnings
+
+
+def poll_local(network_json, devices_json):
+    """Read current DPS from freshly discovered direct Wi-Fi devices."""
+
+    network, devices, input_error = _parse_local_poll_input(network_json, devices_json)
+    if input_error:
+        return input_error
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import tinytuya
+
+        del network  # Validation boundary only; every target was checked against it.
+        logging.getLogger("tinytuya").setLevel(logging.WARNING)
+        started_at = time.monotonic()
+        worker_count = min(LOCAL_POLL_WORKER_COUNT, len(devices))
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="tinytuya-local-poll",
+        ) as executor:
+            polled = list(
+                executor.map(
+                    lambda config: _poll_one_local_device(tinytuya, config),
+                    devices,
+                )
+            )
+
+        results = [item[0] for item in polled]
+        warnings = {warning for item in polled for warning in item[1]}
+        responded_count = sum(1 for item in results if item["state"] == "responded")
+        offline_count = sum(1 for item in results if item["state"] == "offline")
+        error_count = len(results) - responded_count - offline_count
+        if offline_count or error_count:
+            warnings.add("PARTIAL_LOCAL_STATUS")
+        if not responded_count:
+            warnings.add("NO_LOCAL_RESPONSES")
+
+        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+        return _success(
+            {
+                "device_count": len(results),
+                "responded_device_count": responded_count,
+                "offline_device_count": offline_count,
+                "error_device_count": error_count,
+                "duration_ms": duration_ms,
+                "warnings": sorted(warnings),
+                "devices": results,
+            }
+        )
+    except Exception:
+        return _failure(
+            "LOCAL_POLL_FAILED",
+            "Local device status could not be read.",
+        )
+    finally:
+        for device in devices:
+            device["local_key"] = ""

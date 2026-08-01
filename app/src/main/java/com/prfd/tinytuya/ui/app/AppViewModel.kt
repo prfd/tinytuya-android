@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryException
+import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
+import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
@@ -35,6 +37,8 @@ sealed interface LanDiscoveryUiState {
 
     data object Scanning : LanDiscoveryUiState
 
+    data object ReadingStatus : LanDiscoveryUiState
+
     data object Completed : LanDiscoveryUiState
 
     data class Error(
@@ -46,6 +50,7 @@ sealed interface LanDiscoveryUiState {
 class AppViewModel(
     private val catalogStore: DeviceCatalogStore,
     private val lanDiscoveryCoordinator: LanDiscoveryCoordinator,
+    private val localStatusCoordinator: LocalStatusCoordinator,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -86,13 +91,28 @@ class AppViewModel(
 
     fun discoverLan() {
         val current = mutableState.value as? AppUiState.Inventory ?: return
-        if (current.discovery is LanDiscoveryUiState.Scanning) return
+        if (
+            current.discovery is LanDiscoveryUiState.Scanning ||
+            current.discovery is LanDiscoveryUiState.ReadingStatus
+        ) return
         mutableState.value = current.copy(discovery = LanDiscoveryUiState.Scanning)
         viewModelScope.launch {
+            var latestCatalog = current.catalog
+            var readingStatus = false
             try {
-                val updatedCatalog = lanDiscoveryCoordinator.discover(current.catalog)
+                val discovery = lanDiscoveryCoordinator.discover(current.catalog)
+                latestCatalog = discovery.catalog
                 mutableState.value = AppUiState.Inventory(
-                    catalog = updatedCatalog,
+                    catalog = latestCatalog,
+                    discovery = LanDiscoveryUiState.ReadingStatus,
+                )
+                readingStatus = true
+                latestCatalog = localStatusCoordinator.poll(
+                    catalog = latestCatalog,
+                    network = discovery.network,
+                )
+                mutableState.value = AppUiState.Inventory(
+                    catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Completed,
                 )
             } catch (error: CancellationException) {
@@ -104,19 +124,33 @@ class AppViewModel(
                         message = error.message ?: "Local Tuya discovery could not be completed.",
                     )
                 )
+            } catch (error: LocalStatusException) {
+                mutableState.value = AppUiState.Inventory(
+                    catalog = latestCatalog,
+                    discovery = LanDiscoveryUiState.Error(
+                        code = error.code,
+                        message = error.message ?: "Local device status could not be read.",
+                    ),
+                )
             } catch (error: DeviceCatalogStorageException) {
-                mutableState.value = current.copy(
+                mutableState.value = AppUiState.Inventory(
+                    catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Error(
                         code = error.code,
                         message = error.message ?: "The discovery result could not be stored safely.",
-                    )
+                    ),
                 )
             } catch (_: Exception) {
-                mutableState.value = current.copy(
+                mutableState.value = AppUiState.Inventory(
+                    catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Error(
-                        code = "LAN_SCAN_FAILED",
-                        message = "Local Tuya discovery could not be completed.",
-                    )
+                        code = if (readingStatus) "LOCAL_POLL_FAILED" else "LAN_SCAN_FAILED",
+                        message = if (readingStatus) {
+                            "Local device status could not be read."
+                        } else {
+                            "Local Tuya discovery could not be completed."
+                        },
+                    ),
                 )
             }
         }
@@ -148,12 +182,17 @@ class AppViewModel(
         fun factory(
             catalogStore: DeviceCatalogStore,
             lanDiscoveryCoordinator: LanDiscoveryCoordinator,
+            localStatusCoordinator: LocalStatusCoordinator,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     require(modelClass.isAssignableFrom(AppViewModel::class.java))
-                    return AppViewModel(catalogStore, lanDiscoveryCoordinator) as T
+                    return AppViewModel(
+                        catalogStore,
+                        lanDiscoveryCoordinator,
+                        localStatusCoordinator,
+                    ) as T
                 }
             }
     }

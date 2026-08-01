@@ -9,8 +9,13 @@ import com.prfd.tinytuya.data.python.TuyaPythonGateway
 import java.util.concurrent.CancellationException
 
 interface LanDiscoveryCoordinator {
-    suspend fun discover(catalog: DeviceCatalog): DeviceCatalog
+    suspend fun discover(catalog: DeviceCatalog): LanDiscoveryOutcome
 }
+
+data class LanDiscoveryOutcome(
+    val catalog: DeviceCatalog,
+    val network: LanNetworkContext,
+)
 
 interface LanDiscoveryRadio {
     fun acquire()
@@ -46,7 +51,7 @@ class DefaultLanDiscoveryCoordinator(
     private val networkResolver: LanNetworkResolver,
     private val radio: LanDiscoveryRadio,
 ) : LanDiscoveryCoordinator {
-    override suspend fun discover(catalog: DeviceCatalog): DeviceCatalog {
+    override suspend fun discover(catalog: DeviceCatalog): LanDiscoveryOutcome {
         if (catalog.devices.isEmpty()) {
             throw LanDiscoveryException(
                 code = "LAN_KNOWN_DEVICES_INVALID",
@@ -84,7 +89,10 @@ class DefaultLanDiscoveryCoordinator(
                     message = error.message ?: "Local Tuya discovery could not be completed.",
                 )
             }
-            return catalogStore.mergeLanDiscovery(result)
+            return LanDiscoveryOutcome(
+                catalog = catalogStore.mergeLanDiscovery(result),
+                network = network,
+            )
         } finally {
             if (radioAcquired) radio.release()
         }

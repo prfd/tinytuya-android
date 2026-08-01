@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
-import android.net.Uri
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -82,6 +81,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
@@ -89,17 +89,22 @@ import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 private const val TUYA_SETUP_GUIDE_URL =
     "https://developer.tuya.com/en/docs/developer/apply-cloud-api-key?id=Kff30z8sv62ah"
 
-private enum class OnboardingDestination {
-    WELCOME,
-    SETUP_GUIDE,
-    CREDENTIALS,
-    IMPORTING,
-    ERROR,
-    SUCCESS,
+private sealed interface OnboardingDestination {
+    data object Welcome : OnboardingDestination
+    data object SetupGuide : OnboardingDestination
+    data object Credentials : OnboardingDestination
+    data object Importing : OnboardingDestination
+
+    data class Error(val error: CloudImportUiState.Error) : OnboardingDestination
+
+    data class Success(val result: CloudImportResult) : OnboardingDestination
 }
 
 @Composable
-fun OnboardingRoute(viewModel: OnboardingViewModel) {
+fun OnboardingRoute(
+    viewModel: OnboardingViewModel,
+    onOpenInventory: () -> Unit,
+) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsState()
 
@@ -110,7 +115,7 @@ fun OnboardingRoute(viewModel: OnboardingViewModel) {
     )
 
     val destination = state.destination()
-    BackHandler(enabled = destination != OnboardingDestination.WELCOME) {
+    BackHandler(enabled = destination != OnboardingDestination.Welcome) {
         viewModel.goBack()
     }
 
@@ -122,7 +127,7 @@ fun OnboardingRoute(viewModel: OnboardingViewModel) {
         onOpenOfficialGuide = {
             runCatching {
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(TUYA_SETUP_GUIDE_URL))
+                    Intent(Intent.ACTION_VIEW, TUYA_SETUP_GUIDE_URL.toUri())
                 )
             }
         },
@@ -135,6 +140,7 @@ fun OnboardingRoute(viewModel: OnboardingViewModel) {
         onDismissError = viewModel::dismissError,
         onReturnToCredentials = viewModel::returnToCredentials,
         onReviewSetup = viewModel::showSetupGuide,
+        onOpenInventory = onOpenInventory,
     )
 }
 
@@ -177,6 +183,7 @@ fun OnboardingScreen(
     onDismissError: () -> Unit,
     onReturnToCredentials: () -> Unit,
     onReviewSetup: () -> Unit,
+    onOpenInventory: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -199,18 +206,18 @@ fun OnboardingScreen(
                     .widthIn(max = 680.dp),
             ) { destination ->
                 when (destination) {
-                    OnboardingDestination.WELCOME -> WelcomeScreen(
+                    OnboardingDestination.Welcome -> WelcomeScreen(
                         onStartSetup = onStartSetup,
                         onSkipGuide = onSkipGuide,
                     )
 
-                    OnboardingDestination.SETUP_GUIDE -> SetupGuideScreen(
+                    OnboardingDestination.SetupGuide -> SetupGuideScreen(
                         onBack = onBack,
                         onOpenOfficialGuide = onOpenOfficialGuide,
                         onContinue = onSkipGuide,
                     )
 
-                    OnboardingDestination.CREDENTIALS -> CredentialsScreen(
+                    OnboardingDestination.Credentials -> CredentialsScreen(
                         state = state,
                         onBack = onBack,
                         onRegionChanged = onRegionChanged,
@@ -221,16 +228,17 @@ fun OnboardingScreen(
                         onImport = onImport,
                     )
 
-                    OnboardingDestination.IMPORTING -> ImportingScreen()
-                    OnboardingDestination.ERROR -> ErrorScreen(
-                        error = state.cloudImport as CloudImportUiState.Error,
+                    OnboardingDestination.Importing -> ImportingScreen()
+                    is OnboardingDestination.Error -> ErrorScreen(
+                        error = destination.error,
                         onRetry = onDismissError,
                         onReviewSetup = onReviewSetup,
                     )
 
-                    OnboardingDestination.SUCCESS -> SuccessScreen(
-                        result = (state.cloudImport as CloudImportUiState.Success).result,
+                    is OnboardingDestination.Success -> SuccessScreen(
+                        result = destination.result,
                         onImportAgain = onReturnToCredentials,
+                        onOpenInventory = onOpenInventory,
                     )
                 }
             }
@@ -239,13 +247,13 @@ fun OnboardingScreen(
 }
 
 private fun OnboardingUiState.destination(): OnboardingDestination = when (cloudImport) {
-    CloudImportUiState.Loading -> OnboardingDestination.IMPORTING
-    is CloudImportUiState.Error -> OnboardingDestination.ERROR
-    is CloudImportUiState.Success -> OnboardingDestination.SUCCESS
+    CloudImportUiState.Loading -> OnboardingDestination.Importing
+    is CloudImportUiState.Error -> OnboardingDestination.Error(cloudImport)
+    is CloudImportUiState.Success -> OnboardingDestination.Success(cloudImport.result)
     CloudImportUiState.Idle -> when (page) {
-        OnboardingPage.WELCOME -> OnboardingDestination.WELCOME
-        OnboardingPage.SETUP_GUIDE -> OnboardingDestination.SETUP_GUIDE
-        OnboardingPage.CREDENTIALS -> OnboardingDestination.CREDENTIALS
+        OnboardingPage.WELCOME -> OnboardingDestination.Welcome
+        OnboardingPage.SETUP_GUIDE -> OnboardingDestination.SetupGuide
+        OnboardingPage.CREDENTIALS -> OnboardingDestination.Credentials
     }
 }
 
@@ -677,7 +685,7 @@ private fun CredentialsScreen(
             modifier = Modifier.padding(top = 18.dp),
         )
         Text(
-            text = "Nothing is saved until secure local storage is enabled in a later step.",
+            text = "Cloud credentials are never saved. A successful non-empty device import is encrypted with Android Keystore.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -826,6 +834,9 @@ private fun errorTitle(code: String): String = when (code) {
     "CLOUD_SUBSCRIPTION_INACTIVE" -> "Cloud service is inactive"
     "CLOUD_TIMEOUT" -> "Tuya took too long"
     "CLOUD_NETWORK_ERROR" -> "Could not reach Tuya"
+    "CATALOG_KEY_CREATE_FAILED", "CATALOG_KEY_UNAVAILABLE" -> "Secure key unavailable"
+    "CATALOG_WRITE_FAILED", "CATALOG_ENCRYPT_FAILED" -> "Could not secure devices"
+    "CATALOG_READ_FAILED", "CATALOG_DECRYPT_FAILED", "CATALOG_INVALID" -> "Local catalog needs attention"
     else -> "Import did not complete"
 }
 
@@ -833,6 +844,7 @@ private fun errorTitle(code: String): String = when (code) {
 private fun SuccessScreen(
     result: CloudImportResult,
     onImportAgain: () -> Unit,
+    onOpenInventory: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -868,7 +880,7 @@ private fun SuccessScreen(
             text = if (result.deviceCount == 0) {
                 "The project connected successfully, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
             } else {
-                "The cloud handshake worked. Credentials were cleared from the form; only this in-memory result remains."
+                "The cloud handshake worked. Credentials were cleared, and the device catalog is encrypted locally with Android Keystore."
             },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -916,21 +928,33 @@ private fun SuccessScreen(
             Column(Modifier.padding(18.dp)) {
                 Text("Next: find devices on Wi-Fi", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "Secure persistence and bounded local UDP discovery are the next implementation slice. This development build intentionally does not write local keys yet.",
+                    text = "Bounded local UDP discovery is the next implementation slice. Until then, imported devices are listed as awaiting a LAN scan.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 5.dp),
                 )
             }
         }
-        OutlinedButton(
-            onClick = onImportAgain,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(62.dp)
-                .padding(top = 8.dp),
-        ) {
-            Text("Import another project")
+        if (result.devices.isNotEmpty()) {
+            PrimaryActionButton(
+                text = "Open device list",
+                onClick = onOpenInventory,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            TextButton(
+                onClick = onImportAgain,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text("Import another project")
+            }
+        } else {
+            PrimaryActionButton(
+                text = "Review setup and try again",
+                onClick = onImportAgain,
+                modifier = Modifier.padding(top = 12.dp),
+            )
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -1282,6 +1306,7 @@ private fun WelcomePreview() {
             onDismissError = {},
             onReturnToCredentials = {},
             onReviewSetup = {},
+            onOpenInventory = {},
         )
     }
 }
@@ -1305,6 +1330,7 @@ private fun CredentialsPreview() {
             onDismissError = {},
             onReturnToCredentials = {},
             onReviewSetup = {},
+            onOpenInventory = {},
         )
     }
 }

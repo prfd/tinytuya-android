@@ -1,7 +1,11 @@
 package com.prfd.tinytuya
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -44,6 +48,62 @@ class OnboardingScreenInstrumentedTest {
     @Test
     fun successSummaryNeverRendersLocalKey() {
         val privateLocalKey = "this-local-key-must-never-be-visible"
+        setOnboardingContent(successfulState(privateLocalKey))
+
+        composeRule.onNodeWithText("Bedroom lamp").assertExists()
+        composeRule.onNodeWithText(privateLocalKey, substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun clearingSessionWhileSuccessScreenExitsDoesNotCrash() {
+        var state by mutableStateOf(successfulState("transition-local-key"))
+        setOnboardingContent(
+            stateProvider = { state },
+            onOpenInventory = { state = OnboardingUiState() },
+        )
+
+        composeRule.onNodeWithText("Open device list").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Your devices.\nYour network.").assertExists()
+    }
+
+    private fun setOnboardingContent(
+        state: OnboardingUiState,
+        onOpenInventory: () -> Unit = {},
+    ) = setOnboardingContent(
+        stateProvider = { state },
+        onOpenInventory = onOpenInventory,
+    )
+
+    private fun setOnboardingContent(
+        stateProvider: () -> OnboardingUiState,
+        onOpenInventory: () -> Unit = {},
+    ) {
+        composeRule.setContent {
+            TinytuyaTheme(darkTheme = false) {
+                OnboardingScreen(
+                    state = stateProvider(),
+                    onStartSetup = {},
+                    onSkipGuide = {},
+                    onBack = {},
+                    onOpenOfficialGuide = {},
+                    onRegionChanged = {},
+                    onClientIdChanged = {},
+                    onClientSecretChanged = {},
+                    onSampleDeviceIdChanged = {},
+                    onToggleAdvanced = {},
+                    onImport = {},
+                    onDismissError = {},
+                    onReturnToCredentials = {},
+                    onReviewSetup = {},
+                    onOpenInventory = onOpenInventory,
+                )
+            }
+        }
+    }
+
+    private fun successfulState(localKey: String): OnboardingUiState {
         val result = CloudImportResult(
             contractVersion = 1,
             region = TuyaCloudRegion.WESTERN_AMERICA,
@@ -54,7 +114,7 @@ class OnboardingScreenInstrumentedTest {
                 CloudImportedDevice(
                     id = "device-id",
                     name = "Bedroom lamp",
-                    localKey = SensitiveString.of(privateLocalKey),
+                    localKey = SensitiveString.of(localKey),
                     category = "dj",
                     productId = "product-id",
                     productName = "Lamp",
@@ -70,37 +130,9 @@ class OnboardingScreenInstrumentedTest {
                 )
             ),
         )
-        setOnboardingContent(
-            OnboardingUiState(
-                page = OnboardingPage.CREDENTIALS,
-                cloudImport = CloudImportUiState.Success(result),
-            )
+        return OnboardingUiState(
+            page = OnboardingPage.CREDENTIALS,
+            cloudImport = CloudImportUiState.Success(result),
         )
-
-        composeRule.onNodeWithText("Bedroom lamp").assertExists()
-        composeRule.onNodeWithText(privateLocalKey, substring = true).assertDoesNotExist()
-    }
-
-    private fun setOnboardingContent(state: OnboardingUiState) {
-        composeRule.setContent {
-            TinytuyaTheme(darkTheme = false) {
-                OnboardingScreen(
-                    state = state,
-                    onStartSetup = {},
-                    onSkipGuide = {},
-                    onBack = {},
-                    onOpenOfficialGuide = {},
-                    onRegionChanged = {},
-                    onClientIdChanged = {},
-                    onClientSecretChanged = {},
-                    onSampleDeviceIdChanged = {},
-                    onToggleAdvanced = {},
-                    onImport = {},
-                    onDismissError = {},
-                    onReturnToCredentials = {},
-                    onReviewSetup = {},
-                )
-            }
-        }
     }
 }

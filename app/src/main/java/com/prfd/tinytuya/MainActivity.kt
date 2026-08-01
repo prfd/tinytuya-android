@@ -5,21 +5,31 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModelProvider
+import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
+import com.prfd.tinytuya.ui.app.AppRoute
+import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
-import com.prfd.tinytuya.ui.onboarding.OnboardingRoute
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
+        val appViewModel = ViewModelProvider(
+            this,
+            AppViewModel.factory(catalogStore),
+        )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(
             this,
-            OnboardingViewModel.factory(this),
+            OnboardingViewModel.factory(this, catalogStore),
         )[OnboardingViewModel::class.java]
         setContent {
             TinytuyaTheme {
-                OnboardingRoute(viewModel = onboardingViewModel)
+                AppRoute(
+                    appViewModel = appViewModel,
+                    onboardingViewModel = onboardingViewModel,
+                )
             }
         }
     }

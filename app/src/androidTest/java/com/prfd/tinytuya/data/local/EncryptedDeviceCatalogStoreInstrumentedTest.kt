@@ -1,5 +1,6 @@
 package com.prfd.tinytuya.data.local
 
+import android.util.AtomicFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.prfd.tinytuya.data.python.CloudImportResult
@@ -87,6 +88,17 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     }
 
     @Test
+    fun interruptedAtomicWriteRestoresLastCompleteCatalog() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+        AtomicFile(store.catalogFile).startWrite().close()
+
+        val loaded = store.load()
+
+        assertEquals(DEVICE_ID, loaded?.devices?.single()?.id)
+        assertEquals(LOCAL_KEY, loaded?.devices?.single()?.localKey?.reveal())
+    }
+
+    @Test
     fun deleteAllRemovesCiphertextAndKeystoreEntry() = runBlocking {
         store.replaceFromCloud(sampleImport())
         assertTrue(store.catalogFile.exists())
@@ -97,6 +109,23 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         assertFalse(store.catalogFile.exists())
         assertFalse(androidKeyStore().containsAlias(keyAlias))
         assertNull(store.load())
+    }
+
+    @Test
+    fun duplicateDeviceIdsAreRejectedBeforeWriting() = runBlocking {
+        val first = sampleImport().devices.single()
+        val duplicate = sampleImport().copy(
+            deviceCount = 2,
+            devices = listOf(first, first.copy(name = "Duplicate")),
+        )
+
+        try {
+            store.replaceFromCloud(duplicate)
+            throw AssertionError("Expected duplicate device IDs to be rejected")
+        } catch (error: DeviceCatalogStorageException) {
+            assertEquals("CATALOG_INVALID", error.code)
+        }
+        assertFalse(store.catalogFile.exists())
     }
 
     private fun sampleImport() = CloudImportResult(

@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
+import com.prfd.tinytuya.data.local.DeviceCatalogStore
+import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.data.python.CloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
@@ -53,6 +56,7 @@ data class OnboardingUiState(
 
 class OnboardingViewModel(
     private val gateway: TuyaPythonGateway,
+    private val catalogStore: DeviceCatalogStore,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(OnboardingUiState())
     val state: StateFlow<OnboardingUiState> = mutableState.asStateFlow()
@@ -156,17 +160,32 @@ class OnboardingViewModel(
 
         viewModelScope.launch {
             try {
-                val result = gateway.importCloud(credentials)
+                val previousDevices = catalogStore.load()?.devices.orEmpty()
+                val result = gateway.importCloud(credentials, previousDevices)
                 mutableState.update {
                     it.copy(
                         clientId = SensitiveString.of(""),
                         clientSecret = SensitiveString.of(""),
                         sampleDeviceId = SensitiveString.of(""),
-                        cloudImport = CloudImportUiState.Success(result),
                     )
+                }
+                if (result.devices.isNotEmpty()) {
+                    catalogStore.replaceFromCloud(result)
+                }
+                mutableState.update {
+                    it.copy(cloudImport = CloudImportUiState.Success(result))
                 }
             } catch (error: CancellationException) {
                 throw error
+            } catch (error: DeviceCatalogStorageException) {
+                mutableState.update {
+                    it.copy(
+                        cloudImport = CloudImportUiState.Error(
+                            code = error.code,
+                            message = error.message ?: "Encrypted device storage is unavailable.",
+                        )
+                    )
+                }
             } catch (error: PythonBridgeException) {
                 mutableState.update {
                     it.copy(
@@ -202,14 +221,29 @@ class OnboardingViewModel(
         }
     }
 
+    fun prepareForCloudSync(region: TuyaCloudRegion) {
+        mutableState.value = OnboardingUiState(
+            page = OnboardingPage.CREDENTIALS,
+            region = region,
+        )
+    }
+
+    fun clearSession() {
+        mutableState.value = OnboardingUiState()
+    }
+
     companion object {
-        fun factory(context: Context): ViewModelProvider.Factory =
+        fun factory(
+            context: Context,
+            catalogStore: DeviceCatalogStore = EncryptedDeviceCatalogStore(context.applicationContext),
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     require(modelClass.isAssignableFrom(OnboardingViewModel::class.java))
                     return OnboardingViewModel(
-                        gateway = ChaquopyTuyaPythonGateway(context.applicationContext)
+                        gateway = ChaquopyTuyaPythonGateway(context.applicationContext),
+                        catalogStore = catalogStore,
                     ) as T
                 }
             }

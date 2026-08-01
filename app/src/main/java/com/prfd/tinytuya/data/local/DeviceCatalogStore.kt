@@ -9,6 +9,7 @@ import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import java.io.File
+import java.io.FileNotFoundException
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -63,16 +64,21 @@ class EncryptedDeviceCatalogStore internal constructor(
 
     override suspend fun load(): DeviceCatalog? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (!catalogFile.exists()) return@withLock null
             try {
-                if (catalogFile.length() !in 1..MAX_CATALOG_BYTES) {
-                    throw storageError(
-                        code = "CATALOG_INVALID",
-                        message = "The saved device catalog has an invalid size.",
-                    )
+                val input = try {
+                    atomicFile.openRead()
+                } catch (_: FileNotFoundException) {
+                    return@withLock null
                 }
-
-                val encrypted = atomicFile.openRead().use { it.readBytes() }
+                val encrypted = input.use {
+                    if (it.channel.size() !in 1..MAX_CATALOG_BYTES) {
+                        throw storageError(
+                            code = "CATALOG_INVALID",
+                            message = "The saved device catalog has an invalid size.",
+                        )
+                    }
+                    it.readBytes()
+                }
                 val plaintext = decrypt(encrypted)
                 try {
                     decodeCatalog(String(plaintext, StandardCharsets.UTF_8))
@@ -93,6 +99,7 @@ class EncryptedDeviceCatalogStore internal constructor(
     override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
         withContext(Dispatchers.IO) {
             mutex.withLock {
+                validateDevices(result.devices)
                 val catalog = DeviceCatalog(
                     schemaVersion = CATALOG_SCHEMA_VERSION,
                     importedAtEpochMillis = currentTimeMillis(),
@@ -101,7 +108,14 @@ class EncryptedDeviceCatalogStore internal constructor(
                 )
                 val plaintext = encodeCatalog(catalog).toByteArray(StandardCharsets.UTF_8)
                 try {
-                    writeAtomically(encrypt(plaintext))
+                    val encrypted = encrypt(plaintext)
+                    if (encrypted.size.toLong() > MAX_CATALOG_BYTES) {
+                        throw storageError(
+                            code = "CATALOG_TOO_LARGE",
+                            message = "The imported device catalog is too large to store safely.",
+                        )
+                    }
+                    writeAtomically(encrypted)
                     catalog
                 } catch (error: DeviceCatalogStorageException) {
                     throw error
@@ -325,6 +339,7 @@ class EncryptedDeviceCatalogStore internal constructor(
                     add(devicesJson.getJSONObject(index).toDevice())
                 }
             }
+            validateDevices(devices)
             return DeviceCatalog(
                 schemaVersion = schemaVersion,
                 importedAtEpochMillis = root.getLong("imported_at_epoch_ms"),
@@ -377,6 +392,18 @@ class EncryptedDeviceCatalogStore internal constructor(
         mappingJson = getString("mapping_json"),
     )
 
+    private fun validateDevices(devices: List<CloudImportedDevice>) {
+        if (devices.size > MAX_DEVICE_COUNT ||
+            devices.any { it.id.isBlank() } ||
+            devices.map { it.id }.toSet().size != devices.size
+        ) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The device catalog contains invalid or duplicate device IDs.",
+            )
+        }
+    }
+
     private fun storageError(code: String, message: String) =
         DeviceCatalogStorageException(code = code, message = message)
 
@@ -386,7 +413,7 @@ class EncryptedDeviceCatalogStore internal constructor(
         const val CATALOG_SCHEMA_VERSION = 1
         const val ENVELOPE_VERSION = 1
         const val MAX_CATALOG_BYTES = 16L * 1024L * 1024L
-        const val MAX_DEVICE_COUNT = 4_096
+        const val MAX_DEVICE_COUNT = 1_000
         const val MIN_IV_BYTES = 12
         const val MAX_IV_BYTES = 32
         const val GCM_TAG_BITS = 128

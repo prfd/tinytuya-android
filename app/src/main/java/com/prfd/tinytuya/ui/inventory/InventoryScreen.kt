@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -45,9 +46,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.local.DeviceCatalog
+import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
+import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
@@ -55,10 +58,24 @@ import java.util.Date
 @Composable
 fun InventoryScreen(
     catalog: DeviceCatalog,
+    discovery: LanDiscoveryUiState,
+    onDiscoverLan: () -> Unit,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
+    val unmatchedLanDevices = remember(
+        catalog.devices,
+        catalog.lanDevices,
+        catalog.lastDiscoveryAtEpochMillis,
+    ) {
+        catalog.lanDevices.filter { record ->
+            record.id !in knownIds &&
+                record.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
+        }
+    }
+    val isScanning = discovery is LanDiscoveryUiState.Scanning
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -85,7 +102,11 @@ fun InventoryScreen(
                     LocalSecurityCard(catalog)
                 }
                 item {
-                    DiscoveryNextCard()
+                    LanDiscoveryCard(
+                        catalog = catalog,
+                        discovery = discovery,
+                        onDiscoverLan = onDiscoverLan,
+                    )
                 }
                 item {
                     Text(
@@ -101,10 +122,33 @@ fun InventoryScreen(
                     items = catalog.devices,
                     key = { it.id },
                 ) { device ->
-                    InventoryDeviceCard(device)
+                    InventoryDeviceCard(
+                        device = device,
+                        lastDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis,
+                        lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
+                    )
+                }
+                if (unmatchedLanDevices.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "DISCOVERED WITHOUT CLOUD KEY",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.5.sp,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(
+                        items = unmatchedLanDevices,
+                        key = { "unmatched-${it.id}" },
+                    ) { device ->
+                        UnmatchedLanDeviceCard(device)
+                    }
                 }
                 item {
                     DataControls(
+                        enabled = !isScanning,
                         onImportFromCloud = onImportFromCloud,
                         onDeleteAllLocalData = { confirmDelete = true },
                     )
@@ -144,6 +188,12 @@ fun InventoryScreen(
 
 @Composable
 private fun InventoryHeader(catalog: DeviceCatalog) {
+    val discoveredIds = remember(catalog.lanDevices, catalog.lastDiscoveryAtEpochMillis) {
+        catalog.lanDevices
+            .filter { it.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis }
+            .mapTo(mutableSetOf()) { it.id }
+    }
+    val matchedCount = catalog.devices.count { it.id in discoveredIds }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
@@ -173,9 +223,15 @@ private fun InventoryHeader(catalog: DeviceCatalog) {
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(
-            text = when (catalog.devices.size) {
-                1 -> "1 device is secured and ready for local discovery."
-                else -> "${catalog.devices.size} devices are secured and ready for local discovery."
+            text = when {
+                catalog.lastDiscoveryAtEpochMillis != null && catalog.devices.size == 1 ->
+                    "$matchedCount of 1 secured device was found on this Wi-Fi."
+                catalog.lastDiscoveryAtEpochMillis != null ->
+                    "$matchedCount of ${catalog.devices.size} secured devices were found on this Wi-Fi."
+                catalog.devices.size == 1 ->
+                    "1 device is secured and ready for local discovery."
+                else ->
+                    "${catalog.devices.size} devices are secured and ready for local discovery."
             },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -224,7 +280,23 @@ private fun LocalSecurityCard(catalog: DeviceCatalog) {
 }
 
 @Composable
-private fun DiscoveryNextCard() {
+private fun LanDiscoveryCard(
+    catalog: DeviceCatalog,
+    discovery: LanDiscoveryUiState,
+    onDiscoverLan: () -> Unit,
+) {
+    val lastScan = remember(catalog.lastDiscoveryAtEpochMillis) {
+        catalog.lastDiscoveryAtEpochMillis?.let { timestamp ->
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(timestamp))
+        }
+    }
+    val currentDeviceCount = catalog.lanDevices.count {
+        it.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
+    }
+    val isScanning = discovery is LanDiscoveryUiState.Scanning
+    val error = discovery as? LanDiscoveryUiState.Error
+
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -232,32 +304,91 @@ private fun DiscoveryNextCard() {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.Top) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-            ) {
-                Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
-                    Text("LAN", style = MaterialTheme.typography.labelLarge, fontSize = 10.sp)
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                ) {
+                    Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+                        if (isScanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.5.dp,
+                            )
+                        } else {
+                            Text("LAN", style = MaterialTheme.typography.labelLarge, fontSize = 10.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            isScanning -> "Listening for Tuya devices"
+                            error != null -> lanErrorTitle(error.code)
+                            lastScan != null && currentDeviceCount == 1 ->
+                                "1 device heard on the LAN"
+                            lastScan != null -> "$currentDeviceCount devices heard on the LAN"
+                            else -> "Find devices on this Wi-Fi"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = when {
+                            isScanning ->
+                                "Listening on UDP 6666, 6667, and 7000 for up to six seconds."
+                            error != null -> error.message
+                            lastScan != null ->
+                                "Last scan $lastScan. Only local broadcasts were used."
+                            else ->
+                                "Match the encrypted cloud inventory to devices broadcasting on the phone's current Wi-Fi."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (error != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                    if (error != null) {
+                        Text(
+                            text = "Reference · ${error.code}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 7.dp),
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.width(13.dp))
-            Column {
-                Text("Local discovery comes next", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = "The next implementation slice will match these cloud records to devices broadcasting on your current Wi-Fi.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 5.dp),
-                )
+            OutlinedButton(
+                onClick = onDiscoverLan,
+                enabled = !isScanning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .height(50.dp)
+                    .testTag("lan_scan_button"),
+            ) {
+                Text(if (lastScan == null) "Scan this Wi-Fi" else "Scan again")
             }
         }
     }
 }
 
 @Composable
-private fun InventoryDeviceCard(device: CloudImportedDevice) {
+private fun InventoryDeviceCard(
+    device: CloudImportedDevice,
+    lastDiscoveryAtEpochMillis: Long?,
+    lanRecord: LanDeviceRecord?,
+) {
+    val lanStatus = when {
+        lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
+        lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis -> "On local network" to true
+        else -> "Not found in last scan" to false
+    }
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -302,7 +433,54 @@ private fun InventoryDeviceCard(device: CloudImportedDevice) {
                     text = if (device.localKey.isBlank) "Local key missing" else "Key secured",
                     positive = !device.localKey.isBlank,
                 )
-                StatusPill(text = "LAN scan pending", positive = false)
+                StatusPill(text = lanStatus.first, positive = lanStatus.second)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnmatchedLanDeviceCard(device: LanDeviceRecord) {
+    OutlinedCard(
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(17.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                ) {
+                    Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+                        Text("TU", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Unlinked Tuya device",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = buildString {
+                            append("Found at ${device.ip}")
+                            if (device.protocolVersion.isNotBlank()) {
+                                append(" · protocol ${device.protocolVersion}")
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.padding(top = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusPill(text = "Cloud key unavailable", positive = false)
+                StatusPill(text = "On local network", positive = true)
             }
         }
     }
@@ -334,6 +512,7 @@ private fun StatusPill(text: String, positive: Boolean) {
 
 @Composable
 private fun DataControls(
+    enabled: Boolean,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
 ) {
@@ -351,6 +530,7 @@ private fun DataControls(
         )
         OutlinedButton(
             onClick = onImportFromCloud,
+            enabled = enabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
@@ -359,13 +539,31 @@ private fun DataControls(
         }
         TextButton(
             onClick = onDeleteAllLocalData,
+            enabled = enabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp),
         ) {
-            Text("Delete all local data", color = MaterialTheme.colorScheme.error)
+            Text(
+                "Delete all local data",
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
         }
     }
+}
+
+private fun lanErrorTitle(code: String): String = when (code) {
+    "LAN_WIFI_UNAVAILABLE" -> "Connect to your device Wi-Fi"
+    "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
+    "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"
+    "LAN_NETWORK_UNAVAILABLE" -> "Wi-Fi changed during the scan"
+    "CATALOG_MISSING", "CATALOG_WRITE_FAILED", "CATALOG_ENCRYPT_FAILED" ->
+        "Discovery could not be saved"
+    else -> "Local discovery did not complete"
 }
 
 private fun deviceDescription(device: CloudImportedDevice): String =
@@ -390,7 +588,7 @@ private fun InventoryPreview() {
     TinytuyaTheme(darkTheme = true) {
         InventoryScreen(
             catalog = DeviceCatalog(
-                schemaVersion = 1,
+                schemaVersion = 2,
                 importedAtEpochMillis = 1_753_981_200_000L,
                 region = TuyaCloudRegion.WESTERN_AMERICA,
                 devices = listOf(
@@ -413,6 +611,8 @@ private fun InventoryPreview() {
                     )
                 ),
             ),
+            discovery = LanDiscoveryUiState.Idle,
+            onDiscoverLan = {},
             onImportFromCloud = {},
             onDeleteAllLocalData = {},
         )

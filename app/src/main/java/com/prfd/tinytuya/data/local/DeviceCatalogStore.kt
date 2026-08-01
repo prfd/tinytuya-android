@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -29,6 +30,18 @@ data class DeviceCatalog(
     val importedAtEpochMillis: Long,
     val region: TuyaCloudRegion,
     val devices: List<CloudImportedDevice>,
+    val lastDiscoveryAtEpochMillis: Long? = null,
+    val lanDevices: List<LanDeviceRecord> = emptyList(),
+)
+
+data class LanDeviceRecord(
+    val id: String,
+    val ip: String,
+    val protocolVersion: String,
+    val productKey: String,
+    val mac: String,
+    val origin: String,
+    val lastSeenAtEpochMillis: Long,
 )
 
 class DeviceCatalogStorageException(
@@ -40,6 +53,8 @@ interface DeviceCatalogStore {
     suspend fun load(): DeviceCatalog?
 
     suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog
+
+    suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog
 
     suspend fun deleteAll()
 }
@@ -63,70 +78,62 @@ class EncryptedDeviceCatalogStore internal constructor(
     private val mutex = Mutex()
 
     override suspend fun load(): DeviceCatalog? = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            try {
-                val input = try {
-                    atomicFile.openRead()
-                } catch (_: FileNotFoundException) {
-                    return@withLock null
-                }
-                val encrypted = input.use {
-                    if (it.channel.size() !in 1..MAX_CATALOG_BYTES) {
-                        throw storageError(
-                            code = "CATALOG_INVALID",
-                            message = "The saved device catalog has an invalid size.",
-                        )
-                    }
-                    it.readBytes()
-                }
-                val plaintext = decrypt(encrypted)
-                try {
-                    decodeCatalog(String(plaintext, StandardCharsets.UTF_8))
-                } finally {
-                    plaintext.fill(0)
-                }
-            } catch (error: DeviceCatalogStorageException) {
-                throw error
-            } catch (_: Exception) {
-                throw storageError(
-                    code = "CATALOG_READ_FAILED",
-                    message = "The saved device catalog could not be read safely.",
-                )
-            }
-        }
+        mutex.withLock { loadLocked() }
     }
 
     override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 validateDevices(result.devices)
+                val previous = loadLocked()
                 val catalog = DeviceCatalog(
                     schemaVersion = CATALOG_SCHEMA_VERSION,
                     importedAtEpochMillis = currentTimeMillis(),
                     region = result.region,
                     devices = result.devices,
+                    lastDiscoveryAtEpochMillis = previous?.lastDiscoveryAtEpochMillis,
+                    lanDevices = previous?.lanDevices.orEmpty(),
                 )
-                val plaintext = encodeCatalog(catalog).toByteArray(StandardCharsets.UTF_8)
-                try {
-                    val encrypted = encrypt(plaintext)
-                    if (encrypted.size.toLong() > MAX_CATALOG_BYTES) {
-                        throw storageError(
-                            code = "CATALOG_TOO_LARGE",
-                            message = "The imported device catalog is too large to store safely.",
-                        )
-                    }
-                    writeAtomically(encrypted)
-                    catalog
-                } catch (error: DeviceCatalogStorageException) {
-                    throw error
-                } catch (_: Exception) {
-                    throw storageError(
-                        code = "CATALOG_WRITE_FAILED",
-                        message = "The imported devices could not be stored safely.",
+                writeCatalogLocked(catalog)
+                catalog
+            }
+        }
+
+    override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                validateLanResult(result)
+                val previous = loadLocked() ?: throw storageError(
+                    code = "CATALOG_MISSING",
+                    message = "Import devices before saving local discovery results.",
+                )
+                val previousDiscovery = previous.lastDiscoveryAtEpochMillis
+                val discoveredAt = previousDiscovery?.let { prior ->
+                    maxOf(currentTimeMillis(), prior + 1)
+                } ?: currentTimeMillis()
+                val discoveredRecords = result.devices.associate { device ->
+                    device.id to LanDeviceRecord(
+                        id = device.id,
+                        ip = device.ip,
+                        protocolVersion = device.protocolVersion,
+                        productKey = device.productKey,
+                        mac = device.mac,
+                        origin = device.origin,
+                        lastSeenAtEpochMillis = discoveredAt,
                     )
-                } finally {
-                    plaintext.fill(0)
                 }
+                val knownIds = previous.devices.mapTo(mutableSetOf()) { it.id }
+                val retainedKnownRecords = previous.lanDevices.filter { record ->
+                    record.id in knownIds && record.id !in discoveredRecords
+                }
+                val catalog = previous.copy(
+                    schemaVersion = CATALOG_SCHEMA_VERSION,
+                    lastDiscoveryAtEpochMillis = discoveredAt,
+                    lanDevices = (discoveredRecords.values + retainedKnownRecords)
+                        .sortedBy { it.id },
+                )
+                writeCatalogLocked(catalog)
+                catalog
             }
         }
 
@@ -147,6 +154,62 @@ class EncryptedDeviceCatalogStore internal constructor(
                     message = "The saved device catalog could not be deleted.",
                 )
             }
+        }
+    }
+
+    private fun loadLocked(): DeviceCatalog? {
+        try {
+            val input = try {
+                atomicFile.openRead()
+            } catch (_: FileNotFoundException) {
+                return null
+            }
+            val encrypted = input.use {
+                if (it.channel.size() !in 1..MAX_CATALOG_BYTES) {
+                    throw storageError(
+                        code = "CATALOG_INVALID",
+                        message = "The saved device catalog has an invalid size.",
+                    )
+                }
+                it.readBytes()
+            }
+            val plaintext = decrypt(encrypted)
+            return try {
+                decodeCatalog(String(plaintext, StandardCharsets.UTF_8))
+            } finally {
+                plaintext.fill(0)
+            }
+        } catch (error: DeviceCatalogStorageException) {
+            throw error
+        } catch (_: Exception) {
+            throw storageError(
+                code = "CATALOG_READ_FAILED",
+                message = "The saved device catalog could not be read safely.",
+            )
+        }
+    }
+
+    private fun writeCatalogLocked(catalog: DeviceCatalog) {
+        validateCatalog(catalog)
+        val plaintext = encodeCatalog(catalog).toByteArray(StandardCharsets.UTF_8)
+        try {
+            val encrypted = encrypt(plaintext)
+            if (encrypted.size.toLong() > MAX_CATALOG_BYTES) {
+                throw storageError(
+                    code = "CATALOG_TOO_LARGE",
+                    message = "The device catalog is too large to store safely.",
+                )
+            }
+            writeAtomically(encrypted)
+        } catch (error: DeviceCatalogStorageException) {
+            throw error
+        } catch (_: Exception) {
+            throw storageError(
+                code = "CATALOG_WRITE_FAILED",
+                message = "The device catalog could not be stored safely.",
+            )
+        } finally {
+            plaintext.fill(0)
         }
     }
 
@@ -307,13 +370,20 @@ class EncryptedDeviceCatalogStore internal constructor(
                 catalog.devices.forEach { device -> put(device.toJson()) }
             }
         )
+        catalog.lastDiscoveryAtEpochMillis?.let { put("last_discovery_at_epoch_ms", it) }
+        put(
+            "lan_devices",
+            JSONArray().apply {
+                catalog.lanDevices.forEach { device -> put(device.toJson()) }
+            }
+        )
     }.toString()
 
     private fun decodeCatalog(json: String): DeviceCatalog {
         try {
             val root = JSONObject(json)
             val schemaVersion = root.getInt("schema_version")
-            if (schemaVersion != CATALOG_SCHEMA_VERSION) {
+            if (schemaVersion !in MIN_SUPPORTED_CATALOG_SCHEMA_VERSION..CATALOG_SCHEMA_VERSION) {
                 throw storageError(
                     code = "CATALOG_SCHEMA_UNSUPPORTED",
                     message = "The saved device catalog uses an unsupported data schema.",
@@ -339,13 +409,30 @@ class EncryptedDeviceCatalogStore internal constructor(
                     add(devicesJson.getJSONObject(index).toDevice())
                 }
             }
-            validateDevices(devices)
-            return DeviceCatalog(
+            val lastDiscoveryAt = root.optLong("last_discovery_at_epoch_ms", 0L)
+                .takeIf { it > 0L }
+            val lanDevicesJson = root.optJSONArray("lan_devices") ?: JSONArray()
+            if (lanDevicesJson.length() > MAX_DEVICE_COUNT) {
+                throw storageError(
+                    code = "CATALOG_INVALID",
+                    message = "The saved catalog contains too many local devices.",
+                )
+            }
+            val lanDevices = buildList(lanDevicesJson.length()) {
+                for (index in 0 until lanDevicesJson.length()) {
+                    add(lanDevicesJson.getJSONObject(index).toLanDevice())
+                }
+            }
+            val catalog = DeviceCatalog(
                 schemaVersion = schemaVersion,
                 importedAtEpochMillis = root.getLong("imported_at_epoch_ms"),
                 region = region,
                 devices = devices,
+                lastDiscoveryAtEpochMillis = lastDiscoveryAt,
+                lanDevices = lanDevices,
             )
+            validateCatalog(catalog)
+            return catalog
         } catch (error: DeviceCatalogStorageException) {
             throw error
         } catch (_: Exception) {
@@ -374,6 +461,16 @@ class EncryptedDeviceCatalogStore internal constructor(
         put("mapping_json", mappingJson)
     }
 
+    private fun LanDeviceRecord.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("ip", ip)
+        put("protocol_version", protocolVersion)
+        put("product_key", productKey)
+        put("mac", mac)
+        put("origin", origin)
+        put("last_seen_at_epoch_ms", lastSeenAtEpochMillis)
+    }
+
     private fun JSONObject.toDevice(): CloudImportedDevice = CloudImportedDevice(
         id = getString("id"),
         name = getString("name"),
@@ -392,6 +489,16 @@ class EncryptedDeviceCatalogStore internal constructor(
         mappingJson = getString("mapping_json"),
     )
 
+    private fun JSONObject.toLanDevice(): LanDeviceRecord = LanDeviceRecord(
+        id = getString("id"),
+        ip = getString("ip"),
+        protocolVersion = getString("protocol_version"),
+        productKey = getString("product_key"),
+        mac = getString("mac"),
+        origin = getString("origin"),
+        lastSeenAtEpochMillis = getLong("last_seen_at_epoch_ms"),
+    )
+
     private fun validateDevices(devices: List<CloudImportedDevice>) {
         if (devices.size > MAX_DEVICE_COUNT ||
             devices.any { it.id.isBlank() } ||
@@ -404,13 +511,77 @@ class EncryptedDeviceCatalogStore internal constructor(
         }
     }
 
+    private fun validateCatalog(catalog: DeviceCatalog) {
+        validateDevices(catalog.devices)
+        if (
+            catalog.schemaVersion !in MIN_SUPPORTED_CATALOG_SCHEMA_VERSION..CATALOG_SCHEMA_VERSION ||
+            catalog.importedAtEpochMillis <= 0L ||
+            catalog.lanDevices.size > MAX_DEVICE_COUNT ||
+            catalog.lanDevices.map { it.id }.toSet().size != catalog.lanDevices.size ||
+            (catalog.lastDiscoveryAtEpochMillis == null && catalog.lanDevices.isNotEmpty()) ||
+            catalog.lastDiscoveryAtEpochMillis?.let { it <= 0L || it == Long.MAX_VALUE } == true ||
+            catalog.lanDevices.any { record ->
+                record.id.isBlank() ||
+                    record.id.length > 128 ||
+                    !record.ip.isIpv4Address() ||
+                    record.protocolVersion.length > 128 ||
+                    record.productKey.length > 128 ||
+                    record.mac.length > 128 ||
+                    record.origin != "broadcast" ||
+                    record.lastSeenAtEpochMillis <= 0L ||
+                    record.lastSeenAtEpochMillis > (catalog.lastDiscoveryAtEpochMillis ?: 0L)
+            }
+        ) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The device catalog contains invalid local discovery data.",
+            )
+        }
+    }
+
+    private fun validateLanResult(result: LanDiscoveryResult) {
+        if (
+            result.deviceCount != result.devices.size ||
+            result.deviceCount > MAX_DEVICE_COUNT ||
+            result.matchedDeviceCount < 0 ||
+            result.unmatchedDeviceCount < 0 ||
+            result.matchedDeviceCount + result.unmatchedDeviceCount != result.deviceCount ||
+            result.devices.map { it.id }.toSet().size != result.devices.size ||
+            result.devices.any { device ->
+                device.id.isBlank() ||
+                    device.id.length > 128 ||
+                    !device.ip.isIpv4Address() ||
+                    device.protocolVersion.length > 128 ||
+                    device.productKey.length > 128 ||
+                    device.mac.length > 128 ||
+                    device.origin != "broadcast"
+            }
+        ) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The local discovery result contains invalid devices.",
+            )
+        }
+    }
+
+    private fun String.isIpv4Address(): Boolean {
+        val parts = split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.isNotEmpty() &&
+                part.length <= 3 &&
+                part.all(Char::isDigit) &&
+                part.toIntOrNull() in 0..255
+        }
+    }
+
     private fun storageError(code: String, message: String) =
         DeviceCatalogStorageException(code = code, message = message)
 
     private companion object {
         const val CATALOG_DIRECTORY = "device_catalog"
         const val CATALOG_FILE = "catalog.v1.enc"
-        const val CATALOG_SCHEMA_VERSION = 1
+        const val MIN_SUPPORTED_CATALOG_SCHEMA_VERSION = 1
+        const val CATALOG_SCHEMA_VERSION = 2
         const val ENVELOPE_VERSION = 1
         const val MAX_CATALOG_BYTES = 16L * 1024L * 1024L
         const val MAX_DEVICE_COUNT = 1_000

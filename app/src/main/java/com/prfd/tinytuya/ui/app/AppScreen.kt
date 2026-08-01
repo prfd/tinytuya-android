@@ -60,6 +60,8 @@ fun AppRoute(
             )
             is AppUiState.Inventory -> InventoryScreen(
                 catalog = destination.catalog,
+                discovery = destination.discovery,
+                onDiscoverLan = appViewModel::discoverLan,
                 onImportFromCloud = {
                     onboardingViewModel.prepareForCloudSync(destination.catalog.region)
                     appViewModel.showOnboarding()

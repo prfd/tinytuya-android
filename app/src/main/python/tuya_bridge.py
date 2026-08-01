@@ -5,19 +5,27 @@ functions must return a versioned JSON envelope and must never print secrets.
 """
 
 from contextlib import contextmanager
+import errno
 import importlib
+import ipaddress
 import json
 import logging
 import platform
 import threading
+import time
 
 
 CONTRACT_VERSION = 1
 SUPPORTED_CLOUD_REGIONS = frozenset(("cn", "us", "us-e", "eu", "eu-w", "in", "sg"))
 CLOUD_CONNECT_TIMEOUT_SECONDS = 5
 CLOUD_READ_TIMEOUT_SECONDS = 15
+LAN_MIN_SCAN_SECONDS = 1
+LAN_MAX_SCAN_SECONDS = 15
+LAN_MAX_DEVICE_COUNT = 1000
+LAN_DISCOVERY_BROADCAST_INTERVAL_SECONDS = 2
 
 _CLOUD_IMPORT_LOCK = threading.Lock()
+_LAN_DISCOVERY_LOCK = threading.Lock()
 
 
 def _encode(payload):
@@ -187,6 +195,121 @@ def _normalize_cloud_devices(devices):
     return normalized, missing_local_keys, warnings
 
 
+def _parse_lan_input(network_json, known_devices_json):
+    try:
+        network = json.loads(network_json)
+        known_devices = json.loads(known_devices_json)
+    except (TypeError, ValueError):
+        return None, None, _failure("LAN_INPUT_INVALID", "Local discovery input is not valid JSON.")
+
+    if not isinstance(network, dict) or not isinstance(known_devices, list):
+        return None, None, _failure("LAN_INPUT_INVALID", "Local discovery input has an invalid shape.")
+
+    try:
+        local_address = ipaddress.IPv4Address(str(network.get("local_ipv4") or ""))
+        prefix_length = int(network.get("prefix_length"))
+        broadcast_address = ipaddress.IPv4Address(str(network.get("broadcast_ipv4") or ""))
+        timeout_seconds = int(network.get("timeout_seconds"))
+    except (TypeError, ValueError, ipaddress.AddressValueError):
+        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi network is invalid.")
+
+    interface_name = str(network.get("interface_name") or "").strip()
+    if not interface_name or len(interface_name) > 64:
+        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi interface is invalid.")
+    if prefix_length not in range(1, 31):
+        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi prefix cannot broadcast.")
+    if timeout_seconds not in range(LAN_MIN_SCAN_SECONDS, LAN_MAX_SCAN_SECONDS + 1):
+        return None, None, _failure("LAN_TIMEOUT_INVALID", "The local discovery interval is out of range.")
+
+    interface = ipaddress.IPv4Interface(f"{local_address}/{prefix_length}")
+    if (
+        local_address.is_loopback
+        or local_address.is_multicast
+        or local_address.is_unspecified
+        or local_address in (interface.network.network_address, interface.network.broadcast_address)
+        or broadcast_address != interface.network.broadcast_address
+    ):
+        return None, None, _failure("LAN_NETWORK_INVALID", "The selected Wi-Fi addresses are inconsistent.")
+
+    if not known_devices or len(known_devices) > LAN_MAX_DEVICE_COUNT:
+        return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is empty or too large.")
+
+    scanner_devices = []
+    known_ids = set()
+    for device in known_devices:
+        if not isinstance(device, dict):
+            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is invalid.")
+        device_id = str(device.get("id") or "").strip()
+        name = str(device.get("name") or "").strip()
+        mac = str(device.get("mac") or "").strip()
+        if (
+            not device_id
+            or len(device_id) > 128
+            or len(name) > 512
+            or len(mac) > 64
+            or device_id in known_ids
+        ):
+            return None, None, _failure("LAN_KNOWN_DEVICES_INVALID", "The encrypted device catalog is invalid.")
+        known_ids.add(device_id)
+        # TinyTuya uses this lookup to label broadcasts. Polling is disabled,
+        # so local keys never need to cross this discovery boundary.
+        scanner_devices.append({"id": device_id, "name": name, "key": "", "mac": mac})
+
+    return {
+        "local_address": str(local_address),
+        "broadcast_address": str(broadcast_address),
+        "network": interface.network,
+        "timeout_seconds": timeout_seconds,
+        "known_ids": known_ids,
+    }, scanner_devices, None
+
+
+def _normalize_lan_devices(devices, network, known_ids):
+    if not isinstance(devices, dict):
+        raise ValueError("scanner response is not a dictionary")
+
+    normalized_by_id = {}
+    for key, device in devices.items():
+        if not isinstance(device, dict):
+            continue
+        device_id = str(device.get("gwId") or device.get("id") or key or "").strip()
+        ip_text = str(device.get("ip") or "").strip()
+        if not device_id or len(device_id) > 128:
+            continue
+        try:
+            address = ipaddress.IPv4Address(ip_text)
+        except ipaddress.AddressValueError:
+            continue
+        if address not in network:
+            continue
+
+        protocol_version = str(device.get("version") or "").strip()
+        product_key = str(device.get("productKey") or "").strip()
+        mac = str(device.get("mac") or "").strip()
+        if max(len(protocol_version), len(product_key), len(mac)) > 128:
+            continue
+        normalized_by_id[device_id] = {
+            "id": device_id,
+            "ip": str(address),
+            "protocol_version": protocol_version,
+            "product_key": product_key,
+            "mac": mac,
+            "origin": "broadcast",
+        }
+        if len(normalized_by_id) >= LAN_MAX_DEVICE_COUNT:
+            break
+
+    normalized = sorted(normalized_by_id.values(), key=lambda item: item["id"])
+    matched_count = sum(1 for item in normalized if item["id"] in known_ids)
+    unmatched_count = len(normalized) - matched_count
+    warnings = []
+    if not normalized:
+        warnings.append("NO_LAN_DEVICES")
+    if unmatched_count:
+        warnings.append("UNMATCHED_LAN_DEVICES")
+    return normalized, matched_count, unmatched_count, warnings
+
+
 def health():
     """Return runtime versions and perform a small AES self-test."""
 
@@ -280,3 +403,80 @@ def import_cloud(credentials_json, previous_devices_json="[]"):
         # Match known server/library failures internally, but never return the
         # exception text because it may contain request data.
         return _cloud_failure(exc)
+
+
+def discover_lan(network_json, known_devices_json):
+    """Listen for Tuya UDP broadcasts on an Android-selected Wi-Fi network."""
+
+    config, known_devices, input_error = _parse_lan_input(network_json, known_devices_json)
+    if input_error:
+        return input_error
+
+    try:
+        scanner = importlib.import_module("tinytuya.scanner")
+        started_at = time.monotonic()
+
+        # TinyTuya's desktop scanner discovers interfaces itself. Android has
+        # already selected the Wi-Fi LinkProperties, so inject that exact pair
+        # for the duration of this serialized call and restore it in finally.
+        with _LAN_DISCOVERY_LOCK:
+            original_get_ip_to_broadcast = scanner.get_ip_to_broadcast
+            original_broadcast_time = scanner.BROADCASTTIME
+            scanner_log_level = scanner.log.level
+            scanner.get_ip_to_broadcast = lambda: {
+                config["broadcast_address"]: config["local_address"]
+            }
+            # TinyTuya normally repeats its active v3.5 discovery request every
+            # six seconds. That second request lands at our scan deadline, so a
+            # sleeping or briefly busy device may only appear on the next scan.
+            # Keep the same packet and bounded listener, but give the device
+            # three opportunities during this six-second Android scan.
+            scanner.BROADCASTTIME = LAN_DISCOVERY_BROADCAST_INTERVAL_SECONDS
+            scanner.log.setLevel(logging.CRITICAL)
+            try:
+                devices = scanner.devices(
+                    verbose=False,
+                    scantime=config["timeout_seconds"],
+                    color=False,
+                    poll=False,
+                    forcescan=False,
+                    byID=True,
+                    show_timer=False,
+                    discover=True,
+                    wantids=list(config["known_ids"]),
+                    tuyadevices=known_devices,
+                    maxdevices=LAN_MAX_DEVICE_COUNT,
+                )
+            finally:
+                scanner.get_ip_to_broadcast = original_get_ip_to_broadcast
+                scanner.BROADCASTTIME = original_broadcast_time
+                scanner.log.setLevel(scanner_log_level)
+
+        normalized, matched_count, unmatched_count, warnings = _normalize_lan_devices(
+            devices,
+            config["network"],
+            config["known_ids"],
+        )
+        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+        return _success(
+            {
+                "device_count": len(normalized),
+                "matched_device_count": matched_count,
+                "unmatched_device_count": unmatched_count,
+                "duration_ms": duration_ms,
+                "warnings": warnings,
+                "devices": normalized,
+            }
+        )
+    except PermissionError:
+        return _failure("LAN_PERMISSION_DENIED", "Android blocked local network discovery.")
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            return _failure("LAN_PERMISSION_DENIED", "Android blocked local network discovery.")
+        if exc.errno == errno.EADDRINUSE:
+            return _failure("LAN_PORT_UNAVAILABLE", "A Tuya discovery port is already in use.")
+        if exc.errno in (errno.EADDRNOTAVAIL, errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTUNREACH):
+            return _failure("LAN_NETWORK_UNAVAILABLE", "The selected Wi-Fi network became unavailable.")
+        return _failure("LAN_SCAN_FAILED", "Local Tuya discovery could not be completed.")
+    except Exception:
+        return _failure("LAN_SCAN_FAILED", "Local Tuya discovery could not be completed.")

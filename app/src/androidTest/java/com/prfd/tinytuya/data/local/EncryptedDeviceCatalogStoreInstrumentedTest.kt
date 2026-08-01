@@ -3,6 +3,8 @@ package com.prfd.tinytuya.data.local
 import android.util.AtomicFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.prfd.tinytuya.data.lan.LanDiscoveredDevice
+import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -88,6 +90,51 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     }
 
     @Test
+    fun lanDiscoveryRecordsAreMergedAndEncrypted() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+
+        val merged = store.mergeLanDiscovery(sampleDiscovery())
+        val rawBytes = store.catalogFile.readBytes()
+        val loaded = store.load()
+
+        assertEquals(2, merged.schemaVersion)
+        assertEquals(FIXED_IMPORT_TIME, merged.lastDiscoveryAtEpochMillis)
+        assertEquals(2, merged.lanDevices.size)
+        assertFalse(rawBytes.containsSequence(LAN_IP.toByteArray()))
+        assertFalse(rawBytes.containsSequence(UNMATCHED_DEVICE_ID.toByteArray()))
+        assertEquals(LAN_IP, loaded?.lanDevices?.first { it.id == DEVICE_ID }?.ip)
+        assertEquals(
+            UNMATCHED_DEVICE_ID,
+            loaded?.lanDevices?.first { it.id == UNMATCHED_DEVICE_ID }?.id,
+        )
+    }
+
+    @Test
+    fun laterEmptyScanRetainsKnownLastSeenAndDropsStaleUnknownDevice() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+        val first = store.mergeLanDiscovery(sampleDiscovery())
+
+        val second = store.mergeLanDiscovery(
+            LanDiscoveryResult(
+                contractVersion = 1,
+                deviceCount = 0,
+                matchedDeviceCount = 0,
+                unmatchedDeviceCount = 0,
+                durationMillis = 6_000L,
+                warnings = listOf("NO_LAN_DEVICES"),
+                devices = emptyList(),
+            )
+        )
+
+        assertEquals(first.lastDiscoveryAtEpochMillis?.plus(1), second.lastDiscoveryAtEpochMillis)
+        assertEquals(listOf(DEVICE_ID), second.lanDevices.map { it.id })
+        assertTrue(
+            second.lanDevices.single().lastSeenAtEpochMillis <
+                requireNotNull(second.lastDiscoveryAtEpochMillis)
+        )
+    }
+
+    @Test
     fun interruptedAtomicWriteRestoresLastCompleteCatalog() = runBlocking {
         store.replaceFromCloud(sampleImport())
         AtomicFile(store.catalogFile).startWrite().close()
@@ -155,6 +202,33 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         ),
     )
 
+    private fun sampleDiscovery() = LanDiscoveryResult(
+        contractVersion = 1,
+        deviceCount = 2,
+        matchedDeviceCount = 1,
+        unmatchedDeviceCount = 1,
+        durationMillis = 320L,
+        warnings = listOf("UNMATCHED_LAN_DEVICES"),
+        devices = listOf(
+            LanDiscoveredDevice(
+                id = DEVICE_ID,
+                ip = LAN_IP,
+                protocolVersion = "3.5",
+                productKey = "product-id",
+                mac = "AA:BB:CC:DD:EE:FF",
+                origin = "broadcast",
+            ),
+            LanDiscoveredDevice(
+                id = UNMATCHED_DEVICE_ID,
+                ip = "192.0.2.15",
+                protocolVersion = "3.3",
+                productKey = "unknown-product",
+                mac = "",
+                origin = "broadcast",
+            ),
+        ),
+    )
+
     private fun androidKeyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply {
         load(null)
     }
@@ -171,5 +245,7 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         const val DEVICE_ID = "encrypted-device-id"
         const val DEVICE_NAME = "Encrypted bedroom lamp"
         const val LOCAL_KEY = "private-local-key-value"
+        const val LAN_IP = "192.0.2.14"
+        const val UNMATCHED_DEVICE_ID = "unmatched-device-id"
     }
 }

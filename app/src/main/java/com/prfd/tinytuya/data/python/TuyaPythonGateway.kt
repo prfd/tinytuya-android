@@ -3,6 +3,10 @@ package com.prfd.tinytuya.data.python
 import android.content.Context
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.prfd.tinytuya.data.lan.LanDiscoveredDevice
+import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
+import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LanKnownDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,6 +21,8 @@ interface TuyaPythonGateway {
         credentials: CloudCredentials,
         previousDevices: List<CloudImportedDevice> = emptyList(),
     ): CloudImportResult
+
+    suspend fun discoverLan(request: LanDiscoveryRequest): LanDiscoveryResult
 }
 
 data class PythonRuntimeHealth(
@@ -55,19 +61,35 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         credentials: CloudCredentials,
         previousDevices: List<CloudImportedDevice>,
     ): CloudImportResult = withContext(Dispatchers.IO) {
-        cloudImportMutex.withLock {
+        bridgeOperationMutex.withLock {
             val response = python(applicationContext)
                 .getModule(BRIDGE_MODULE)
                 .callAttr(
                     "import_cloud",
                     credentials.toBridgeJson().toString(),
-                    previousDevices.toBridgeJson().toString(),
+                    previousDevices.toCloudBridgeJson().toString(),
                 )
                 .toString()
 
             parseCloudImport(response)
         }
     }
+
+    override suspend fun discoverLan(request: LanDiscoveryRequest): LanDiscoveryResult =
+        withContext(Dispatchers.IO) {
+            bridgeOperationMutex.withLock {
+                val response = python(applicationContext)
+                    .getModule(BRIDGE_MODULE)
+                    .callAttr(
+                        "discover_lan",
+                        request.toBridgeJson().toString(),
+                        request.knownDevices.toLanBridgeJson().toString(),
+                    )
+                    .toString()
+
+                parseLanDiscovery(response)
+            }
+        }
 
     private fun parseHealth(response: String): PythonRuntimeHealth = parseResponse(response) { contractVersion, result ->
         val crypto = result.getJSONObject("crypto")
@@ -131,6 +153,54 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
             )
         }
 
+    private fun parseLanDiscovery(response: String): LanDiscoveryResult =
+        parseResponse(response) { contractVersion, result ->
+            val devicesJson = result.getJSONArray("devices")
+            val devices = buildList(devicesJson.length()) {
+                for (index in 0 until devicesJson.length()) {
+                    val device = devicesJson.getJSONObject(index)
+                    add(
+                        LanDiscoveredDevice(
+                            id = device.getString("id"),
+                            ip = device.getString("ip"),
+                            protocolVersion = device.getString("protocol_version"),
+                            productKey = device.getString("product_key"),
+                            mac = device.getString("mac"),
+                            origin = device.getString("origin"),
+                        )
+                    )
+                }
+            }
+            val deviceCount = result.getInt("device_count")
+            val matchedCount = result.getInt("matched_device_count")
+            val unmatchedCount = result.getInt("unmatched_device_count")
+            val durationMillis = result.getLong("duration_ms")
+            if (
+                deviceCount != devices.size ||
+                matchedCount < 0 ||
+                unmatchedCount < 0 ||
+                matchedCount + unmatchedCount != deviceCount ||
+                durationMillis < 0 ||
+                devices.any { it.id.isBlank() || it.ip.isBlank() || it.origin != "broadcast" } ||
+                devices.map { it.id }.toSet().size != devices.size
+            ) {
+                throw PythonBridgeException(
+                    code = "BRIDGE_RESPONSE_INVALID",
+                    message = "The Python bridge returned an invalid discovery result.",
+                )
+            }
+
+            LanDiscoveryResult(
+                contractVersion = contractVersion,
+                deviceCount = deviceCount,
+                matchedDeviceCount = matchedCount,
+                unmatchedDeviceCount = unmatchedCount,
+                durationMillis = durationMillis,
+                warnings = result.getJSONArray("warnings").toStringList(),
+                devices = devices,
+            )
+        }
+
     private inline fun <T> parseResponse(
         response: String,
         transform: (contractVersion: Int, result: JSONObject) -> T,
@@ -171,8 +241,8 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         put("device_id", sampleDeviceId?.trim().orEmpty())
     }
 
-    private fun List<CloudImportedDevice>.toBridgeJson(): JSONArray = JSONArray().apply {
-        for (device in this@toBridgeJson) {
+    private fun List<CloudImportedDevice>.toCloudBridgeJson(): JSONArray = JSONArray().apply {
+        for (device in this@toCloudBridgeJson) {
             put(
                 JSONObject().apply {
                     put("id", device.id)
@@ -195,6 +265,26 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         }
     }
 
+    private fun LanDiscoveryRequest.toBridgeJson(): JSONObject = JSONObject().apply {
+        put("interface_name", network.interfaceName)
+        put("local_ipv4", network.localIpv4)
+        put("prefix_length", network.prefixLength)
+        put("broadcast_ipv4", network.broadcastIpv4)
+        put("timeout_seconds", timeoutSeconds)
+    }
+
+    private fun List<LanKnownDevice>.toLanBridgeJson(): JSONArray = JSONArray().apply {
+        for (device in this@toLanBridgeJson) {
+            put(
+                JSONObject().apply {
+                    put("id", device.id)
+                    put("name", device.name)
+                    put("mac", device.mac)
+                }
+            )
+        }
+    }
+
     private fun JSONArray.toStringList(): List<String> = buildList(length()) {
         for (index in 0 until length()) {
             add(getString(index))
@@ -205,7 +295,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         const val BRIDGE_CONTRACT_VERSION = 1
         const val BRIDGE_MODULE = "tuya_bridge"
         val pythonStartLock = Any()
-        val cloudImportMutex = Mutex()
+        val bridgeOperationMutex = Mutex()
 
         fun python(context: Context): Python {
             if (!Python.isStarted()) {

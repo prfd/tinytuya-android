@@ -2,6 +2,9 @@ package com.prfd.tinytuya.data.python
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
+import com.prfd.tinytuya.data.lan.LanKnownDevice
+import com.prfd.tinytuya.data.lan.LanNetworkContext
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -40,6 +43,32 @@ class TuyaPythonGatewayInstrumentedTest {
             fail("Expected blank cloud credentials to be rejected")
         } catch (error: PythonBridgeException) {
             assertEquals("CLOUD_CREDENTIALS_REQUIRED", error.code)
+        }
+    }
+
+    @Test
+    fun lanDiscoveryRejectsInconsistentBroadcastBeforeOpeningSockets() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val gateway = ChaquopyTuyaPythonGateway(context)
+
+        try {
+            gateway.discoverLan(
+                LanDiscoveryRequest(
+                    network = LanNetworkContext(
+                        interfaceName = "wlan0",
+                        localIpv4 = "192.168.10.25",
+                        prefixLength = 24,
+                        broadcastIpv4 = "192.168.11.255",
+                    ),
+                    knownDevices = listOf(
+                        LanKnownDevice(id = "known-device", name = "Lamp", mac = "")
+                    ),
+                    timeoutSeconds = 6,
+                )
+            )
+            fail("Expected an inconsistent broadcast address to be rejected")
+        } catch (error: PythonBridgeException) {
+            assertEquals("LAN_NETWORK_INVALID", error.code)
         }
     }
 }

@@ -3,6 +3,8 @@ package com.prfd.tinytuya.ui.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
+import com.prfd.tinytuya.data.lan.LanDiscoveryException
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
@@ -17,7 +19,10 @@ sealed interface AppUiState {
 
     data object Onboarding : AppUiState
 
-    data class Inventory(val catalog: DeviceCatalog) : AppUiState
+    data class Inventory(
+        val catalog: DeviceCatalog,
+        val discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
+    ) : AppUiState
 
     data class Recovery(
         val code: String,
@@ -25,8 +30,22 @@ sealed interface AppUiState {
     ) : AppUiState
 }
 
+sealed interface LanDiscoveryUiState {
+    data object Idle : LanDiscoveryUiState
+
+    data object Scanning : LanDiscoveryUiState
+
+    data object Completed : LanDiscoveryUiState
+
+    data class Error(
+        val code: String,
+        val message: String,
+    ) : LanDiscoveryUiState
+}
+
 class AppViewModel(
     private val catalogStore: DeviceCatalogStore,
+    private val lanDiscoveryCoordinator: LanDiscoveryCoordinator,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -65,6 +84,44 @@ class AppViewModel(
         mutableState.value = AppUiState.Onboarding
     }
 
+    fun discoverLan() {
+        val current = mutableState.value as? AppUiState.Inventory ?: return
+        if (current.discovery is LanDiscoveryUiState.Scanning) return
+        mutableState.value = current.copy(discovery = LanDiscoveryUiState.Scanning)
+        viewModelScope.launch {
+            try {
+                val updatedCatalog = lanDiscoveryCoordinator.discover(current.catalog)
+                mutableState.value = AppUiState.Inventory(
+                    catalog = updatedCatalog,
+                    discovery = LanDiscoveryUiState.Completed,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: LanDiscoveryException) {
+                mutableState.value = current.copy(
+                    discovery = LanDiscoveryUiState.Error(
+                        code = error.code,
+                        message = error.message ?: "Local Tuya discovery could not be completed.",
+                    )
+                )
+            } catch (error: DeviceCatalogStorageException) {
+                mutableState.value = current.copy(
+                    discovery = LanDiscoveryUiState.Error(
+                        code = error.code,
+                        message = error.message ?: "The discovery result could not be stored safely.",
+                    )
+                )
+            } catch (_: Exception) {
+                mutableState.value = current.copy(
+                    discovery = LanDiscoveryUiState.Error(
+                        code = "LAN_SCAN_FAILED",
+                        message = "Local Tuya discovery could not be completed.",
+                    )
+                )
+            }
+        }
+    }
+
     fun deleteAllLocalData() {
         mutableState.value = AppUiState.Loading
         viewModelScope.launch {
@@ -88,12 +145,15 @@ class AppViewModel(
     }
 
     companion object {
-        fun factory(catalogStore: DeviceCatalogStore): ViewModelProvider.Factory =
+        fun factory(
+            catalogStore: DeviceCatalogStore,
+            lanDiscoveryCoordinator: LanDiscoveryCoordinator,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     require(modelClass.isAssignableFrom(AppViewModel::class.java))
-                    return AppViewModel(catalogStore) as T
+                    return AppViewModel(catalogStore, lanDiscoveryCoordinator) as T
                 }
             }
     }

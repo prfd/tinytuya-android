@@ -1,6 +1,8 @@
 package com.prfd.tinytuya
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
+import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
@@ -148,6 +150,9 @@ class OnboardingViewModelInstrumentedTest {
             credentials: CloudCredentials,
             previousDevices: List<CloudImportedDevice>,
         ): CloudImportResult = response(credentials, previousDevices)
+
+        override suspend fun discoverLan(request: LanDiscoveryRequest): LanDiscoveryResult =
+            error("LAN discovery is not used by this onboarding test.")
     }
 
     private class FakeCatalogStore(
@@ -168,6 +173,9 @@ class OnboardingViewModelInstrumentedTest {
                 devices = result.devices,
             )
         }
+
+        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+            error("LAN discovery is not used by this onboarding test.")
 
         override suspend fun deleteAll() = Unit
     }

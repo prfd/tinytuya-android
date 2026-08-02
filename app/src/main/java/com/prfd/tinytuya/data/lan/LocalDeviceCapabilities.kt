@@ -11,6 +11,14 @@ data class LocalBooleanControl(
     val currentValue: Boolean,
 )
 
+/**
+ * Describes which capability model and UI presentation a device receives.
+ *
+ * A profile answers "what kind of device does this look like?" It does not grant permission to
+ * poll or control that device. Local network authorization is decided independently by
+ * [LocalDeviceAccessKind]. Recognizing a category here is also not a promise that every product
+ * in that Tuya category is fully supported or validated on real hardware.
+ */
 enum class LocalDeviceProfileKind {
     SWITCH_OR_OUTLET,
     LIGHT,
@@ -19,6 +27,12 @@ enum class LocalDeviceProfileKind {
     GENERIC,
 }
 
+/**
+ * Small, common read-only sensor presentations understood by the inventory UI.
+ *
+ * These identities allow safe summaries from mapped DPS values. They remain read-only and are
+ * not considered fully supported device families until representative hardware is validated.
+ */
 enum class LocalSensorKind {
     CLIMATE,
     CONTACT,
@@ -29,12 +43,30 @@ enum class LocalSensorKind {
     GAS,
 }
 
+/**
+ * Describes what the app may attempt with a device over the local network.
+ *
+ * This is deliberately separate from [LocalDeviceProfileKind]: the profile chooses presentation,
+ * while this value is the fail-closed transport and authorization decision. The protected values
+ * also retain the reason local access is blocked so the UI can explain it clearly.
+ */
 enum class LocalDeviceAccessKind {
+    /** Local polling and capability-verified writes may be attempted. */
     DIRECT_CONTROL,
+
+    /** Local polling is allowed, but no DPS write may be dispatched. */
     STATUS_ONLY,
+
+    /** The device is reached through a Tuya gateway rather than direct TCP 6668 access. */
     GATEWAY_CHILD,
+
+    /** Gateway management and child routing are outside the current local protocol scope. */
     GATEWAY,
+
+    /** Camera streams and commands are intentionally excluded for privacy and protocol scope. */
     CAMERA,
+
+    /** Lock and access-control commands are intentionally excluded for safety. */
     LOCK,
 }
 
@@ -52,6 +84,9 @@ data class LocalDeviceProfile(
  * A writable Boolean switch must be declared by the cached Tuya mapping and
  * independently observed as a Boolean in a current local status response. A
  * numeric DP ID or device category alone is never enough to authorize a write.
+ *
+ * Category sets in this registry are conservative recognition and blocking rules, not a support
+ * checklist. Public support should stay limited to device classes covered by representative tests.
  */
 object LocalDeviceCapabilityRegistry {
     fun profile(

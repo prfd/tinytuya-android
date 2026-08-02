@@ -1230,9 +1230,9 @@ private fun HomeNetworkIllustration() {
             val houseLeft = center.x - houseWidth / 2
             val houseTop = center.y - houseHeight * 0.30f
             val roof = Path().apply {
-                moveTo(houseLeft - 9.dp.toPx(), houseTop + 5.dp.toPx())
+                moveTo(houseLeft - 2.dp.toPx(), houseTop + 5.dp.toPx())
                 lineTo(center.x, houseTop - 48.dp.toPx())
-                lineTo(houseLeft + houseWidth + 9.dp.toPx(), houseTop + 5.dp.toPx())
+                lineTo(houseLeft + houseWidth + 2.dp.toPx(), houseTop + 5.dp.toPx())
                 close()
             }
             drawPath(roof, primary)
@@ -1257,7 +1257,7 @@ private fun HomeNetworkIllustration() {
             shadowElevation = 5.dp,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .offset(y = (-16).dp),
+                .offset(y = (-12).dp),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),

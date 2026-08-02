@@ -76,6 +76,9 @@ class LocalStatusCoordinatorInstrumentedTest {
             this.request = request
             return poll(request)
         }
+
+        override suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult =
+            error("Not used")
     }
 
     private class FakeStore(

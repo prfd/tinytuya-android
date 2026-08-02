@@ -158,6 +158,11 @@ class OnboardingViewModelInstrumentedTest {
 
         override suspend fun pollLocal(request: LocalPollRequest): LocalPollResult =
             error("Local polling is not used by this onboarding test.")
+
+        override suspend fun setLocalValues(
+            request: com.prfd.tinytuya.data.lan.LocalControlRequest,
+        ): com.prfd.tinytuya.data.lan.LocalControlResult =
+            error("Local control is not used by this onboarding test.")
     }
 
     private class FakeCatalogStore(

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.prfd.tinytuya.data.lan.AndroidLanDiscoveryRadio
 import com.prfd.tinytuya.data.lan.AndroidLanNetworkResolver
 import com.prfd.tinytuya.data.lan.DefaultLanDiscoveryCoordinator
+import com.prfd.tinytuya.data.lan.DefaultLocalControlCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalStatusCoordinator
 import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
@@ -22,15 +23,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
         val gateway = ChaquopyTuyaPythonGateway(applicationContext)
+        val networkResolver = AndroidLanNetworkResolver(applicationContext)
         val lanDiscoveryCoordinator = DefaultLanDiscoveryCoordinator(
             gateway = gateway,
             catalogStore = catalogStore,
-            networkResolver = AndroidLanNetworkResolver(applicationContext),
+            networkResolver = networkResolver,
             radio = AndroidLanDiscoveryRadio(applicationContext),
         )
         val localStatusCoordinator = DefaultLocalStatusCoordinator(
             gateway = gateway,
             catalogStore = catalogStore,
+        )
+        val localControlCoordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = catalogStore,
+            networkResolver = networkResolver,
         )
         val appViewModel = ViewModelProvider(
             this,
@@ -38,6 +45,7 @@ class MainActivity : ComponentActivity() {
                 catalogStore,
                 lanDiscoveryCoordinator,
                 localStatusCoordinator,
+                localControlCoordinator,
             ),
         )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(

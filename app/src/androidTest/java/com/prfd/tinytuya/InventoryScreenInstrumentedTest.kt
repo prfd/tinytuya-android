@@ -2,6 +2,7 @@ package com.prfd.tinytuya
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,6 +18,7 @@ import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
+import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,34 +92,7 @@ class InventoryScreenInstrumentedTest {
 
     @Test
     fun mappedSwitchStatusIsRenderedWithoutRawSecrets() {
-        val catalog = sampleCatalog().copy(
-            schemaVersion = 3,
-            devices = listOf(
-                sampleCatalog().devices.single().copy(
-                    category = "kg",
-                    mappingJson = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}",
-                )
-            ),
-            lastDiscoveryAtEpochMillis = 9L,
-            lanDevices = listOf(lanRecord(id = "office-lamp", ip = "192.168.10.20")),
-            lastLocalPollAtEpochMillis = 10L,
-            localStatus = listOf(
-                LocalStatusRecord(
-                    id = "office-lamp",
-                    state = LocalPollDeviceState.RESPONDED,
-                    errorCode = "",
-                    durationMillis = 42L,
-                    dataPoints = listOf(
-                        LocalDataPoint(
-                            id = "1",
-                            kind = LocalDataPointKind.BOOLEAN,
-                            value = "true",
-                        )
-                    ),
-                    polledAtEpochMillis = 10L,
-                )
-            ),
-        )
+        val catalog = controlledCatalog()
 
         setInventoryContent(catalog = catalog)
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
@@ -128,10 +103,85 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
     }
 
+    @Test
+    fun localSwitchRequiresAnInProcessRefreshBeforeControl() {
+        setInventoryContent(catalog = controlledCatalog())
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithTag("local_switch_1").assertIsNotEnabled().assertIsOn()
+        composeRule.onNodeWithText("Refresh local devices to enable control.").assertExists()
+    }
+
+    @Test
+    fun verifiedLocalSwitchInvokesTheTypedControlCallback() {
+        var request: Triple<String, String, Boolean>? = null
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            control = LocalControlUiState.Ready,
+            onSetBooleanControl = { deviceId, dataPointId, value ->
+                request = Triple(deviceId, dataPointId, value)
+            },
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithTag("local_switch_1").assertIsOn().performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(request == Triple("office-lamp", "1", false))
+        }
+        composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun pendingControlKeepsTheLastConfirmedStateVisible() {
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            control = LocalControlUiState.Sending("office-lamp", "1", false),
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithTag("local_switch_1").assertIsOn().assertIsNotEnabled()
+        composeRule.onNodeWithText("Turning off and confirming…").assertExists()
+        composeRule.onNodeWithTag("local_control_progress").assertExists()
+    }
+
+    @Test
+    fun unconfirmedCommandAsksForRefreshWithoutClaimingTheWriteFailed() {
+        val catalog = controlledCatalog().copy(
+            lastLocalPollAtEpochMillis = 11L,
+            localStatus = listOf(
+                LocalStatusRecord(
+                    id = "office-lamp",
+                    state = LocalPollDeviceState.OFFLINE,
+                    errorCode = "LOCAL_CONTROL_UNCONFIRMED",
+                    durationMillis = 4_500L,
+                    dataPoints = emptyList(),
+                    polledAtEpochMillis = 11L,
+                )
+            ),
+        )
+        setInventoryContent(
+            catalog = catalog,
+            control = LocalControlUiState.Error(
+                deviceId = "office-lamp",
+                dataPointId = "1",
+                code = "LOCAL_CONTROL_UNCONFIRMED",
+                message = "The device did not confirm its new state.",
+            ),
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Could not confirm the requested state").assertExists()
+        composeRule.onNodeWithText("Refresh to verify", substring = true).assertExists()
+        composeRule.onNodeWithText("command failed", substring = true).assertDoesNotExist()
+    }
+
     private fun setInventoryContent(
         catalog: DeviceCatalog = sampleCatalog(),
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
+        control: LocalControlUiState = LocalControlUiState.Unavailable,
         onDiscoverLan: () -> Unit = {},
+        onSetBooleanControl: (String, String, Boolean) -> Unit = { _, _, _ -> },
         onDelete: () -> Unit = {},
     ) {
         composeRule.setContent {
@@ -139,7 +189,9 @@ class InventoryScreenInstrumentedTest {
                 InventoryScreen(
                     catalog = catalog,
                     discovery = discovery,
+                    control = control,
                     onDiscoverLan = onDiscoverLan,
+                    onSetBooleanControl = onSetBooleanControl,
                     onImportFromCloud = {},
                     onDeleteAllLocalData = onDelete,
                 )
@@ -168,6 +220,35 @@ class InventoryScreenInstrumentedTest {
                 protocolVersion = "3.5",
                 lastIp = "",
                 mappingJson = "{}",
+            )
+        ),
+    )
+
+    private fun controlledCatalog() = sampleCatalog().copy(
+        schemaVersion = 3,
+        devices = listOf(
+            sampleCatalog().devices.single().copy(
+                category = "kg",
+                mappingJson = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}",
+            )
+        ),
+        lastDiscoveryAtEpochMillis = 9L,
+        lanDevices = listOf(lanRecord(id = "office-lamp", ip = "192.168.10.20")),
+        lastLocalPollAtEpochMillis = 10L,
+        localStatus = listOf(
+            LocalStatusRecord(
+                id = "office-lamp",
+                state = LocalPollDeviceState.RESPONDED,
+                errorCode = "",
+                durationMillis = 42L,
+                dataPoints = listOf(
+                    LocalDataPoint(
+                        id = "1",
+                        kind = LocalDataPointKind.BOOLEAN,
+                        value = "true",
+                    )
+                ),
+                polledAtEpochMillis = 10L,
             )
         ),
     )

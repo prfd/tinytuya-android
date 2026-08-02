@@ -34,7 +34,7 @@ class LanDiscoveryCoordinatorInstrumentedTest {
 
         assertEquals("192.168.10.42", catalog.lanDevices.single().ip)
         assertEquals("192.168.10.5", outcome.network.localIpv4)
-        assertEquals(6, gateway.request?.timeoutSeconds)
+        assertEquals(12, gateway.request?.timeoutSeconds)
         assertEquals(listOf("known-device"), gateway.request?.knownDevices?.map { it.id })
         assertFalse(gateway.request.toString().contains(LOCAL_KEY))
         assertTrue(radio.acquired)
@@ -97,6 +97,9 @@ class LanDiscoveryCoordinatorInstrumentedTest {
         }
 
         override suspend fun pollLocal(request: LocalPollRequest): LocalPollResult =
+            error("Not used")
+
+        override suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult =
             error("Not used")
     }
 

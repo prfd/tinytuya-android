@@ -7,6 +7,7 @@ import java.math.BigDecimal
 import org.json.JSONObject
 
 internal data class PresentedDataPoint(
+    val id: String,
     val label: String,
     val value: String,
 )
@@ -32,6 +33,7 @@ internal fun presentLocalDataPoints(
             isOnlyMappedSwitch = mappedSwitchCount == 1,
         )
         PresentedDataPoint(
+            id = dataPoint.id,
             label = label,
             value = dataPointValue(
                 dataPoint = dataPoint,

@@ -99,6 +99,6 @@ class DefaultLanDiscoveryCoordinator(
     }
 
     private companion object {
-        const val DISCOVERY_TIMEOUT_SECONDS = 6
+        const val DISCOVERY_TIMEOUT_SECONDS = 12
     }
 }

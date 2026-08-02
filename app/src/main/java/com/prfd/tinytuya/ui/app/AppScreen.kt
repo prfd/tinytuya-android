@@ -46,6 +46,7 @@ fun AppRoute(
 
     AnimatedContent(
         targetState = state,
+        contentKey = { destination -> destination::class },
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "app destination",
     ) { destination ->
@@ -61,7 +62,9 @@ fun AppRoute(
             is AppUiState.Inventory -> InventoryScreen(
                 catalog = destination.catalog,
                 discovery = destination.discovery,
+                control = destination.control,
                 onDiscoverLan = appViewModel::discoverLan,
+                onSetBooleanControl = appViewModel::setBooleanControl,
                 onImportFromCloud = {
                     onboardingViewModel.prepareForCloudSync(destination.catalog.region)
                     appViewModel.showOnboarding()

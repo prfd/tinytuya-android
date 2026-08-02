@@ -449,10 +449,11 @@ def discover_lan(network_json, known_devices_json):
                 config["broadcast_address"]: config["local_address"]
             }
             # TinyTuya normally repeats its active v3.5 discovery request every
-            # six seconds. That second request lands at our scan deadline, so a
-            # sleeping or briefly busy device may only appear on the next scan.
-            # Keep the same packet and bounded listener, but give the device
-            # three opportunities during this six-second Android scan.
+            # six seconds, while older devices may advertise only periodically.
+            # Android uses a bounded twelve-second listener which exits early
+            # after every known ID is found. Repeat the same upstream packet
+            # every two seconds so a sleeping or briefly busy device gets more
+            # than one opportunity without requiring another user-initiated scan.
             scanner.BROADCASTTIME = LAN_DISCOVERY_BROADCAST_INTERVAL_SECONDS
             scanner.log.setLevel(logging.CRITICAL)
             try:
@@ -512,6 +513,7 @@ def discover_lan(network_json, known_devices_json):
 LOCAL_POLL_MAX_DEVICE_COUNT = 32
 LOCAL_POLL_MAX_DATA_POINT_COUNT = 256
 LOCAL_POLL_SOCKET_TIMEOUT_SECONDS = 1.5
+LOCAL_POLL_ATTEMPT_DELAYS_SECONDS = (0.0, 0.25, 0.75)
 LOCAL_POLL_WORKER_COUNT = 4
 LOCAL_POLL_PROTOCOLS = frozenset(("3.1", "3.2", "3.3", "3.4", "3.5"))
 
@@ -703,53 +705,66 @@ def _poll_one_local_device(tinytuya, config):
     import socket
 
     started_at = time.monotonic()
-    device = None
     state = "error"
     error_code = "LOCAL_STATUS_FAILED"
     data_points = []
-    warnings = []
-    try:
-        device = tinytuya.Device(
-            config["id"],
-            address=config["ip"],
-            local_key=config["local_key"],
-            version=float(config["protocol_version"]),
-            persist=False,
-            connection_timeout=LOCAL_POLL_SOCKET_TIMEOUT_SECONDS,
-            connection_retry_limit=1,
-            connection_retry_delay=0,
-        )
-        device.set_retry(False)
-        status = device.status()
-        if isinstance(status, dict) and status.get("Err") is not None:
-            state, error_code = _local_poll_error(status.get("Err"))
-        elif isinstance(status, dict):
-            state = "responded"
-            error_code = ""
-            data_points, warnings = _normalize_local_data_points(status.get("dps"))
-        else:
+    warnings = set()
+    for delay_seconds in LOCAL_POLL_ATTEMPT_DELAYS_SECONDS:
+        if delay_seconds:
+            time.sleep(delay_seconds)
+
+        device = None
+        attempt_warnings = []
+        try:
+            device = tinytuya.Device(
+                config["id"],
+                address=config["ip"],
+                local_key=config["local_key"],
+                version=float(config["protocol_version"]),
+                persist=False,
+                connection_timeout=LOCAL_POLL_SOCKET_TIMEOUT_SECONDS,
+                connection_retry_limit=1,
+                connection_retry_delay=0,
+            )
+            device.set_retry(False)
+            status = device.status()
+            if isinstance(status, dict) and status.get("Err") is not None:
+                state, error_code = _local_poll_error(status.get("Err"))
+            elif isinstance(status, dict):
+                state = "responded"
+                error_code = ""
+                data_points, attempt_warnings = _normalize_local_data_points(status.get("dps"))
+            else:
+                state = "offline"
+                error_code = "LOCAL_DEVICE_NO_RESPONSE"
+                data_points = []
+        except (socket.timeout, TimeoutError):
             state = "offline"
-            error_code = "LOCAL_DEVICE_NO_RESPONSE"
-    except (socket.timeout, TimeoutError):
-        state = "offline"
-        error_code = "LOCAL_DEVICE_TIMEOUT"
-    except OSError:
-        state = "offline"
-        error_code = "LOCAL_DEVICE_OFFLINE"
-    except Exception:
-        state = "error"
-        error_code = "LOCAL_STATUS_FAILED"
-    finally:
-        if device is not None:
-            try:
-                device.close()
-            except Exception:
-                pass
-            try:
-                device.local_key = b""
-                device.real_local_key = b""
-            except Exception:
-                pass
+            error_code = "LOCAL_DEVICE_TIMEOUT"
+            data_points = []
+        except OSError:
+            state = "offline"
+            error_code = "LOCAL_DEVICE_OFFLINE"
+            data_points = []
+        except Exception:
+            state = "error"
+            error_code = "LOCAL_STATUS_FAILED"
+            data_points = []
+        finally:
+            if device is not None:
+                try:
+                    device.close()
+                except Exception:
+                    pass
+                try:
+                    device.local_key = b""
+                    device.real_local_key = b""
+                except Exception:
+                    pass
+
+        warnings.update(attempt_warnings)
+        if state == "responded" or error_code == "LOCAL_KEY_OR_VERSION_INVALID":
+            break
 
     duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
     return {
@@ -758,7 +773,7 @@ def _poll_one_local_device(tinytuya, config):
         "error_code": error_code,
         "duration_ms": duration_ms,
         "data_points": data_points,
-    }, warnings
+    }, sorted(warnings)
 
 
 def poll_local(network_json, devices_json):
@@ -817,3 +832,281 @@ def poll_local(network_json, devices_json):
     finally:
         for device in devices:
             device["local_key"] = ""
+
+
+# Local writes are deliberately narrower than status polling. The first app
+# profile sends one verified Boolean switch value, while this boundary accepts
+# a small primitive batch so light and cover profiles can be added without
+# changing the transport contract.
+LOCAL_CONTROL_MAX_CHANGE_COUNT = 8
+LOCAL_CONTROL_MAX_SEND_ATTEMPTS = 2
+LOCAL_CONTROL_RETRY_DELAY_SECONDS = 0.35
+LOCAL_CONTROL_CONFIRM_DELAYS_SECONDS = (0.25, 0.75, 1.25)
+LOCAL_CONTROL_WRITABLE_KINDS = frozenset(("boolean", "integer", "decimal", "string"))
+
+
+def _parse_local_control_input(network_json, device_json, changes_json):
+    try:
+        device = json.loads(device_json)
+        changes = json.loads(changes_json)
+    except (TypeError, ValueError):
+        return None, None, None, _failure(
+            "LOCAL_CONTROL_INPUT_INVALID",
+            "Local control input is not valid JSON.",
+        )
+
+    if not isinstance(device, dict) or not isinstance(changes, list):
+        return None, None, None, _failure(
+            "LOCAL_CONTROL_INPUT_INVALID",
+            "Local control input has an invalid shape.",
+        )
+
+    network, devices, device_error = _parse_local_poll_input(
+        network_json,
+        json.dumps([device], ensure_ascii=False, separators=(",", ":")),
+    )
+    if device_error:
+        return None, None, None, _failure(
+            "LOCAL_CONTROL_DEVICE_INVALID",
+            "The local control target is invalid or outside the selected Wi-Fi.",
+        )
+
+    if not changes or len(changes) > LOCAL_CONTROL_MAX_CHANGE_COUNT:
+        return None, None, None, _failure(
+            "LOCAL_CONTROL_CHANGES_INVALID",
+            "The local control request is empty or too large.",
+        )
+
+    normalized = []
+    seen_ids = set()
+    for change in changes:
+        if not isinstance(change, dict):
+            return None, None, None, _failure(
+                "LOCAL_CONTROL_CHANGES_INVALID",
+                "The local control request contains an invalid value.",
+            )
+        data_point_id = str(change.get("id") or "").strip()
+        kind = str(change.get("kind") or "").strip().lower()
+        value = str(change.get("value") or "")
+        if (
+            not data_point_id.isdigit()
+            or len(data_point_id) > 8
+            or int(data_point_id) <= 0
+            or data_point_id in seen_ids
+            or kind not in LOCAL_CONTROL_WRITABLE_KINDS
+            or len(value) > 4096
+        ):
+            return None, None, None, _failure(
+                "LOCAL_CONTROL_CHANGES_INVALID",
+                "The local control request contains an invalid value.",
+            )
+
+        wire_value = None
+        normalized_value = value
+        try:
+            if kind == "boolean" and value in ("true", "false"):
+                wire_value = value == "true"
+            elif kind == "integer":
+                wire_value = int(value)
+                normalized_value = str(wire_value)
+            elif kind == "decimal":
+                import math
+
+                wire_value = float(value)
+                if not math.isfinite(wire_value):
+                    wire_value = None
+                else:
+                    normalized_value = repr(wire_value)
+            elif kind == "string":
+                wire_value = value
+        except (TypeError, ValueError, OverflowError):
+            wire_value = None
+
+        if wire_value is None:
+            return None, None, None, _failure(
+                "LOCAL_CONTROL_CHANGES_INVALID",
+                "The local control request contains an invalid value.",
+            )
+        seen_ids.add(data_point_id)
+        normalized.append(
+            {
+                "id": data_point_id,
+                "kind": kind,
+                "value": normalized_value,
+                "wire_value": wire_value,
+            }
+        )
+
+    return network, devices[0], normalized, None
+
+
+def _local_control_matches(data_points, changes):
+    actual = {
+        item["id"]: (item["kind"], item["value"])
+        for item in data_points
+    }
+    return all(
+        actual.get(change["id"]) == (change["kind"], change["value"])
+        for change in changes
+    )
+
+
+def _set_local_values_one(tinytuya, config, changes):
+    import socket
+
+    started_at = time.monotonic()
+    state = "error"
+    error_code = "LOCAL_CONTROL_FAILED"
+    data_points = []
+    observed_data_points = None
+    terminal_error = False
+    try:
+        requested = {change["id"]: change["wire_value"] for change in changes}
+        # Some Tuya devices apply CONTROL but never send its optional response.
+        # Waiting for that packet creates a false timeout even though the relay
+        # has already changed. Each delivery attempt sends only once and treats
+        # independent status reads as the confirmation authority. If delivery
+        # or read-back is missed, resend the same idempotent target state once
+        # on a fresh socket.
+        for send_attempt in range(LOCAL_CONTROL_MAX_SEND_ATTEMPTS):
+            if send_attempt:
+                time.sleep(LOCAL_CONTROL_RETRY_DELAY_SECONDS)
+
+            device = None
+            observed_data_points = None
+            state = "offline"
+            error_code = "LOCAL_CONTROL_UNCONFIRMED"
+            data_points = []
+            try:
+                device = tinytuya.Device(
+                    config["id"],
+                    address=config["ip"],
+                    local_key=config["local_key"],
+                    version=float(config["protocol_version"]),
+                    persist=False,
+                    connection_timeout=LOCAL_POLL_SOCKET_TIMEOUT_SECONDS,
+                    connection_retry_limit=1,
+                    connection_retry_delay=0,
+                )
+                device.set_retry(False)
+                control_response = device.set_multiple_values(requested, nowait=True)
+                if isinstance(control_response, dict) and control_response.get("Err") is not None:
+                    state, error_code = _local_poll_error(control_response.get("Err"))
+                    terminal_error = error_code == "LOCAL_KEY_OR_VERSION_INVALID"
+
+                if not terminal_error:
+                    for delay_seconds in LOCAL_CONTROL_CONFIRM_DELAYS_SECONDS:
+                        time.sleep(delay_seconds)
+                        try:
+                            status = device.status()
+                        except (socket.timeout, TimeoutError):
+                            state = "offline"
+                            error_code = "LOCAL_DEVICE_TIMEOUT"
+                            continue
+                        except OSError:
+                            state = "offline"
+                            error_code = "LOCAL_DEVICE_OFFLINE"
+                            continue
+
+                        if isinstance(status, dict) and status.get("Err") is not None:
+                            state, error_code = _local_poll_error(status.get("Err"))
+                            if error_code == "LOCAL_KEY_OR_VERSION_INVALID":
+                                terminal_error = True
+                                break
+                            continue
+                        if not isinstance(status, dict):
+                            state = "offline"
+                            error_code = "LOCAL_CONTROL_UNCONFIRMED"
+                            continue
+
+                        data_points, unused_warnings = _normalize_local_data_points(status.get("dps"))
+                        del unused_warnings
+                        observed_data_points = data_points
+                        if _local_control_matches(data_points, changes):
+                            state = "confirmed"
+                            error_code = ""
+                            break
+                        state = "rejected"
+                        error_code = "LOCAL_CONTROL_NOT_APPLIED"
+            except (socket.timeout, TimeoutError):
+                state = "offline"
+                error_code = "LOCAL_DEVICE_TIMEOUT"
+                data_points = []
+            except OSError:
+                state = "offline"
+                error_code = "LOCAL_DEVICE_OFFLINE"
+                data_points = []
+            except Exception:
+                state = "error"
+                error_code = "LOCAL_CONTROL_FAILED"
+                data_points = []
+            finally:
+                if device is not None:
+                    try:
+                        device.close()
+                    except Exception:
+                        pass
+                    try:
+                        device.local_key = b""
+                        device.real_local_key = b""
+                    except Exception:
+                        pass
+
+            if state == "confirmed" or terminal_error:
+                break
+
+        if state != "confirmed":
+            if observed_data_points is not None:
+                state = "rejected"
+                error_code = "LOCAL_CONTROL_NOT_APPLIED"
+                data_points = observed_data_points
+            elif error_code not in (
+                "LOCAL_KEY_OR_VERSION_INVALID",
+                "LOCAL_PROTOCOL_ERROR",
+                "LOCAL_CONTROL_FAILED",
+            ):
+                state = "offline"
+                error_code = "LOCAL_CONTROL_UNCONFIRMED"
+                data_points = []
+    except Exception:
+        state = "error"
+        error_code = "LOCAL_CONTROL_FAILED"
+        data_points = []
+
+    duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+    return {
+        "id": config["id"],
+        "state": state,
+        "error_code": error_code,
+        "duration_ms": duration_ms,
+        "data_points": data_points,
+    }
+
+
+def set_values(network_json, device_json, changes_json):
+    """Set a bounded primitive DPS batch and confirm it with a fresh status read."""
+
+    network, device, changes, input_error = _parse_local_control_input(
+        network_json,
+        device_json,
+        changes_json,
+    )
+    if input_error:
+        return input_error
+
+    try:
+        import tinytuya
+
+        del network  # Validation boundary only; the target was checked against it.
+        logging.getLogger("tinytuya").setLevel(logging.WARNING)
+        result = _set_local_values_one(tinytuya, device, changes)
+        return _success(result)
+    except Exception:
+        return _failure(
+            "LOCAL_CONTROL_FAILED",
+            "The local command could not be completed safely.",
+        )
+    finally:
+        device["local_key"] = ""
+        for change in changes:
+            change["wire_value"] = None

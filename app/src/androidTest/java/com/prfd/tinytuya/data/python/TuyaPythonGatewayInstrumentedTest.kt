@@ -5,6 +5,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
 import com.prfd.tinytuya.data.lan.LanKnownDevice
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LocalControlChange
+import com.prfd.tinytuya.data.lan.LocalControlDevice
+import com.prfd.tinytuya.data.lan.LocalControlRequest
+import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDevice
 import com.prfd.tinytuya.data.lan.LocalPollRequest
 import kotlinx.coroutines.runBlocking
@@ -101,6 +105,41 @@ class TuyaPythonGatewayInstrumentedTest {
             fail("Expected an out-of-subnet poll address to be rejected")
         } catch (error: PythonBridgeException) {
             assertEquals("LOCAL_POLL_DEVICES_INVALID", error.code)
+        }
+    }
+
+    @Test
+    fun localControlRejectsAddressOutsideSelectedWifiBeforeWriting() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val gateway = ChaquopyTuyaPythonGateway(context)
+
+        try {
+            gateway.setLocalValues(
+                LocalControlRequest(
+                    network = LanNetworkContext(
+                        interfaceName = "wlan0",
+                        localIpv4 = "192.168.10.25",
+                        prefixLength = 24,
+                        broadcastIpv4 = "192.168.10.255",
+                    ),
+                    device = LocalControlDevice(
+                        id = "known-device",
+                        ip = "192.168.11.42",
+                        localKey = SensitiveString.of("0123456789abcdef"),
+                        protocolVersion = "3.5",
+                    ),
+                    changes = listOf(
+                        LocalControlChange(
+                            id = "1",
+                            kind = LocalDataPointKind.BOOLEAN,
+                            value = "false",
+                        )
+                    ),
+                )
+            )
+            fail("Expected an out-of-subnet control target to be rejected")
+        } catch (error: PythonBridgeException) {
+            assertEquals("LOCAL_CONTROL_DEVICE_INVALID", error.code)
         }
     }
 }

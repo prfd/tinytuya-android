@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,11 +49,14 @@ import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
+import com.prfd.tinytuya.data.lan.LocalBooleanControl
+import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
+import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
@@ -61,7 +65,9 @@ import java.util.Date
 fun InventoryScreen(
     catalog: DeviceCatalog,
     discovery: LanDiscoveryUiState,
+    control: LocalControlUiState,
     onDiscoverLan: () -> Unit,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
 ) {
@@ -78,7 +84,8 @@ fun InventoryScreen(
         }
     }
     val isBusy = discovery is LanDiscoveryUiState.Scanning ||
-        discovery is LanDiscoveryUiState.ReadingStatus
+        discovery is LanDiscoveryUiState.ReadingStatus ||
+        control is LocalControlUiState.Sending
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -109,6 +116,7 @@ fun InventoryScreen(
                         catalog = catalog,
                         discovery = discovery,
                         onDiscoverLan = onDiscoverLan,
+                        isControlBusy = control is LocalControlUiState.Sending,
                     )
                 }
                 item {
@@ -128,10 +136,11 @@ fun InventoryScreen(
                     InventoryDeviceCard(
                         device = device,
                         lastDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis,
-                        lastLocalPollAtEpochMillis = catalog.lastLocalPollAtEpochMillis,
                         lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
                         localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
                         discovery = discovery,
+                        control = control,
+                        onSetBooleanControl = onSetBooleanControl,
                     )
                 }
                 if (unmatchedLanDevices.isNotEmpty()) {
@@ -290,6 +299,7 @@ private fun LanDiscoveryCard(
     catalog: DeviceCatalog,
     discovery: LanDiscoveryUiState,
     onDiscoverLan: () -> Unit,
+    isControlBusy: Boolean,
 ) {
     val lastScan = remember(catalog.lastDiscoveryAtEpochMillis) {
         catalog.lastDiscoveryAtEpochMillis?.let { timestamp ->
@@ -312,7 +322,7 @@ private fun LanDiscoveryCard(
     }
     val isScanning = discovery is LanDiscoveryUiState.Scanning
     val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
-    val isBusy = isScanning || isReadingStatus
+    val isBusy = isScanning || isReadingStatus || isControlBusy
     val error = discovery as? LanDiscoveryUiState.Error
 
     OutlinedCard(
@@ -361,7 +371,7 @@ private fun LanDiscoveryCard(
                     Text(
                         text = when {
                             isScanning ->
-                                "Listening on UDP 6666, 6667, and 7000 for up to six seconds."
+                                "Listening on UDP 6666, 6667, and 7000 for up to twelve seconds."
                             isReadingStatus ->
                                 "Connecting directly over TCP 6668. Tuya Cloud is not contacted."
                             error != null -> error.message
@@ -409,16 +419,16 @@ private fun LanDiscoveryCard(
 private fun InventoryDeviceCard(
     device: CloudImportedDevice,
     lastDiscoveryAtEpochMillis: Long?,
-    lastLocalPollAtEpochMillis: Long?,
     lanRecord: LanDeviceRecord?,
     localStatus: LocalStatusRecord?,
     discovery: LanDiscoveryUiState,
+    control: LocalControlUiState,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
     val isOnCurrentLan = lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
     val isCurrentStatus = isOnCurrentLan &&
         localStatus != null &&
-        localStatus.polledAtEpochMillis >= (lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE) &&
-        localStatus.polledAtEpochMillis == lastLocalPollAtEpochMillis
+        localStatus.polledAtEpochMillis >= (lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
     val lanStatus = when {
         lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
         isOnCurrentLan -> "On local network" to true
@@ -476,6 +486,9 @@ private fun InventoryDeviceCard(
                 isCurrentStatus = isCurrentStatus,
                 isOnCurrentLan = isOnCurrentLan,
                 isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
+                lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+                control = control,
+                onSetBooleanControl = onSetBooleanControl,
             )
         }
     }
@@ -488,6 +501,9 @@ private fun LocalStatusPanel(
     isCurrentStatus: Boolean,
     isOnCurrentLan: Boolean,
     isReadingStatus: Boolean,
+    lastDiscoveryAtEpochMillis: Long?,
+    control: LocalControlUiState,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
     if (!isOnCurrentLan) return
     val updatedAt = remember(status?.polledAtEpochMillis) {
@@ -496,8 +512,26 @@ private fun LocalStatusPanel(
                 .format(Date(timestamp))
         }
     }
-    val presentedDataPoints = remember(device.mappingJson, status?.dataPoints) {
-        status?.let { presentLocalDataPoints(device, it.dataPoints) }.orEmpty()
+    val booleanControls = remember(
+        device,
+        status,
+        lastDiscoveryAtEpochMillis,
+    ) {
+        LocalDeviceCapabilityRegistry.booleanControls(
+            device = device,
+            status = status,
+            lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+        )
+    }
+    val presentedDataPoints = remember(
+        device.mappingJson,
+        status?.dataPoints,
+        booleanControls,
+    ) {
+        val controlledIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
+        status?.let { presentLocalDataPoints(device, it.dataPoints) }
+            .orEmpty()
+            .filterNot { it.id in controlledIds }
     }
 
     Surface(
@@ -513,6 +547,8 @@ private fun LocalStatusPanel(
                     isReadingStatus -> "Reading status…"
                     !isCurrentStatus -> "Local status not read yet"
                     status?.state == LocalPollDeviceState.RESPONDED -> "Last local response"
+                    status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
+                        "Could not confirm the requested state"
                     status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
                     else -> "Status could not be decoded"
                 },
@@ -537,7 +573,7 @@ private fun LocalStatusPanel(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 status?.state == LocalPollDeviceState.RESPONDED -> {
-                    if (presentedDataPoints.isEmpty()) {
+                    if (presentedDataPoints.isEmpty() && booleanControls.isEmpty()) {
                         Text(
                             text = "The device answered but did not return readable data points.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -577,6 +613,14 @@ private fun LocalStatusPanel(
                             modifier = Modifier.padding(top = 10.dp),
                         )
                     }
+                    if (booleanControls.isNotEmpty()) {
+                        LocalBooleanControls(
+                            deviceId = device.id,
+                            controls = booleanControls,
+                            controlState = control,
+                            onSetBooleanControl = onSetBooleanControl,
+                        )
+                    }
                 }
                 else -> Text(
                     text = localStatusMessage(status?.errorCode.orEmpty()),
@@ -587,6 +631,111 @@ private fun LocalStatusPanel(
             }
         }
     }
+}
+
+@Composable
+private fun LocalBooleanControls(
+    deviceId: String,
+    controls: List<LocalBooleanControl>,
+    controlState: LocalControlUiState,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+) {
+    val isSending = controlState is LocalControlUiState.Sending
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp),
+    ) {
+        Text(
+            text = "LOCAL CONTROL",
+            style = MaterialTheme.typography.labelLarge,
+            fontSize = 10.sp,
+            letterSpacing = 1.4.sp,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        controls.forEach { localControl ->
+            val appliesToControl = controlState.appliesTo(
+                deviceId = deviceId,
+                dataPointId = localControl.dataPointId,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = localControl.label,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = localControlSupportingText(
+                            state = controlState,
+                            appliesToControl = appliesToControl,
+                            requestedValue = (controlState as? LocalControlUiState.Sending)?.value,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (appliesToControl && controlState is LocalControlUiState.Error) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                if (appliesToControl && isSending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .testTag("local_control_progress"),
+                        strokeWidth = 2.5.dp,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                Text(
+                    text = if (localControl.currentValue) "On" else "Off",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(10.dp))
+                Switch(
+                    checked = localControl.currentValue,
+                    onCheckedChange = { requestedValue ->
+                        onSetBooleanControl(
+                            deviceId,
+                            localControl.dataPointId,
+                            requestedValue,
+                        )
+                    },
+                    enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
+                    modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
+                )
+            }
+        }
+    }
+}
+
+private fun LocalControlUiState.appliesTo(deviceId: String, dataPointId: String): Boolean =
+    when (this) {
+        is LocalControlUiState.Sending -> this.deviceId == deviceId && this.dataPointId == dataPointId
+        is LocalControlUiState.Confirmed -> this.deviceId == deviceId && this.dataPointId == dataPointId
+        is LocalControlUiState.Error -> this.deviceId == deviceId && this.dataPointId == dataPointId
+        LocalControlUiState.Ready, LocalControlUiState.Unavailable -> false
+    }
+
+private fun localControlSupportingText(
+    state: LocalControlUiState,
+    appliesToControl: Boolean,
+    requestedValue: Boolean?,
+): String = when {
+    state is LocalControlUiState.Unavailable -> "Refresh local devices to enable control."
+    appliesToControl && state is LocalControlUiState.Sending ->
+        if (requestedValue == true) "Turning on and confirming…" else "Turning off and confirming…"
+    appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
+    appliesToControl && state is LocalControlUiState.Error -> state.message
+    else -> "Direct on this Wi-Fi · every change is confirmed."
 }
 
 @Composable
@@ -722,6 +871,8 @@ private fun localStatusMessage(code: String): String = when (code) {
     "LOCAL_DEVICE_OFFLINE" -> "The device was found but did not accept a local connection."
     "LOCAL_DEVICE_TIMEOUT", "LOCAL_DEVICE_NO_RESPONSE" ->
         "The device was found but did not answer before the local timeout."
+    "LOCAL_CONTROL_UNCONFIRMED" ->
+        "No readable status came back after the command. Refresh to verify the device's actual state."
     "LOCAL_KEY_OR_VERSION_INVALID" ->
         "The saved local key or protocol version was rejected. A cloud sync may refresh it."
     "LOCAL_PROTOCOL_ERROR" ->
@@ -775,7 +926,9 @@ private fun InventoryPreview() {
                 ),
             ),
             discovery = LanDiscoveryUiState.Idle,
+            control = LocalControlUiState.Unavailable,
             onDiscoverLan = {},
+            onSetBooleanControl = { _, _, _ -> },
             onImportFromCloud = {},
             onDeleteAllLocalData = {},
         )

@@ -8,6 +8,11 @@ import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.lan.LanKnownDevice
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LocalControlChange
+import com.prfd.tinytuya.data.lan.LocalControlDevice
+import com.prfd.tinytuya.data.lan.LocalControlRequest
+import com.prfd.tinytuya.data.lan.LocalControlResult
+import com.prfd.tinytuya.data.lan.LocalControlState
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDevice
@@ -33,6 +38,8 @@ interface TuyaPythonGateway {
     suspend fun discoverLan(request: LanDiscoveryRequest): LanDiscoveryResult
 
     suspend fun pollLocal(request: LocalPollRequest): LocalPollResult
+
+    suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult
 }
 
 data class PythonRuntimeHealth(
@@ -114,6 +121,23 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                     .toString()
 
                 parseLocalPoll(response)
+            }
+        }
+
+    override suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult =
+        withContext(Dispatchers.IO) {
+            bridgeOperationMutex.withLock {
+                val response = python(applicationContext)
+                    .getModule(BRIDGE_MODULE)
+                    .callAttr(
+                        "set_values",
+                        request.network.toBridgeJson().toString(),
+                        request.device.toLocalControlBridgeJson().toString(),
+                        request.changes.toLocalControlBridgeJson().toString(),
+                    )
+                    .toString()
+
+                parseLocalControl(response, request)
             }
         }
 
@@ -237,23 +261,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                     val state = LocalPollDeviceState.entries.firstOrNull {
                         it.wireValue == stateCode
                     } ?: throw invalidLocalPollResponse()
-                    val dataPointsJson = device.getJSONArray("data_points")
-                    val dataPoints = buildList(dataPointsJson.length()) {
-                        for (dataPointIndex in 0 until dataPointsJson.length()) {
-                            val dataPoint = dataPointsJson.getJSONObject(dataPointIndex)
-                            val kindCode = dataPoint.getString("kind")
-                            val kind = LocalDataPointKind.entries.firstOrNull {
-                                it.wireValue == kindCode
-                            } ?: throw invalidLocalPollResponse()
-                            add(
-                                LocalDataPoint(
-                                    id = dataPoint.getString("id"),
-                                    kind = kind,
-                                    value = dataPoint.getString("value"),
-                                )
-                            )
-                        }
-                    }
+                    val dataPoints = parseLocalDataPoints(device.getJSONArray("data_points"))
                     add(
                         LocalPolledDevice(
                             id = device.getString("id"),
@@ -297,6 +305,67 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
             )
         }
 
+    private fun parseLocalControl(
+        response: String,
+        request: LocalControlRequest,
+    ): LocalControlResult = parseResponse(response) { contractVersion, result ->
+        val stateCode = result.getString("state")
+        val state = LocalControlState.entries.firstOrNull { it.wireValue == stateCode }
+            ?: throw invalidLocalControlResponse()
+        val dataPoints = parseLocalDataPoints(result.getJSONArray("data_points"))
+        val controlResult = LocalControlResult(
+            contractVersion = contractVersion,
+            id = result.getString("id"),
+            state = state,
+            errorCode = result.getString("error_code"),
+            durationMillis = result.getLong("duration_ms"),
+            dataPoints = dataPoints,
+        )
+        val actualById = dataPoints.associateBy { it.id }
+        val requestedValuesConfirmed = request.changes.all { change ->
+            actualById[change.id]?.let { actual ->
+                actual.kind == change.kind && actual.value == change.value
+            } == true
+        }
+        if (
+            controlResult.id != request.device.id ||
+            controlResult.id.isBlank() ||
+            controlResult.id.length > 128 ||
+            controlResult.durationMillis !in 0..MAX_LOCAL_CONTROL_DURATION_MILLIS ||
+            controlResult.errorCode.length > 64 ||
+            dataPoints.size > MAX_LOCAL_DATA_POINT_COUNT ||
+            dataPoints.map { it.id }.toSet().size != dataPoints.size ||
+            dataPoints.any(::invalidLocalDataPoint) ||
+            request.changes.size !in 1..MAX_LOCAL_CONTROL_CHANGE_COUNT ||
+            (state == LocalControlState.CONFIRMED &&
+                (controlResult.errorCode.isNotEmpty() || !requestedValuesConfirmed)) ||
+            (state != LocalControlState.CONFIRMED && controlResult.errorCode.isBlank()) ||
+            (state in setOf(LocalControlState.OFFLINE, LocalControlState.ERROR) &&
+                dataPoints.isNotEmpty())
+        ) {
+            throw invalidLocalControlResponse()
+        }
+        controlResult
+    }
+
+    private fun parseLocalDataPoints(dataPointsJson: JSONArray): List<LocalDataPoint> =
+        buildList(dataPointsJson.length()) {
+            for (dataPointIndex in 0 until dataPointsJson.length()) {
+                val dataPoint = dataPointsJson.getJSONObject(dataPointIndex)
+                val kindCode = dataPoint.getString("kind")
+                val kind = LocalDataPointKind.entries.firstOrNull {
+                    it.wireValue == kindCode
+                } ?: throw invalidLocalPollResponse()
+                add(
+                    LocalDataPoint(
+                        id = dataPoint.getString("id"),
+                        kind = kind,
+                        value = dataPoint.getString("value"),
+                    )
+                )
+            }
+        }
+
     private fun invalidPolledDevice(device: LocalPolledDevice): Boolean =
         device.id.isBlank() ||
             device.id.length > 128 ||
@@ -307,16 +376,22 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
             device.errorCode.length > 64 ||
             device.dataPoints.size > MAX_LOCAL_DATA_POINT_COUNT ||
             device.dataPoints.map { it.id }.toSet().size != device.dataPoints.size ||
-            device.dataPoints.any { dataPoint ->
-                dataPoint.id.isBlank() ||
-                    dataPoint.id.length > 8 ||
-                    dataPoint.id.any { !it.isDigit() } ||
-                    dataPoint.value.length > MAX_LOCAL_DATA_POINT_VALUE_LENGTH
-            }
+            device.dataPoints.any(::invalidLocalDataPoint)
+
+    private fun invalidLocalDataPoint(dataPoint: LocalDataPoint): Boolean =
+        dataPoint.id.isBlank() ||
+            dataPoint.id.length > 8 ||
+            dataPoint.id.any { !it.isDigit() } ||
+            dataPoint.value.length > MAX_LOCAL_DATA_POINT_VALUE_LENGTH
 
     private fun invalidLocalPollResponse() = PythonBridgeException(
         code = "BRIDGE_RESPONSE_INVALID",
         message = "The Python bridge returned an invalid local status result.",
+    )
+
+    private fun invalidLocalControlResponse() = PythonBridgeException(
+        code = "BRIDGE_RESPONSE_INVALID",
+        message = "The Python bridge returned an invalid local control result.",
     )
 
     private inline fun <T> parseResponse(
@@ -405,6 +480,25 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         }
     }
 
+    private fun LocalControlDevice.toLocalControlBridgeJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("ip", ip)
+        put("local_key", localKey.reveal())
+        put("protocol_version", protocolVersion)
+    }
+
+    private fun List<LocalControlChange>.toLocalControlBridgeJson(): JSONArray = JSONArray().apply {
+        for (change in this@toLocalControlBridgeJson) {
+            put(
+                JSONObject().apply {
+                    put("id", change.id)
+                    put("kind", change.kind.wireValue)
+                    put("value", change.value)
+                }
+            )
+        }
+    }
+
     private fun List<LanKnownDevice>.toLanBridgeJson(): JSONArray = JSONArray().apply {
         for (device in this@toLanBridgeJson) {
             put(
@@ -431,6 +525,8 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         const val MAX_LOCAL_DATA_POINT_VALUE_LENGTH = 8192
         const val MAX_SINGLE_POLL_DURATION_MILLIS = 30_000L
         const val MAX_LOCAL_POLL_DURATION_MILLIS = 120_000L
+        const val MAX_LOCAL_CONTROL_CHANGE_COUNT = 8
+        const val MAX_LOCAL_CONTROL_DURATION_MILLIS = 30_000L
         val pythonStartLock = Any()
         val bridgeOperationMutex = Mutex()
 

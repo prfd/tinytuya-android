@@ -5,6 +5,7 @@ import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryOutcome
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.local.DeviceCatalog
@@ -17,6 +18,7 @@ import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
+import com.prfd.tinytuya.ui.app.LocalControlUiState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -33,6 +35,7 @@ class AppViewModelInstrumentedTest {
             FakeCatalogStore(),
             FakeLanDiscoveryCoordinator(),
             FakeLocalStatusCoordinator(),
+            FakeLocalControlCoordinator(),
         )
 
         val state = withTimeout(5_000) {
@@ -49,6 +52,7 @@ class AppViewModelInstrumentedTest {
             FakeCatalogStore(catalog),
             FakeLanDiscoveryCoordinator(),
             FakeLocalStatusCoordinator(),
+            FakeLocalControlCoordinator(),
         )
 
         val state = withTimeout(5_000) {
@@ -67,6 +71,7 @@ class AppViewModelInstrumentedTest {
             store,
             FakeLanDiscoveryCoordinator(),
             FakeLocalStatusCoordinator(),
+            FakeLocalControlCoordinator(),
         )
         withTimeout(5_000) {
             viewModel.state.first { it is AppUiState.Inventory }
@@ -105,6 +110,7 @@ class AppViewModelInstrumentedTest {
             FakeCatalogStore(original),
             coordinator,
             localStatusCoordinator,
+            FakeLocalControlCoordinator(),
         )
         withTimeout(5_000) {
             viewModel.state.first { it is AppUiState.Inventory }
@@ -120,6 +126,53 @@ class AppViewModelInstrumentedTest {
         assertEquals("192.168.10.42", state.catalog.lanDevices.single().ip)
         assertEquals(1, coordinator.callCount)
         assertEquals(1, localStatusCoordinator.callCount)
+        assertTrue(state.control is LocalControlUiState.Ready)
+    }
+
+    @Test
+    fun localControlPublishesOnlyTheCoordinatorConfirmedCatalog() = runBlocking {
+        val original = sampleCatalog()
+        val discovered = original.copy(
+            schemaVersion = 3,
+            lastDiscoveryAtEpochMillis = 5L,
+            lanDevices = listOf(
+                LanDeviceRecord(
+                    id = "saved-device",
+                    ip = "192.168.10.42",
+                    protocolVersion = "3.5",
+                    productKey = "",
+                    mac = "",
+                    origin = "broadcast",
+                    lastSeenAtEpochMillis = 5L,
+                )
+            ),
+        )
+        val confirmed = discovered.copy(lastLocalPollAtEpochMillis = 6L)
+        val controlCoordinator = FakeLocalControlCoordinator(confirmed)
+        val viewModel = AppViewModel(
+            FakeCatalogStore(original),
+            FakeLanDiscoveryCoordinator(discovered),
+            FakeLocalStatusCoordinator(discovered),
+            controlCoordinator,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        viewModel.discoverLan()
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
+            }
+        }
+
+        viewModel.setBooleanControl("saved-device", "1", true)
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Confirmed
+            }
+        } as AppUiState.Inventory
+        assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
+        assertEquals(1, controlCoordinator.callCount)
+        assertEquals(NETWORK, controlCoordinator.expectedNetwork)
     }
 
     private class FakeLanDiscoveryCoordinator(
@@ -146,6 +199,25 @@ class AppViewModelInstrumentedTest {
             network: LanNetworkContext,
         ): DeviceCatalog {
             callCount += 1
+            return result ?: catalog
+        }
+    }
+
+    private class FakeLocalControlCoordinator(
+        private val result: DeviceCatalog? = null,
+    ) : LocalControlCoordinator {
+        var callCount = 0
+        var expectedNetwork: LanNetworkContext? = null
+
+        override suspend fun setBoolean(
+            catalog: DeviceCatalog,
+            expectedNetwork: LanNetworkContext,
+            deviceId: String,
+            dataPointId: String,
+            value: Boolean,
+        ): DeviceCatalog {
+            callCount += 1
+            this.expectedNetwork = expectedNetwork
             return result ?: catalog
         }
     }

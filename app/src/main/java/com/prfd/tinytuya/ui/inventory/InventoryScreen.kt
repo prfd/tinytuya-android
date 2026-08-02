@@ -40,9 +40,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +51,7 @@ import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.lan.LocalBooleanControl
+import com.prfd.tinytuya.data.lan.LocalDeviceAccessKind
 import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalDeviceProfile
 import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
@@ -446,6 +448,17 @@ private fun InventoryDeviceCard(
         isOnCurrentLan -> "On local network" to true
         else -> "Not found in last scan" to false
     }
+    val accessPill = when (profile.access) {
+        LocalDeviceAccessKind.DIRECT_CONTROL -> {
+            val hasLocalKey = !device.localKey.isBlank
+            (if (hasLocalKey) "Key secured" else "Local key missing") to hasLocalKey
+        }
+        LocalDeviceAccessKind.STATUS_ONLY -> "Status only" to false
+        LocalDeviceAccessKind.GATEWAY_CHILD,
+        LocalDeviceAccessKind.GATEWAY,
+        LocalDeviceAccessKind.CAMERA,
+        LocalDeviceAccessKind.LOCK -> "Unsupported locally" to false
+    }
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -468,10 +481,10 @@ private fun InventoryDeviceCard(
                 ) {
                     Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            text = deviceProfileGlyph(profile.kind),
+                            text = deviceProfileBadge(profile),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.testTag("device_profile_glyph"),
+                            modifier = Modifier.testTag("device_profile_badge"),
                         )
                     }
                 }
@@ -497,10 +510,13 @@ private fun InventoryDeviceCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 StatusPill(
-                    text = if (device.localKey.isBlank) "Local key missing" else "Key secured",
-                    positive = !device.localKey.isBlank,
+                    text = accessPill.first,
+                    positive = accessPill.second,
                 )
                 StatusPill(text = lanStatus.first, positive = lanStatus.second)
+            }
+            if (profile.access != LocalDeviceAccessKind.DIRECT_CONTROL) {
+                LocalAccessNotice(profile)
             }
             LocalStatusPanel(
                 device = device,
@@ -527,7 +543,7 @@ private fun LocalStatusPanel(
     control: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
-    if (!isOnCurrentLan) return
+    if (!isOnCurrentLan || !profile.access.canReadLocalStatus) return
     val updatedAt = remember(status?.polledAtEpochMillis) {
         status?.polledAtEpochMillis?.let { timestamp ->
             DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
@@ -549,6 +565,11 @@ private fun LocalStatusPanel(
                 },
             )
         }.orEmpty()
+    }
+    val inspection = remember(device.mappingJson, status?.dataPoints, status?.state) {
+        status
+            ?.takeIf { currentStatus -> currentStatus.state == LocalPollDeviceState.RESPONDED }
+            ?.let { currentStatus -> inspectLocalDataPoints(device, currentStatus.dataPoints) }
     }
 
     Surface(
@@ -639,6 +660,9 @@ private fun LocalStatusPanel(
                             onSetBooleanControl = onSetBooleanControl,
                         )
                     }
+                    inspection?.takeIf { it.totalCount > 0 }?.let { localInspection ->
+                        LocalDpsInspector(localInspection)
+                    }
                 }
                 else -> Text(
                     text = localStatusMessage(status?.errorCode.orEmpty()),
@@ -646,6 +670,177 @@ private fun LocalStatusPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalAccessNotice(profile: LocalDeviceProfile) {
+    val isStatusOnly = profile.access == LocalDeviceAccessKind.STATUS_ONLY
+    val title = when (profile.access) {
+        LocalDeviceAccessKind.STATUS_ONLY -> "Status-only profile"
+        LocalDeviceAccessKind.GATEWAY_CHILD -> "Gateway child"
+        LocalDeviceAccessKind.GATEWAY -> "Gateway controls unavailable"
+        LocalDeviceAccessKind.CAMERA -> "Camera controls disabled"
+        LocalDeviceAccessKind.LOCK -> "Lock controls disabled"
+        LocalDeviceAccessKind.DIRECT_CONTROL -> return
+    }
+    val message = when (profile.access) {
+        LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
+            LocalDeviceProfileKind.COVER ->
+                "Cover commands are not enabled yet. Current local DPS stays read-only."
+            else ->
+                "No verified control profile matches this device. Local DPS stays read-only."
+        }
+        LocalDeviceAccessKind.GATEWAY_CHILD ->
+            "This device communicates through a Tuya gateway, not directly over Wi-Fi."
+        LocalDeviceAccessKind.GATEWAY ->
+            "Gateway management and child-device routing are not supported yet."
+        LocalDeviceAccessKind.CAMERA ->
+            "Camera streams and camera commands are intentionally unavailable."
+        LocalDeviceAccessKind.LOCK ->
+            "Lock and access-control commands are intentionally unavailable for safety."
+        LocalDeviceAccessKind.DIRECT_CONTROL -> return
+    }
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = if (isStatusOnly) {
+            MaterialTheme.colorScheme.surfaceVariant
+        } else {
+            MaterialTheme.colorScheme.tertiaryContainer
+        },
+        contentColor = if (isStatusOnly) {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+            MaterialTheme.colorScheme.onTertiaryContainer
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .testTag("local_access_notice"),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = if (isStatusOnly) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.tertiary
+                },
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .size(7.dp),
+                content = {},
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(text = title, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
+    var expanded by remember(inspection) { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+    ) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("dps_inspector_toggle"),
+        ) {
+            Text(
+                if (expanded) {
+                    "Hide DPS details"
+                } else {
+                    "DPS details · ${inspection.totalCount}"
+                }
+            )
+        }
+        if (expanded) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = MaterialTheme.shapes.small,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("dps_inspector_panel"),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        text = "LOCAL DPS · READ ONLY",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.3.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "Boolean, numeric, and declared enum values are shown. " +
+                            "Text and structured payloads stay hidden.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    if (inspection.dataPoints.size < inspection.totalCount) {
+                        Text(
+                            text = "Showing the first ${inspection.dataPoints.size} of " +
+                                "${inspection.totalCount} data points.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 7.dp),
+                        )
+                    }
+                    inspection.dataPoints.forEach { dataPoint ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "DP ${dataPoint.id} · ${dataPoint.kindLabel}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                dataPoint.code?.let { code ->
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        text = code,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 140.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = dataPoint.safeValue,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -946,26 +1141,44 @@ private fun deviceDescription(
 private fun deviceProfileLabel(
     device: CloudImportedDevice,
     profile: LocalDeviceProfile,
-): String = when (profile.kind) {
-    LocalDeviceProfileKind.SWITCH_OR_OUTLET -> when {
-        profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
-            "${profile.mappedSwitchCount}-channel power strip"
-        profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
-        device.category.lowercase() == "cz" -> "Smart outlet"
-        device.category.lowercase() == "pc" -> "Power strip"
-        else -> "Smart switch"
+): String = when (profile.access) {
+    LocalDeviceAccessKind.GATEWAY_CHILD -> "Gateway child"
+    LocalDeviceAccessKind.GATEWAY -> "Tuya gateway"
+    LocalDeviceAccessKind.CAMERA -> "Smart camera"
+    LocalDeviceAccessKind.LOCK -> "Smart lock or access control"
+    LocalDeviceAccessKind.DIRECT_CONTROL,
+    LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
+        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> when {
+            profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
+                "${profile.mappedSwitchCount}-channel power strip"
+            profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
+            device.category.lowercase() == "cz" -> "Smart outlet"
+            device.category.lowercase() == "pc" -> "Power strip"
+            else -> "Smart switch"
+        }
+        LocalDeviceProfileKind.LIGHT -> "Smart light"
+        LocalDeviceProfileKind.COVER -> "Curtain or cover"
+        LocalDeviceProfileKind.GENERIC -> "Tuya device"
     }
-    LocalDeviceProfileKind.LIGHT -> "Smart light"
-    LocalDeviceProfileKind.COVER -> "Curtain or cover"
-    LocalDeviceProfileKind.GENERIC -> "Tuya device"
 }
 
-private fun deviceProfileGlyph(kind: LocalDeviceProfileKind): String = when (kind) {
-    LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "SW"
-    LocalDeviceProfileKind.LIGHT -> "LT"
-    LocalDeviceProfileKind.COVER -> "CV"
-    LocalDeviceProfileKind.GENERIC -> "TU"
+private fun deviceProfileBadge(profile: LocalDeviceProfile): String = when (profile.access) {
+    LocalDeviceAccessKind.GATEWAY_CHILD -> "CH"
+    LocalDeviceAccessKind.GATEWAY -> "GW"
+    LocalDeviceAccessKind.CAMERA -> "CAM"
+    LocalDeviceAccessKind.LOCK -> "LK"
+    LocalDeviceAccessKind.DIRECT_CONTROL,
+    LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
+        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "SW"
+        LocalDeviceProfileKind.LIGHT -> "LT"
+        LocalDeviceProfileKind.COVER -> "CV"
+        LocalDeviceProfileKind.GENERIC -> "TU"
+    }
 }
+
+private val LocalDeviceAccessKind.canReadLocalStatus: Boolean
+    get() = this == LocalDeviceAccessKind.DIRECT_CONTROL ||
+        this == LocalDeviceAccessKind.STATUS_ONLY
 
 private val TuyaCloudRegion.displayName: String
     get() = when (this) {

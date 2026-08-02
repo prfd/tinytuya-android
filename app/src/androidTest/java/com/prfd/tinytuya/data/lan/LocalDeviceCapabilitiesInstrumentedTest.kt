@@ -5,6 +5,7 @@ import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -116,6 +117,78 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         )
 
         assertTrue(profile.booleanControls.isEmpty())
+    }
+
+    @Test
+    fun protectedDeviceFamiliesNeverPollOrExposeSwitchControls() {
+        val protectedCategories = listOf(
+            "wg2" to LocalDeviceAccessKind.GATEWAY,
+            "sp" to LocalDeviceAccessKind.CAMERA,
+            "ms" to LocalDeviceAccessKind.LOCK,
+            "videolock" to LocalDeviceAccessKind.LOCK,
+        )
+
+        protectedCategories.forEach { (category, expectedAccess) ->
+            val device = sampleDevice(category = category, mappingJson = SWITCH_MAPPING)
+            val profile = LocalDeviceCapabilityRegistry.profile(
+                device = device,
+                status = respondedStatus(
+                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
+                ),
+                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+            )
+
+            assertEquals(expectedAccess, profile.access)
+            assertTrue(profile.booleanControls.isEmpty())
+            assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
+            assertTrue(
+                LocalDeviceCapabilityRegistry.booleanControls(
+                    device = device,
+                    status = respondedStatus(
+                        LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
+                    ),
+                    lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+                ).isEmpty()
+            )
+        }
+    }
+
+    @Test
+    fun gatewayChildTakesPriorityOverItsUnderlyingProfile() {
+        val device = sampleDevice(category = "dj", mappingJson = SWITCH_MAPPING)
+            .copy(isSubDevice = true, gatewayId = "gateway-id")
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = respondedStatus(
+                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.LIGHT, profile.kind)
+        assertEquals(LocalDeviceAccessKind.GATEWAY_CHILD, profile.access)
+        assertTrue(profile.booleanControls.isEmpty())
+        assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
+    }
+
+    @Test
+    fun genericDirectDeviceIsPollableButStatusOnly() {
+        val device = sampleDevice(
+            category = "custom_sensor",
+            mappingJson = "{\"1\":{\"code\":\"presence\",\"type\":\"Boolean\"}}",
+        )
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = respondedStatus(
+                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.GENERIC, profile.kind)
+        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
+        assertTrue(profile.booleanControls.isEmpty())
+        assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
     }
 
     private fun sampleDevice(

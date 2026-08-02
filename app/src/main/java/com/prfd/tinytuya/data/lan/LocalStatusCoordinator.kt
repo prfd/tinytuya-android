@@ -27,7 +27,10 @@ class DefaultLocalStatusCoordinator(
             .associateBy { it.id }
         val devices = catalog.devices
             .asSequence()
-            .filterNot { it.isSubDevice || it.localKey.isBlank }
+            .filter { cloudDevice ->
+                LocalDeviceCapabilityRegistry.canPollStatus(cloudDevice) &&
+                    !cloudDevice.localKey.isBlank
+            }
             .mapNotNull { cloudDevice ->
                 val lanDevice = currentLanById[cloudDevice.id] ?: return@mapNotNull null
                 val protocolVersion = lanDevice.protocolVersion

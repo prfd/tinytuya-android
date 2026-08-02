@@ -22,7 +22,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class LocalStatusCoordinatorInstrumentedTest {
     @Test
-    fun pollUsesOnlyFreshDirectDeviceAndRedactsItsKey() = runBlocking {
+    fun pollUsesOnlyFreshEligibleDirectDeviceAndRedactsItsKey() = runBlocking {
         val catalog = sampleCatalog()
         val gateway = FakeGateway { samplePollResult() }
         val store = FakeStore(catalog)
@@ -54,6 +54,26 @@ class LocalStatusCoordinatorInstrumentedTest {
         } catch (error: LocalStatusException) {
             assertEquals("LOCAL_POLL_FAILED", error.code)
         }
+        assertEquals(0, store.mergeCount)
+    }
+
+    @Test
+    fun refreshWithOnlyProtectedDevicesDoesNotCallThePythonBridge() = runBlocking {
+        val catalog = sampleCatalog().let { source ->
+            val protectedIds = setOf("gateway", "camera", "lock", "sub-device")
+            source.copy(
+                devices = source.devices.filter { device -> device.id in protectedIds },
+                lanDevices = source.lanDevices.filter { device -> device.id in protectedIds },
+            )
+        }
+        val gateway = FakeGateway { error("Protected devices must not reach Python") }
+        val store = FakeStore(catalog)
+        val coordinator = DefaultLocalStatusCoordinator(gateway, store)
+
+        val unchanged = coordinator.poll(catalog, NETWORK)
+
+        assertEquals(catalog, unchanged)
+        assertEquals(null, gateway.request)
         assertEquals(0, store.mergeCount)
     }
 
@@ -132,20 +152,30 @@ class LocalStatusCoordinatorInstrumentedTest {
                 cloudDevice(id = "fresh-device"),
                 cloudDevice(id = "stale-device"),
                 cloudDevice(id = "sub-device", isSubDevice = true),
+                cloudDevice(id = "gateway", category = "wg2"),
+                cloudDevice(id = "camera", category = "sp"),
+                cloudDevice(id = "lock", category = "ms"),
             ),
             lastDiscoveryAtEpochMillis = 10L,
             lanDevices = listOf(
                 lanDevice(id = "fresh-device", lastSeenAt = 10L, ip = "192.168.10.42"),
                 lanDevice(id = "stale-device", lastSeenAt = 9L, ip = "192.168.10.43"),
                 lanDevice(id = "sub-device", lastSeenAt = 10L, ip = "192.168.10.44"),
+                lanDevice(id = "gateway", lastSeenAt = 10L, ip = "192.168.10.45"),
+                lanDevice(id = "camera", lastSeenAt = 10L, ip = "192.168.10.46"),
+                lanDevice(id = "lock", lastSeenAt = 10L, ip = "192.168.10.47"),
             ),
         )
 
-        fun cloudDevice(id: String, isSubDevice: Boolean = false) = CloudImportedDevice(
+        fun cloudDevice(
+            id: String,
+            isSubDevice: Boolean = false,
+            category: String = "kg",
+        ) = CloudImportedDevice(
             id = id,
             name = id,
             localKey = SensitiveString.of(LOCAL_KEY),
-            category = "kg",
+            category = category,
             productId = "",
             productName = "Switch",
             model = "",

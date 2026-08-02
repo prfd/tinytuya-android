@@ -221,6 +221,77 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Yes").assertExists()
     }
 
+    @Test
+    fun gatewayChildIsClearlyUnsupportedWithoutAFalseRefreshPrompt() {
+        val catalog = sampleCatalog().copy(
+            devices = listOf(
+                sampleCatalog().devices.single().copy(
+                    isSubDevice = true,
+                    gatewayId = "gateway-id",
+                    mappingJson = "{\"20\":{\"code\":\"switch_led\",\"type\":\"Boolean\"}}",
+                )
+            )
+        )
+        setInventoryContent(catalog = catalog)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Gateway child").assertExists()
+        composeRule.onNodeWithText("Unsupported locally").assertExists()
+        composeRule.onNodeWithText("communicates through a Tuya gateway", substring = true)
+            .assertExists()
+        composeRule.onNodeWithText("Refresh local devices to read", substring = true)
+            .assertDoesNotExist()
+        composeRule.onNodeWithTag("local_switch_20").assertDoesNotExist()
+    }
+
+    @Test
+    fun protectedCameraHidesCachedDpsAndControlEvenWithASwitchMapping() {
+        val catalog = controlledCatalog().copy(
+            devices = listOf(
+                controlledCatalog().devices.single().copy(
+                    category = "sp",
+                    productName = "Indoor camera",
+                )
+            )
+        )
+        setInventoryContent(catalog = catalog, control = LocalControlUiState.Ready)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Smart camera", substring = true).assertExists()
+        composeRule.onNodeWithText("Camera controls disabled").assertExists()
+        composeRule.onNodeWithText("Camera streams and camera commands", substring = true)
+            .assertExists()
+        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+        composeRule.onNodeWithTag("dps_inspector_toggle").assertDoesNotExist()
+        composeRule.onNodeWithText("Power is on").assertDoesNotExist()
+    }
+
+    @Test
+    fun statusOnlyDeviceOffersBoundedDpsDetailsWithoutRenderingPrivatePayloads() {
+        setInventoryContent(catalog = statusOnlyCatalog())
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Status only").assertExists()
+        composeRule.onNodeWithText("Status-only profile").assertExists()
+        composeRule.onNodeWithText("Local DPS stays read-only", substring = true).assertExists()
+        composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
+
+        composeRule.onNodeWithTag("dps_inspector_toggle").performClick()
+
+        composeRule.onNodeWithTag("dps_inspector_panel").assertExists()
+        composeRule.onNodeWithText("LOCAL DPS · READ ONLY").assertExists()
+        composeRule.onNodeWithText("DP 1 · Boolean").assertExists()
+        composeRule.onNodeWithText("DP 3 · Enum").assertExists()
+        composeRule.onNodeWithText("DP 4 · Text").assertExists()
+        composeRule.onNodeWithText("DP 5 · Structured").assertExists()
+        composeRule.onNodeWithText("Text and structured payloads stay hidden", substring = true)
+            .assertExists()
+        composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+    }
+
     private fun setInventoryContent(
         catalog: DeviceCatalog = sampleCatalog(),
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
@@ -355,6 +426,35 @@ class InventoryScreenInstrumentedTest {
         ),
     )
 
+    private fun statusOnlyCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "custom_sensor",
+                productName = "Room sensor",
+                mappingJson = """
+                    {
+                      "1":{"code":"enabled","type":"Boolean"},
+                      "2":{"code":"sample_count","type":"Integer"},
+                      "3":{"code":"mode","type":"Enum","values":"{\"range\":[\"auto\",\"manual\"]}"},
+                      "4":{"code":"api_token","type":"String"},
+                      "5":{"code":"raw_blob","type":"Raw"}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("5", LocalDataPointKind.JSON, PRIVATE_DP_JSON),
+                    LocalDataPoint("3", LocalDataPointKind.STRING, "auto"),
+                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("4", LocalDataPointKind.STRING, PRIVATE_DP_TEXT),
+                    LocalDataPoint("2", LocalDataPointKind.INTEGER, "42"),
+                )
+            )
+        ),
+    )
+
     private fun lanRecord(id: String, ip: String) = LanDeviceRecord(
         id = id,
         ip = ip,
@@ -367,5 +467,7 @@ class InventoryScreenInstrumentedTest {
 
     private companion object {
         const val LOCAL_KEY = "inventory-local-key-must-stay-hidden"
+        const val PRIVATE_DP_TEXT = "private-device-token"
+        const val PRIVATE_DP_JSON = "private-json-token"
     }
 }

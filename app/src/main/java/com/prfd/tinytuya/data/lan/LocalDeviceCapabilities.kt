@@ -18,8 +18,18 @@ enum class LocalDeviceProfileKind {
     GENERIC,
 }
 
+enum class LocalDeviceAccessKind {
+    DIRECT_CONTROL,
+    STATUS_ONLY,
+    GATEWAY_CHILD,
+    GATEWAY,
+    CAMERA,
+    LOCK,
+}
+
 data class LocalDeviceProfile(
     val kind: LocalDeviceProfileKind,
+    val access: LocalDeviceAccessKind,
     val mappedSwitchCount: Int,
     val booleanControls: List<LocalBooleanControl>,
 )
@@ -43,38 +53,58 @@ object LocalDeviceCapabilityRegistry {
             definition.type.equals("Boolean", ignoreCase = true) &&
                 isSwitchCode(definition.code)
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
-        val codes = definitions.mapTo(mutableSetOf()) { it.code }
-        val kind = when {
-            device.category.lowercase() in LIGHT_CATEGORIES ||
-                codes.any { it in LIGHT_PROFILE_CODES } -> LocalDeviceProfileKind.LIGHT
-            device.category.lowercase() in COVER_CATEGORIES ||
-                codes.any { it in COVER_PROFILE_CODES } -> LocalDeviceProfileKind.COVER
-            device.category.lowercase() in SWITCH_CATEGORIES || mappedSwitchCount > 0 ->
-                LocalDeviceProfileKind.SWITCH_OR_OUTLET
-            else -> LocalDeviceProfileKind.GENERIC
-        }
+        val kind = profileKind(
+            device = device,
+            definitions = definitions,
+            mappedSwitchCount = mappedSwitchCount,
+        )
+        val access = accessKind(device, kind)
         return LocalDeviceProfile(
             kind = kind,
+            access = access,
             mappedSwitchCount = mappedSwitchCount,
-            booleanControls = booleanControls(
-                device = device,
-                status = status,
-                lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-                mapping = mapping,
-            ),
+            booleanControls = if (access == LocalDeviceAccessKind.DIRECT_CONTROL) {
+                booleanControls(
+                    device = device,
+                    status = status,
+                    lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+                    mapping = mapping,
+                )
+            } else {
+                emptyList()
+            },
         )
     }
+
+    fun canPollStatus(device: CloudImportedDevice): Boolean =
+        restrictedAccessKind(device) == null
 
     fun booleanControls(
         device: CloudImportedDevice,
         status: LocalStatusRecord?,
         lastDiscoveryAtEpochMillis: Long?,
-    ): List<LocalBooleanControl> = booleanControls(
-        device = device,
-        status = status,
-        lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-        mapping = parseMapping(device.mappingJson),
-    )
+    ): List<LocalBooleanControl> {
+        val mapping = parseMapping(device.mappingJson)
+        val definitions = mappingDefinitions(mapping)
+        val mappedSwitchCount = definitions.count { definition ->
+            definition.type.equals("Boolean", ignoreCase = true) &&
+                isSwitchCode(definition.code)
+        }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
+        val kind = profileKind(
+            device = device,
+            definitions = definitions,
+            mappedSwitchCount = mappedSwitchCount,
+        )
+        if (accessKind(device, kind) != LocalDeviceAccessKind.DIRECT_CONTROL) {
+            return emptyList()
+        }
+        return booleanControls(
+            device = device,
+            status = status,
+            lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+            mapping = mapping,
+        )
+    }
 
     private fun booleanControls(
         device: CloudImportedDevice,
@@ -128,6 +158,45 @@ object LocalDeviceCapabilityRegistry {
     private fun parseMapping(mappingJson: String): JSONObject? =
         runCatching { JSONObject(mappingJson) }.getOrNull()
 
+    private fun profileKind(
+        device: CloudImportedDevice,
+        definitions: List<MappingDefinition>,
+        mappedSwitchCount: Int,
+    ): LocalDeviceProfileKind {
+        val category = device.category.trim().lowercase()
+        val codes = definitions.mapTo(mutableSetOf()) { it.code }
+        return when {
+            category in LIGHT_CATEGORIES || codes.any { it in LIGHT_PROFILE_CODES } ->
+                LocalDeviceProfileKind.LIGHT
+            category in COVER_CATEGORIES || codes.any { it in COVER_PROFILE_CODES } ->
+                LocalDeviceProfileKind.COVER
+            category in SWITCH_CATEGORIES || mappedSwitchCount > 0 ->
+                LocalDeviceProfileKind.SWITCH_OR_OUTLET
+            else -> LocalDeviceProfileKind.GENERIC
+        }
+    }
+
+    private fun accessKind(
+        device: CloudImportedDevice,
+        kind: LocalDeviceProfileKind,
+    ): LocalDeviceAccessKind = restrictedAccessKind(device) ?: when (kind) {
+        LocalDeviceProfileKind.SWITCH_OR_OUTLET,
+        LocalDeviceProfileKind.LIGHT -> LocalDeviceAccessKind.DIRECT_CONTROL
+        LocalDeviceProfileKind.COVER,
+        LocalDeviceProfileKind.GENERIC -> LocalDeviceAccessKind.STATUS_ONLY
+    }
+
+    private fun restrictedAccessKind(device: CloudImportedDevice): LocalDeviceAccessKind? {
+        val category = device.category.trim().lowercase()
+        return when {
+            device.isSubDevice -> LocalDeviceAccessKind.GATEWAY_CHILD
+            category in GATEWAY_CATEGORIES -> LocalDeviceAccessKind.GATEWAY
+            category in CAMERA_CATEGORIES -> LocalDeviceAccessKind.CAMERA
+            category in LOCK_CATEGORIES -> LocalDeviceAccessKind.LOCK
+            else -> null
+        }
+    }
+
     private fun mappingDefinitions(mapping: JSONObject?): List<MappingDefinition> {
         if (mapping == null) return emptyList()
         return buildList {
@@ -170,8 +239,31 @@ object LocalDeviceCapabilityRegistry {
     private val BOOLEAN_WIRE_VALUES = setOf("true", "false")
     private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")
     private val SWITCH_CATEGORIES = setOf("kg", "cz", "pc")
-    private val LIGHT_CATEGORIES = setOf("dj")
+    private val LIGHT_CATEGORIES = setOf(
+        "dj",
+        "xdd",
+        "fwd",
+        "dc",
+        "dd",
+        "gyd",
+        "fsd",
+        "tyndj",
+    )
     private val COVER_CATEGORIES = setOf("cl", "clkg")
+    private val GATEWAY_CATEGORIES = setOf("wg2", "wfcon")
+    private val CAMERA_CATEGORIES = setOf("sp")
+    private val LOCK_CATEGORIES = setOf(
+        "ms",
+        "bxx",
+        "gyms",
+        "jtmspro",
+        "hotelms",
+        "ms_category",
+        "jtmsbh",
+        "mk",
+        "videolock",
+        "photolock",
+    )
     private val LIGHT_PROFILE_CODES = setOf(
         "switch_led",
         "bright_value",

@@ -51,6 +51,8 @@ import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.lan.LocalBooleanControl
 import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
+import com.prfd.tinytuya.data.lan.LocalDeviceProfile
+import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -425,10 +427,20 @@ private fun InventoryDeviceCard(
     control: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
-    val isOnCurrentLan = lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
+    val isOnCurrentLan = lastDiscoveryAtEpochMillis != null &&
+        lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
     val isCurrentStatus = isOnCurrentLan &&
         localStatus != null &&
         localStatus.polledAtEpochMillis >= (lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+    val profile = remember(device, localStatus, lastDiscoveryAtEpochMillis) {
+        LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = localStatus,
+            lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+        )
+    }
+    val isProfileActive = isCurrentStatus &&
+        profile.booleanControls.any { localControl -> localControl.currentValue }
     val lanStatus = when {
         lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
         isOnCurrentLan -> "On local network" to true
@@ -443,13 +455,23 @@ private fun InventoryDeviceCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.primary,
+                    color = if (isProfileActive) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    contentColor = if (isProfileActive) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
                 ) {
                     Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            text = device.category.take(2).uppercase().ifBlank { "TU" },
+                            text = deviceProfileGlyph(profile.kind),
                             style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("device_profile_glyph"),
                         )
                     }
                 }
@@ -462,7 +484,7 @@ private fun InventoryDeviceCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = deviceDescription(device),
+                        text = deviceDescription(device, profile),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -482,11 +504,11 @@ private fun InventoryDeviceCard(
             }
             LocalStatusPanel(
                 device = device,
+                profile = profile,
                 status = localStatus,
                 isCurrentStatus = isCurrentStatus,
                 isOnCurrentLan = isOnCurrentLan,
                 isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
-                lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
                 control = control,
                 onSetBooleanControl = onSetBooleanControl,
             )
@@ -497,11 +519,11 @@ private fun InventoryDeviceCard(
 @Composable
 private fun LocalStatusPanel(
     device: CloudImportedDevice,
+    profile: LocalDeviceProfile,
     status: LocalStatusRecord?,
     isCurrentStatus: Boolean,
     isOnCurrentLan: Boolean,
     isReadingStatus: Boolean,
-    lastDiscoveryAtEpochMillis: Long?,
     control: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
@@ -512,26 +534,21 @@ private fun LocalStatusPanel(
                 .format(Date(timestamp))
         }
     }
-    val booleanControls = remember(
-        device,
-        status,
-        lastDiscoveryAtEpochMillis,
-    ) {
-        LocalDeviceCapabilityRegistry.booleanControls(
-            device = device,
-            status = status,
-            lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-        )
-    }
+    val booleanControls = profile.booleanControls
     val presentedDataPoints = remember(
         device.mappingJson,
         status?.dataPoints,
         booleanControls,
     ) {
         val controlledIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
-        status?.let { presentLocalDataPoints(device, it.dataPoints) }
-            .orEmpty()
-            .filterNot { it.id in controlledIds }
+        status?.let { currentStatus ->
+            presentLocalDataPoints(
+                device = device,
+                dataPoints = currentStatus.dataPoints.filterNot { dataPoint ->
+                    dataPoint.id in controlledIds
+                },
+            )
+        }.orEmpty()
     }
 
     Surface(
@@ -546,7 +563,8 @@ private fun LocalStatusPanel(
                 text = when {
                     isReadingStatus -> "Reading status…"
                     !isCurrentStatus -> "Local status not read yet"
-                    status?.state == LocalPollDeviceState.RESPONDED -> "Last local response"
+                    status?.state == LocalPollDeviceState.RESPONDED ->
+                        localResponseTitle(booleanControls)
                     status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
                         "Could not confirm the requested state"
                     status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
@@ -647,7 +665,7 @@ private fun LocalBooleanControls(
             .padding(top = 16.dp),
     ) {
         Text(
-            text = "LOCAL CONTROL",
+            text = if (controls.size == 1) "LOCAL SWITCH" else "${controls.size} LOCAL SWITCHES",
             style = MaterialTheme.typography.labelLarge,
             fontSize = 10.sp,
             letterSpacing = 1.4.sp,
@@ -658,60 +676,77 @@ private fun LocalBooleanControls(
                 deviceId = deviceId,
                 dataPointId = localControl.dataPointId,
             )
-            Row(
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = MaterialTheme.shapes.small,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(top = 8.dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = localControl.label,
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        text = localControlSupportingText(
-                            state = controlState,
-                            appliesToControl = appliesToControl,
-                            requestedValue = (controlState as? LocalControlUiState.Sending)?.value,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (appliesToControl && controlState is LocalControlUiState.Error) {
-                            MaterialTheme.colorScheme.error
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (localControl.currentValue) {
+                            MaterialTheme.colorScheme.primary
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            MaterialTheme.colorScheme.outlineVariant
                         },
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                if (appliesToControl && isSending) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .testTag("local_control_progress"),
-                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(8.dp),
+                        content = {},
                     )
                     Spacer(Modifier.width(12.dp))
-                }
-                Text(
-                    text = if (localControl.currentValue) "On" else "Off",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(10.dp))
-                Switch(
-                    checked = localControl.currentValue,
-                    onCheckedChange = { requestedValue ->
-                        onSetBooleanControl(
-                            deviceId,
-                            localControl.dataPointId,
-                            requestedValue,
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = localControl.label,
+                            style = MaterialTheme.typography.titleSmall,
                         )
-                    },
-                    enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
-                    modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
-                )
+                        Text(
+                            text = localControlSupportingText(
+                                state = controlState,
+                                appliesToControl = appliesToControl,
+                                requestedValue =
+                                    (controlState as? LocalControlUiState.Sending)?.value,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (
+                                appliesToControl && controlState is LocalControlUiState.Error
+                            ) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    if (appliesToControl && isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .testTag("local_control_progress"),
+                            strokeWidth = 2.5.dp,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    Switch(
+                        checked = localControl.currentValue,
+                        onCheckedChange = { requestedValue ->
+                            onSetBooleanControl(
+                                deviceId,
+                                localControl.dataPointId,
+                                requestedValue,
+                            )
+                        },
+                        enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
+                        modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
+                    )
+                }
             }
         }
     }
@@ -735,7 +770,22 @@ private fun localControlSupportingText(
         if (requestedValue == true) "Turning on and confirming…" else "Turning off and confirming…"
     appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
     appliesToControl && state is LocalControlUiState.Error -> state.message
-    else -> "Direct on this Wi-Fi · every change is confirmed."
+    else -> "Local Wi-Fi · confirmed after every change."
+}
+
+private fun localResponseTitle(controls: List<LocalBooleanControl>): String {
+    if (controls.isEmpty()) return "Last local response"
+    if (controls.size == 1) return if (controls.single().currentValue) {
+        "Power is on"
+    } else {
+        "Power is off"
+    }
+    val onCount = controls.count { control -> control.currentValue }
+    return when (onCount) {
+        0 -> "All ${controls.size} switches are off"
+        controls.size -> "All ${controls.size} switches are on"
+        else -> "$onCount of ${controls.size} switches on"
+    }
 }
 
 @Composable
@@ -880,10 +930,42 @@ private fun localStatusMessage(code: String): String = when (code) {
     else -> "The local status request did not complete safely."
 }
 
-private fun deviceDescription(device: CloudImportedDevice): String =
-    listOf(device.productName, device.model, device.category)
-        .firstOrNull { it.isNotBlank() }
-        ?: "Unknown device type"
+private fun deviceDescription(
+    device: CloudImportedDevice,
+    profile: LocalDeviceProfile,
+): String = buildList {
+    add(deviceProfileLabel(device, profile))
+    add(device.productName)
+    add(device.model)
+}.map { value -> value.trim() }
+    .filter { value -> value.isNotBlank() }
+    .distinctBy { value -> value.lowercase() }
+    .take(2)
+    .joinToString(" · ")
+
+private fun deviceProfileLabel(
+    device: CloudImportedDevice,
+    profile: LocalDeviceProfile,
+): String = when (profile.kind) {
+    LocalDeviceProfileKind.SWITCH_OR_OUTLET -> when {
+        profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
+            "${profile.mappedSwitchCount}-channel power strip"
+        profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
+        device.category.lowercase() == "cz" -> "Smart outlet"
+        device.category.lowercase() == "pc" -> "Power strip"
+        else -> "Smart switch"
+    }
+    LocalDeviceProfileKind.LIGHT -> "Smart light"
+    LocalDeviceProfileKind.COVER -> "Curtain or cover"
+    LocalDeviceProfileKind.GENERIC -> "Tuya device"
+}
+
+private fun deviceProfileGlyph(kind: LocalDeviceProfileKind): String = when (kind) {
+    LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "SW"
+    LocalDeviceProfileKind.LIGHT -> "LT"
+    LocalDeviceProfileKind.COVER -> "CV"
+    LocalDeviceProfileKind.GENERIC -> "TU"
+}
 
 private val TuyaCloudRegion.displayName: String
     get() = when (this) {

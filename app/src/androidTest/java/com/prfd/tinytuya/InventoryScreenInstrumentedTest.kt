@@ -2,6 +2,7 @@ package com.prfd.tinytuya
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -97,9 +98,9 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(catalog = catalog)
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
 
-        composeRule.onNodeWithText("Last local response").assertExists()
+        composeRule.onNodeWithText("Power is on").assertExists()
         composeRule.onNodeWithText("Power").assertExists()
-        composeRule.onNodeWithText("On").assertExists()
+        composeRule.onNodeWithTag("local_switch_1").assertIsOn()
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
     }
 
@@ -176,6 +177,50 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("command failed", substring = true).assertDoesNotExist()
     }
 
+    @Test
+    fun multiGangCardSummarizesAndControlsEachVerifiedChannel() {
+        var request: Triple<String, String, Boolean>? = null
+        setInventoryContent(
+            catalog = multiGangCatalog(),
+            control = LocalControlUiState.Ready,
+            onSetBooleanControl = { deviceId, dataPointId, value ->
+                request = Triple(deviceId, dataPointId, value)
+            },
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("3-gang switch", substring = true).assertExists()
+        composeRule.onNodeWithText("2 of 3 switches on").assertExists()
+        composeRule.onNodeWithText("3 LOCAL SWITCHES").assertExists()
+        composeRule.onNodeWithTag("local_switch_1").assertIsOn()
+        composeRule.onNodeWithTag("local_switch_2").assertIsOff().performClick()
+        composeRule.onNodeWithTag("local_switch_3").assertIsOn()
+
+        composeRule.runOnIdle {
+            assertTrue(request == Triple("office-lamp", "2", true))
+        }
+    }
+
+    @Test
+    fun outletCardPrioritizesScaledElectricalMetricsAfterItsSwitch() {
+        setInventoryContent(catalog = outletMetricsCatalog())
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Smart outlet", substring = true).assertExists()
+        composeRule.onNodeWithText("Power draw").assertExists()
+        composeRule.onNodeWithText("12.3 W").assertExists()
+        composeRule.onNodeWithText("Voltage").assertExists()
+        composeRule.onNodeWithText("230.4 V").assertExists()
+        composeRule.onNodeWithText("Current").assertExists()
+        composeRule.onNodeWithText("421 mA").assertExists()
+        composeRule.onNodeWithText("Energy").assertExists()
+        composeRule.onNodeWithText("1.234 kWh").assertExists()
+        composeRule.onNodeWithText("Countdown").assertExists()
+        composeRule.onNodeWithText("Off").assertExists()
+        composeRule.onNodeWithText("Child lock").assertExists()
+        composeRule.onNodeWithText("Yes").assertExists()
+    }
+
     private fun setInventoryContent(
         catalog: DeviceCatalog = sampleCatalog(),
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
@@ -249,6 +294,63 @@ class InventoryScreenInstrumentedTest {
                     )
                 ),
                 polledAtEpochMillis = 10L,
+            )
+        ),
+    )
+
+    private fun multiGangCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                productName = "Wall switch",
+                mappingJson = """
+                    {
+                      "1":{"code":"switch_1","type":"Boolean"},
+                      "2":{"code":"switch_2","type":"Boolean"},
+                      "3":{"code":"switch_3","type":"Boolean"}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("3", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "false"),
+                )
+            )
+        ),
+    )
+
+    private fun outletMetricsCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "cz",
+                productName = "Metered outlet",
+                mappingJson = """
+                    {
+                      "1":{"code":"switch_1","type":"Boolean"},
+                      "4":{"code":"child_lock","type":"Boolean"},
+                      "9":{"code":"countdown_1","type":"Integer"},
+                      "18":{"code":"cur_current","type":"Integer","values":{"unit":"mA","scale":0}},
+                      "19":{"code":"cur_power","type":"Integer","values":"{\"unit\":\"W\",\"scale\":1}"},
+                      "20":{"code":"cur_voltage","type":"Integer","values":{"unit":"V","scale":1}},
+                      "21":{"code":"add_ele","type":"Integer","values":{"unit":"kWh","scale":3}}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("4", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("9", LocalDataPointKind.INTEGER, "0"),
+                    LocalDataPoint("18", LocalDataPointKind.INTEGER, "421"),
+                    LocalDataPoint("19", LocalDataPointKind.INTEGER, "123"),
+                    LocalDataPoint("20", LocalDataPointKind.INTEGER, "2304"),
+                    LocalDataPoint("21", LocalDataPointKind.INTEGER, "1234"),
+                )
             )
         ),
     )

@@ -15,7 +15,18 @@ enum class LocalDeviceProfileKind {
     SWITCH_OR_OUTLET,
     LIGHT,
     COVER,
+    SENSOR,
     GENERIC,
+}
+
+enum class LocalSensorKind {
+    CLIMATE,
+    CONTACT,
+    MOTION,
+    PRESENCE,
+    WATER_LEAK,
+    SMOKE,
+    GAS,
 }
 
 enum class LocalDeviceAccessKind {
@@ -30,6 +41,7 @@ enum class LocalDeviceAccessKind {
 data class LocalDeviceProfile(
     val kind: LocalDeviceProfileKind,
     val access: LocalDeviceAccessKind,
+    val sensorKind: LocalSensorKind?,
     val mappedSwitchCount: Int,
     val booleanControls: List<LocalBooleanControl>,
 )
@@ -53,15 +65,18 @@ object LocalDeviceCapabilityRegistry {
             definition.type.equals("Boolean", ignoreCase = true) &&
                 isSwitchCode(definition.code)
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
+        val sensorKind = sensorKind(device, definitions)
         val kind = profileKind(
             device = device,
             definitions = definitions,
             mappedSwitchCount = mappedSwitchCount,
+            sensorKind = sensorKind,
         )
         val access = accessKind(device, kind)
         return LocalDeviceProfile(
             kind = kind,
             access = access,
+            sensorKind = sensorKind.takeIf { kind == LocalDeviceProfileKind.SENSOR },
             mappedSwitchCount = mappedSwitchCount,
             booleanControls = if (access == LocalDeviceAccessKind.DIRECT_CONTROL) {
                 booleanControls(
@@ -90,10 +105,12 @@ object LocalDeviceCapabilityRegistry {
             definition.type.equals("Boolean", ignoreCase = true) &&
                 isSwitchCode(definition.code)
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
+        val sensorKind = sensorKind(device, definitions)
         val kind = profileKind(
             device = device,
             definitions = definitions,
             mappedSwitchCount = mappedSwitchCount,
+            sensorKind = sensorKind,
         )
         if (accessKind(device, kind) != LocalDeviceAccessKind.DIRECT_CONTROL) {
             return emptyList()
@@ -162,17 +179,48 @@ object LocalDeviceCapabilityRegistry {
         device: CloudImportedDevice,
         definitions: List<MappingDefinition>,
         mappedSwitchCount: Int,
+        sensorKind: LocalSensorKind?,
     ): LocalDeviceProfileKind {
         val category = device.category.trim().lowercase()
         val codes = definitions.mapTo(mutableSetOf()) { it.code }
         return when {
-            category in LIGHT_CATEGORIES || codes.any { it in LIGHT_PROFILE_CODES } ->
+            category in LIGHT_CATEGORIES ->
                 LocalDeviceProfileKind.LIGHT
-            category in COVER_CATEGORIES || codes.any { it in COVER_PROFILE_CODES } ->
+            category in COVER_CATEGORIES ->
                 LocalDeviceProfileKind.COVER
-            category in SWITCH_CATEGORIES || mappedSwitchCount > 0 ->
+            category in SWITCH_CATEGORIES ->
                 LocalDeviceProfileKind.SWITCH_OR_OUTLET
+            sensorKind != null -> LocalDeviceProfileKind.SENSOR
+            codes.any { it in LIGHT_PROFILE_CODES } -> LocalDeviceProfileKind.LIGHT
+            codes.any { it in COVER_PROFILE_CODES } -> LocalDeviceProfileKind.COVER
+            mappedSwitchCount > 0 -> LocalDeviceProfileKind.SWITCH_OR_OUTLET
             else -> LocalDeviceProfileKind.GENERIC
+        }
+    }
+
+    private fun sensorKind(
+        device: CloudImportedDevice,
+        definitions: List<MappingDefinition>,
+    ): LocalSensorKind? {
+        when (device.category.trim().lowercase()) {
+            "wsdcg" -> return LocalSensorKind.CLIMATE
+            "mcs" -> return LocalSensorKind.CONTACT
+            "pir" -> return LocalSensorKind.MOTION
+            "hps" -> return LocalSensorKind.PRESENCE
+            "sj" -> return LocalSensorKind.WATER_LEAK
+            "ywbj" -> return LocalSensorKind.SMOKE
+            "rqbj" -> return LocalSensorKind.GAS
+        }
+        val codes = definitions.mapTo(mutableSetOf()) { definition -> definition.code }
+        return when {
+            codes.any { code -> code in WATER_SENSOR_CODES } -> LocalSensorKind.WATER_LEAK
+            codes.any { code -> code in SMOKE_SENSOR_CODES } -> LocalSensorKind.SMOKE
+            codes.any { code -> code in GAS_SENSOR_CODES } -> LocalSensorKind.GAS
+            codes.any { code -> code in CONTACT_SENSOR_CODES } -> LocalSensorKind.CONTACT
+            codes.any { code -> code in PRESENCE_SENSOR_CODES } -> LocalSensorKind.PRESENCE
+            codes.any { code -> code in MOTION_SENSOR_CODES } -> LocalSensorKind.MOTION
+            codes.any { code -> code in CLIMATE_SENSOR_CODES } -> LocalSensorKind.CLIMATE
+            else -> null
         }
     }
 
@@ -183,6 +231,7 @@ object LocalDeviceCapabilityRegistry {
         LocalDeviceProfileKind.SWITCH_OR_OUTLET,
         LocalDeviceProfileKind.LIGHT -> LocalDeviceAccessKind.DIRECT_CONTROL
         LocalDeviceProfileKind.COVER,
+        LocalDeviceProfileKind.SENSOR,
         LocalDeviceProfileKind.GENERIC -> LocalDeviceAccessKind.STATUS_ONLY
     }
 
@@ -281,6 +330,26 @@ object LocalDeviceCapabilityRegistry {
         "percent_control_2",
         "percent_state",
         "percent_state_2",
+    )
+    private val CLIMATE_SENSOR_CODES = setOf(
+        "temp_current",
+        "va_temperature",
+        "humidity_value",
+        "va_humidity",
+    )
+    private val CONTACT_SENSOR_CODES = setOf("doorcontact_state")
+    private val MOTION_SENSOR_CODES = setOf("pir")
+    private val PRESENCE_SENSOR_CODES = setOf("presence_state")
+    private val WATER_SENSOR_CODES = setOf("watersensor_state")
+    private val SMOKE_SENSOR_CODES = setOf(
+        "smoke_sensor_status",
+        "smoke_sensor_state",
+        "smoke_sensor_value",
+    )
+    private val GAS_SENSOR_CODES = setOf(
+        "gas_sensor_status",
+        "gas_sensor_state",
+        "gas_sensor_value",
     )
     private const val MAX_BOOLEAN_CONTROLS = 16
 }

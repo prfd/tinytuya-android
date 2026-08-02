@@ -56,6 +56,7 @@ import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalDeviceProfile
 import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
+import com.prfd.tinytuya.data.lan.LocalSensorKind
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
@@ -441,8 +442,25 @@ private fun InventoryDeviceCard(
             lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
         )
     }
+    val sensorPresentation = remember(
+        device.mappingJson,
+        localStatus?.dataPoints,
+        localStatus?.state,
+        profile.sensorKind,
+        isCurrentStatus,
+    ) {
+        if (isCurrentStatus && localStatus?.state == LocalPollDeviceState.RESPONDED) {
+            profile.sensorKind?.let { sensorKind ->
+                presentLocalSensor(device, sensorKind, localStatus.dataPoints)
+            }
+        } else {
+            null
+        }
+    }
+    val hasActiveSensor = sensorPresentation?.tone == LocalSensorTone.ACTIVE ||
+        sensorPresentation?.tone == LocalSensorTone.ALERT
     val isProfileActive = isCurrentStatus &&
-        profile.booleanControls.any { localControl -> localControl.currentValue }
+        (profile.booleanControls.any { localControl -> localControl.currentValue } || hasActiveSensor)
     val lanStatus = when {
         lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
         isOnCurrentLan -> "On local network" to true
@@ -453,7 +471,14 @@ private fun InventoryDeviceCard(
             val hasLocalKey = !device.localKey.isBlank
             (if (hasLocalKey) "Key secured" else "Local key missing") to hasLocalKey
         }
-        LocalDeviceAccessKind.STATUS_ONLY -> "Status only" to false
+        LocalDeviceAccessKind.STATUS_ONLY -> {
+            val label = if (profile.kind == LocalDeviceProfileKind.SENSOR) {
+                "Read only"
+            } else {
+                "Status only"
+            }
+            label to false
+        }
         LocalDeviceAccessKind.GATEWAY_CHILD,
         LocalDeviceAccessKind.GATEWAY,
         LocalDeviceAccessKind.CAMERA,
@@ -468,15 +493,21 @@ private fun InventoryDeviceCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = MaterialTheme.shapes.small,
-                    color = if (isProfileActive) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
+                    color = when {
+                        sensorPresentation?.tone == LocalSensorTone.ALERT ->
+                            MaterialTheme.colorScheme.errorContainer
+                        sensorPresentation?.tone == LocalSensorTone.ACTIVE ->
+                            MaterialTheme.colorScheme.tertiaryContainer
+                        isProfileActive -> MaterialTheme.colorScheme.primaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
                     },
-                    contentColor = if (isProfileActive) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.primary
+                    contentColor = when {
+                        sensorPresentation?.tone == LocalSensorTone.ALERT ->
+                            MaterialTheme.colorScheme.onErrorContainer
+                        sensorPresentation?.tone == LocalSensorTone.ACTIVE ->
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        isProfileActive -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.primary
                     },
                 ) {
                     Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
@@ -522,6 +553,7 @@ private fun InventoryDeviceCard(
                 device = device,
                 profile = profile,
                 status = localStatus,
+                sensorPresentation = sensorPresentation,
                 isCurrentStatus = isCurrentStatus,
                 isOnCurrentLan = isOnCurrentLan,
                 isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
@@ -537,6 +569,7 @@ private fun LocalStatusPanel(
     device: CloudImportedDevice,
     profile: LocalDeviceProfile,
     status: LocalStatusRecord?,
+    sensorPresentation: LocalSensorPresentation?,
     isCurrentStatus: Boolean,
     isOnCurrentLan: Boolean,
     isReadingStatus: Boolean,
@@ -555,13 +588,15 @@ private fun LocalStatusPanel(
         device.mappingJson,
         status?.dataPoints,
         booleanControls,
+        sensorPresentation,
     ) {
-        val controlledIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
+        val featuredIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
+        sensorPresentation?.consumedDataPointIds?.let(featuredIds::addAll)
         status?.let { currentStatus ->
             presentLocalDataPoints(
                 device = device,
                 dataPoints = currentStatus.dataPoints.filterNot { dataPoint ->
-                    dataPoint.id in controlledIds
+                    dataPoint.id in featuredIds
                 },
             )
         }.orEmpty()
@@ -585,7 +620,7 @@ private fun LocalStatusPanel(
                     isReadingStatus -> "Reading status…"
                     !isCurrentStatus -> "Local status not read yet"
                     status?.state == LocalPollDeviceState.RESPONDED ->
-                        localResponseTitle(booleanControls)
+                        localResponseTitle(booleanControls, sensorPresentation)
                     status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
                         "Could not confirm the requested state"
                     status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
@@ -612,7 +647,14 @@ private fun LocalStatusPanel(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 status?.state == LocalPollDeviceState.RESPONDED -> {
-                    if (presentedDataPoints.isEmpty() && booleanControls.isEmpty()) {
+                    sensorPresentation?.let { presentation ->
+                        LocalSensorSummary(presentation)
+                    }
+                    if (
+                        presentedDataPoints.isEmpty() &&
+                        booleanControls.isEmpty() &&
+                        sensorPresentation == null
+                    ) {
                         Text(
                             text = "The device answered but did not return readable data points.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -676,10 +718,105 @@ private fun LocalStatusPanel(
 }
 
 @Composable
+private fun LocalSensorSummary(presentation: LocalSensorPresentation) {
+    val primaryContainerColor = when (presentation.tone) {
+        LocalSensorTone.NEUTRAL -> MaterialTheme.colorScheme.surface
+        LocalSensorTone.NORMAL -> MaterialTheme.colorScheme.primaryContainer
+        LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
+        LocalSensorTone.ALERT -> MaterialTheme.colorScheme.errorContainer
+    }
+    val primaryContentColor = when (presentation.tone) {
+        LocalSensorTone.NEUTRAL -> MaterialTheme.colorScheme.onSurface
+        LocalSensorTone.NORMAL -> MaterialTheme.colorScheme.onPrimaryContainer
+        LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
+        LocalSensorTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .testTag("local_sensor_summary"),
+    ) {
+        Surface(
+            color = primaryContainerColor,
+            contentColor = primaryContentColor,
+            shape = MaterialTheme.shapes.small,
+            border = if (presentation.tone == LocalSensorTone.NEUTRAL) {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            } else {
+                null
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                Text(
+                    text = "LIVE SENSOR",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.3.sp,
+                )
+                Text(
+                    text = presentation.primary.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 5.dp),
+                )
+                Text(
+                    text = presentation.primary.value,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+            }
+        }
+        if (presentation.secondary.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                presentation.secondary.forEach { reading ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = MaterialTheme.shapes.small,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
+                            Text(
+                                text = reading.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = reading.value,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LocalAccessNotice(profile: LocalDeviceProfile) {
     val isStatusOnly = profile.access == LocalDeviceAccessKind.STATUS_ONLY
     val title = when (profile.access) {
-        LocalDeviceAccessKind.STATUS_ONLY -> "Status-only profile"
+        LocalDeviceAccessKind.STATUS_ONLY -> if (profile.kind == LocalDeviceProfileKind.SENSOR) {
+            "Read-only sensor"
+        } else {
+            "Status-only profile"
+        }
         LocalDeviceAccessKind.GATEWAY_CHILD -> "Gateway child"
         LocalDeviceAccessKind.GATEWAY -> "Gateway controls unavailable"
         LocalDeviceAccessKind.CAMERA -> "Camera controls disabled"
@@ -690,6 +827,8 @@ private fun LocalAccessNotice(profile: LocalDeviceProfile) {
         LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
             LocalDeviceProfileKind.COVER ->
                 "Cover commands are not enabled yet. Current local DPS stays read-only."
+            LocalDeviceProfileKind.SENSOR ->
+                "Fresh readings come directly from the device. This profile never sends commands."
             else ->
                 "No verified control profile matches this device. Local DPS stays read-only."
         }
@@ -968,7 +1107,11 @@ private fun localControlSupportingText(
     else -> "Local Wi-Fi · confirmed after every change."
 }
 
-private fun localResponseTitle(controls: List<LocalBooleanControl>): String {
+private fun localResponseTitle(
+    controls: List<LocalBooleanControl>,
+    sensorPresentation: LocalSensorPresentation?,
+): String {
+    if (sensorPresentation != null) return "Sensor readings"
     if (controls.isEmpty()) return "Last local response"
     if (controls.size == 1) return if (controls.single().currentValue) {
         "Power is on"
@@ -1158,6 +1301,7 @@ private fun deviceProfileLabel(
         }
         LocalDeviceProfileKind.LIGHT -> "Smart light"
         LocalDeviceProfileKind.COVER -> "Curtain or cover"
+        LocalDeviceProfileKind.SENSOR -> sensorProfileLabel(profile.sensorKind)
         LocalDeviceProfileKind.GENERIC -> "Tuya device"
     }
 }
@@ -1172,8 +1316,31 @@ private fun deviceProfileBadge(profile: LocalDeviceProfile): String = when (prof
         LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "SW"
         LocalDeviceProfileKind.LIGHT -> "LT"
         LocalDeviceProfileKind.COVER -> "CV"
+        LocalDeviceProfileKind.SENSOR -> sensorProfileBadge(profile.sensorKind)
         LocalDeviceProfileKind.GENERIC -> "TU"
     }
+}
+
+private fun sensorProfileLabel(sensorKind: LocalSensorKind?): String = when (sensorKind) {
+    LocalSensorKind.CLIMATE -> "Temperature and humidity sensor"
+    LocalSensorKind.CONTACT -> "Contact sensor"
+    LocalSensorKind.MOTION -> "Motion sensor"
+    LocalSensorKind.PRESENCE -> "Presence sensor"
+    LocalSensorKind.WATER_LEAK -> "Water leak sensor"
+    LocalSensorKind.SMOKE -> "Smoke alarm"
+    LocalSensorKind.GAS -> "Gas alarm"
+    null -> "Tuya sensor"
+}
+
+private fun sensorProfileBadge(sensorKind: LocalSensorKind?): String = when (sensorKind) {
+    LocalSensorKind.CLIMATE -> "CL"
+    LocalSensorKind.CONTACT -> "CT"
+    LocalSensorKind.MOTION -> "MV"
+    LocalSensorKind.PRESENCE -> "PR"
+    LocalSensorKind.WATER_LEAK -> "WL"
+    LocalSensorKind.SMOKE -> "SM"
+    LocalSensorKind.GAS -> "GS"
+    null -> "SN"
 }
 
 private val LocalDeviceAccessKind.canReadLocalStatus: Boolean

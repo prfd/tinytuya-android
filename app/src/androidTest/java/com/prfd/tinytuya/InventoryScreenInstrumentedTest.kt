@@ -292,6 +292,41 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
     }
 
+    @Test
+    fun climateSensorUsesAReadOnlyHeroWithScaledLocalReadings() {
+        setInventoryContent(catalog = climateSensorCatalog())
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Temperature and humidity sensor", substring = true)
+            .assertExists()
+        composeRule.onNodeWithText("Read only").assertExists()
+        composeRule.onNodeWithText("Read-only sensor").assertExists()
+        composeRule.onNodeWithText("never sends commands", substring = true).assertExists()
+        composeRule.onNodeWithTag("local_sensor_summary").assertExists()
+        composeRule.onNodeWithText("LIVE SENSOR").assertExists()
+        composeRule.onNodeWithText("Temperature").assertExists()
+        composeRule.onNodeWithText("21.7 °C").assertExists()
+        composeRule.onNodeWithText("Humidity").assertExists()
+        composeRule.onNodeWithText("48.2 %").assertExists()
+        composeRule.onNodeWithText("Battery").assertExists()
+        composeRule.onNodeWithText("87 %").assertExists()
+        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+    }
+
+    @Test
+    fun waterSensorShowsAnExplicitAlarmWithoutExposingAControl() {
+        setInventoryContent(catalog = waterSensorCatalog())
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+
+        composeRule.onNodeWithText("Water leak sensor", substring = true).assertExists()
+        composeRule.onNodeWithText("Sensor readings").assertExists()
+        composeRule.onNodeWithText("Water").assertExists()
+        composeRule.onNodeWithText("Leak detected").assertExists()
+        composeRule.onNodeWithText("64 %").assertExists()
+        composeRule.onNodeWithTag("local_sensor_summary").assertExists()
+        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+    }
+
     private fun setInventoryContent(
         catalog: DeviceCatalog = sampleCatalog(),
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
@@ -450,6 +485,54 @@ class InventoryScreenInstrumentedTest {
                     LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
                     LocalDataPoint("4", LocalDataPointKind.STRING, PRIVATE_DP_TEXT),
                     LocalDataPoint("2", LocalDataPointKind.INTEGER, "42"),
+                )
+            )
+        ),
+    )
+
+    private fun climateSensorCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "wsdcg",
+                productName = "Room climate sensor",
+                mappingJson = """
+                    {
+                      "1":{"code":"temp_current","type":"Integer","values":{"unit":"℃","min":-100,"max":600,"scale":1}},
+                      "2":{"code":"humidity_value","type":"Integer","values":{"unit":"%","min":0,"max":1000,"scale":1}},
+                      "4":{"code":"battery_percentage","type":"Integer","values":{"unit":"%","min":0,"max":100,"scale":0}}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("4", LocalDataPointKind.INTEGER, "87"),
+                    LocalDataPoint("2", LocalDataPointKind.INTEGER, "482"),
+                    LocalDataPoint("1", LocalDataPointKind.INTEGER, "217"),
+                )
+            )
+        ),
+    )
+
+    private fun waterSensorCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "sj",
+                productName = "Utility room leak sensor",
+                mappingJson = """
+                    {
+                      "1":{"code":"watersensor_state","type":"Enum","values":{"range":["alarm","normal"]}},
+                      "4":{"code":"battery_percentage","type":"Integer","values":{"unit":"%","min":0,"max":100,"scale":0}}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("1", LocalDataPointKind.STRING, "alarm"),
+                    LocalDataPoint("4", LocalDataPointKind.INTEGER, "64"),
                 )
             )
         ),

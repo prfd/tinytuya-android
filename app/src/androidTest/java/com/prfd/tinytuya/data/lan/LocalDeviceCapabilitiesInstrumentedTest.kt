@@ -172,6 +172,105 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
+    fun standardSensorCategoriesArePollableReadOnlyProfiles() {
+        val categories = listOf(
+            "wsdcg" to LocalSensorKind.CLIMATE,
+            "mcs" to LocalSensorKind.CONTACT,
+            "pir" to LocalSensorKind.MOTION,
+            "hps" to LocalSensorKind.PRESENCE,
+            "sj" to LocalSensorKind.WATER_LEAK,
+            "ywbj" to LocalSensorKind.SMOKE,
+            "rqbj" to LocalSensorKind.GAS,
+        )
+
+        categories.forEach { (category, expectedSensorKind) ->
+            val device = sampleDevice(
+                category = category,
+                mappingJson = "{\"4\":{\"code\":\"battery_percentage\",\"type\":\"Integer\"}}",
+            )
+            val profile = LocalDeviceCapabilityRegistry.profile(
+                device = device,
+                status = respondedStatus(
+                    LocalDataPoint("4", LocalDataPointKind.INTEGER, "82")
+                ),
+                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+            )
+
+            assertEquals(LocalDeviceProfileKind.SENSOR, profile.kind)
+            assertEquals(expectedSensorKind, profile.sensorKind)
+            assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
+            assertTrue(profile.booleanControls.isEmpty())
+            assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
+        }
+    }
+
+    @Test
+    fun climateCategoryCannotGainControlsFromAmbiguousSwitchAndBrightnessCodes() {
+        val device = sampleDevice(
+            category = "wsdcg",
+            mappingJson = """
+                {
+                  "1":{"code":"switch","type":"Boolean"},
+                  "2":{"code":"bright_value","type":"Integer"},
+                  "3":{"code":"temp_current","type":"Integer"}
+                }
+            """.trimIndent(),
+        )
+        val status = respondedStatus(
+            LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+            LocalDataPoint("2", LocalDataPointKind.INTEGER, "500"),
+            LocalDataPoint("3", LocalDataPointKind.INTEGER, "215"),
+        )
+
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = status,
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.SENSOR, profile.kind)
+        assertEquals(LocalSensorKind.CLIMATE, profile.sensorKind)
+        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
+        assertTrue(profile.booleanControls.isEmpty())
+        assertTrue(
+            LocalDeviceCapabilityRegistry.booleanControls(
+                device = device,
+                status = status,
+                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun strongSensorMappingIdentifiesAnUnknownProductWithoutOverridingASwitchCategory() {
+        val mapping = """
+            {
+              "1":{"code":"switch_1","type":"Boolean"},
+              "7":{"code":"watersensor_state","type":"Enum","values":{"range":["alarm","normal"]}}
+            }
+        """.trimIndent()
+        val unknownProfile = LocalDeviceCapabilityRegistry.profile(
+            device = sampleDevice(category = "custom", mappingJson = mapping),
+            status = null,
+            lastDiscoveryAtEpochMillis = null,
+        )
+        val switchProfile = LocalDeviceCapabilityRegistry.profile(
+            device = sampleDevice(category = "cz", mappingJson = mapping),
+            status = respondedStatus(
+                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.SENSOR, unknownProfile.kind)
+        assertEquals(LocalSensorKind.WATER_LEAK, unknownProfile.sensorKind)
+        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, unknownProfile.access)
+        assertEquals(LocalDeviceProfileKind.SWITCH_OR_OUTLET, switchProfile.kind)
+        assertEquals(null, switchProfile.sensorKind)
+        assertEquals(listOf("1"), switchProfile.booleanControls.map { it.dataPointId })
+    }
+
+    @Test
     fun genericDirectDeviceIsPollableButStatusOnly() {
         val device = sampleDevice(
             category = "custom_sensor",

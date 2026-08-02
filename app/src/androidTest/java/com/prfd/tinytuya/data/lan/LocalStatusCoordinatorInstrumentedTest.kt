@@ -111,7 +111,10 @@ class LocalStatusCoordinatorInstrumentedTest {
         override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
             error("Not used")
 
-        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        override suspend fun mergeLanDiscovery(
+            result: LanDiscoveryResult,
+            network: LanNetworkContext,
+        ): DeviceCatalog =
             error("Not used")
 
         override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog {

@@ -6,10 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryException
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LanNetworkObservation
+import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalControlException
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
+import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
@@ -17,6 +20,7 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 sealed interface AppUiState {
@@ -28,6 +32,7 @@ sealed interface AppUiState {
         val catalog: DeviceCatalog,
         val discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
         val control: LocalControlUiState = LocalControlUiState.Unavailable,
+        val isLanSnapshotCurrent: Boolean = true,
     ) : AppUiState
 
     data class Recovery(
@@ -90,13 +95,17 @@ class AppViewModel(
     private val lanDiscoveryCoordinator: LanDiscoveryCoordinator,
     private val localStatusCoordinator: LocalStatusCoordinator,
     private val localControlCoordinator: LocalControlCoordinator,
+    private val lanNetworkObserver: LanNetworkObserver = NoOpLanNetworkObserver,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
     private var controlNetwork: LanNetworkContext? = null
     private var controlDiscoveryAtEpochMillis: Long? = null
+    private var controlSessionVersion = 0L
+    private var latestNetworkObservation: LanNetworkObservation? = null
 
     init {
+        observeLanNetwork()
         refreshCatalog()
     }
 
@@ -109,7 +118,7 @@ class AppViewModel(
                 mutableState.value = if (catalog == null || catalog.devices.isEmpty()) {
                     AppUiState.Onboarding
                 } else {
-                    AppUiState.Inventory(catalog)
+                    inventoryFromCatalog(catalog)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -150,34 +159,60 @@ class AppViewModel(
             try {
                 val discovery = lanDiscoveryCoordinator.discover(current.catalog)
                 latestCatalog = discovery.catalog
-                controlNetwork = discovery.network
-                controlDiscoveryAtEpochMillis = latestCatalog.lastDiscoveryAtEpochMillis
+                if (!observationMatches(discovery.network)) {
+                    publishChangedNetwork(latestCatalog)
+                    return@launch
+                }
+                openControlSession(
+                    network = discovery.network,
+                    discoveryAtEpochMillis = latestCatalog.lastDiscoveryAtEpochMillis,
+                )
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.ReadingStatus,
                     control = LocalControlUiState.Unavailable,
+                    isLanSnapshotCurrent = true,
                 )
                 readingStatus = true
                 latestCatalog = localStatusCoordinator.poll(
                     catalog = latestCatalog,
                     network = discovery.network,
                 )
+                if (!controlSessionMatches(discovery.network, latestCatalog)) {
+                    publishChangedNetwork(latestCatalog)
+                    return@launch
+                }
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Completed,
                     control = LocalControlUiState.Ready,
+                    isLanSnapshotCurrent = true,
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: LanDiscoveryException) {
+                val snapshotCurrent = catalogIsCurrentNow(
+                    catalog = current.catalog,
+                    fallback = current.isLanSnapshotCurrent,
+                )
                 mutableState.value = current.copy(
-                    discovery = LanDiscoveryUiState.Error(
-                        code = error.code,
-                        message = error.message ?: "Local Tuya discovery could not be completed.",
-                    ),
+                    discovery = if (snapshotCurrent) {
+                        LanDiscoveryUiState.Error(
+                            code = error.code,
+                            message = error.message
+                                ?: "Local Tuya discovery could not be completed.",
+                        )
+                    } else {
+                        changedNetworkError()
+                    },
                     control = LocalControlUiState.Unavailable,
+                    isLanSnapshotCurrent = snapshotCurrent,
                 )
             } catch (error: LocalStatusException) {
+                if (!activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    publishChangedNetwork(latestCatalog)
+                    return@launch
+                }
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Error(
@@ -185,36 +220,76 @@ class AppViewModel(
                         message = error.message ?: "Local device status could not be read.",
                     ),
                     control = LocalControlUiState.Ready,
+                    isLanSnapshotCurrent = true,
                 )
             } catch (error: DeviceCatalogStorageException) {
+                if (readingStatus && !activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    publishChangedNetwork(latestCatalog)
+                    return@launch
+                }
+                val snapshotCurrent = if (readingStatus) {
+                    true
+                } else {
+                    catalogIsCurrentNow(
+                        catalog = current.catalog,
+                        fallback = current.isLanSnapshotCurrent,
+                    )
+                }
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
-                    discovery = LanDiscoveryUiState.Error(
-                        code = error.code,
-                        message = error.message ?: "The discovery result could not be stored safely.",
-                    ),
+                    discovery = if (snapshotCurrent) {
+                        LanDiscoveryUiState.Error(
+                            code = error.code,
+                            message = error.message
+                                ?: "The discovery result could not be stored safely.",
+                        )
+                    } else {
+                        changedNetworkError()
+                    },
                     control = if (readingStatus) {
                         LocalControlUiState.Ready
                     } else {
                         LocalControlUiState.Unavailable
                     },
+                    isLanSnapshotCurrent = snapshotCurrent,
                 )
             } catch (_: Exception) {
+                if (readingStatus && !activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    publishChangedNetwork(latestCatalog)
+                    return@launch
+                }
+                val snapshotCurrent = if (readingStatus) {
+                    true
+                } else {
+                    catalogIsCurrentNow(
+                        catalog = current.catalog,
+                        fallback = current.isLanSnapshotCurrent,
+                    )
+                }
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
-                    discovery = LanDiscoveryUiState.Error(
-                        code = if (readingStatus) "LOCAL_POLL_FAILED" else "LAN_SCAN_FAILED",
-                        message = if (readingStatus) {
-                            "Local device status could not be read."
-                        } else {
-                            "Local Tuya discovery could not be completed."
-                        },
-                    ),
+                    discovery = if (snapshotCurrent) {
+                        LanDiscoveryUiState.Error(
+                            code = if (readingStatus) {
+                                "LOCAL_POLL_FAILED"
+                            } else {
+                                "LAN_SCAN_FAILED"
+                            },
+                            message = if (readingStatus) {
+                                "Local device status could not be read."
+                            } else {
+                                "Local Tuya discovery could not be completed."
+                            },
+                        )
+                    } else {
+                        changedNetworkError()
+                    },
                     control = if (readingStatus) {
                         LocalControlUiState.Ready
                     } else {
                         LocalControlUiState.Unavailable
                     },
+                    isLanSnapshotCurrent = snapshotCurrent,
                 )
             }
         }
@@ -233,7 +308,13 @@ class AppViewModel(
             current.control is LocalControlUiState.Sending
         ) return
         val network = controlNetwork ?: return
-        if (controlDiscoveryAtEpochMillis != current.catalog.lastDiscoveryAtEpochMillis) return
+        val discoveryAt = controlDiscoveryAtEpochMillis ?: return
+        if (
+            discoveryAt != current.catalog.lastDiscoveryAtEpochMillis ||
+            !current.isLanSnapshotCurrent ||
+            !observationMatches(network)
+        ) return
+        val sessionVersion = controlSessionVersion
 
         mutableState.value = current.copy(
             control = LocalControlUiState.Sending(deviceId, dataPointId, value)
@@ -247,15 +328,34 @@ class AppViewModel(
                     dataPointId = dataPointId,
                     value = value,
                 )
-                mutableState.value = current.copy(
+                val live = activeControlInventory(
+                    sessionVersion = sessionVersion,
+                    network = network,
+                    discoveryAtEpochMillis = discoveryAt,
+                )
+                if (live == null) {
+                    publishStaleControlResult(updated)
+                    return@launch
+                }
+                mutableState.value = live.copy(
                     catalog = updated,
                     control = LocalControlUiState.Confirmed(deviceId, dataPointId, value),
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: LocalControlException) {
-                mutableState.value = current.copy(
-                    catalog = error.updatedCatalog ?: current.catalog,
+                val observedCatalog = error.updatedCatalog
+                val live = activeControlInventory(
+                    sessionVersion = sessionVersion,
+                    network = network,
+                    discoveryAtEpochMillis = discoveryAt,
+                )
+                if (live == null) {
+                    publishStaleControlResult(observedCatalog)
+                    return@launch
+                }
+                mutableState.value = live.copy(
+                    catalog = observedCatalog ?: live.catalog,
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
@@ -264,7 +364,12 @@ class AppViewModel(
                     ),
                 )
             } catch (error: DeviceCatalogStorageException) {
-                mutableState.value = current.copy(
+                val live = activeControlInventory(
+                    sessionVersion = sessionVersion,
+                    network = network,
+                    discoveryAtEpochMillis = discoveryAt,
+                ) ?: return@launch
+                mutableState.value = live.copy(
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
@@ -273,7 +378,12 @@ class AppViewModel(
                     ),
                 )
             } catch (_: Exception) {
-                mutableState.value = current.copy(
+                val live = activeControlInventory(
+                    sessionVersion = sessionVersion,
+                    network = network,
+                    discoveryAtEpochMillis = discoveryAt,
+                ) ?: return@launch
+                mutableState.value = live.copy(
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
@@ -309,9 +419,142 @@ class AppViewModel(
     }
 
     private fun clearControlSession() {
+        controlSessionVersion += 1
         controlNetwork = null
         controlDiscoveryAtEpochMillis = null
     }
+
+    private fun openControlSession(
+        network: LanNetworkContext,
+        discoveryAtEpochMillis: Long?,
+    ) {
+        controlSessionVersion += 1
+        controlNetwork = network
+        controlDiscoveryAtEpochMillis = discoveryAtEpochMillis
+    }
+
+    private fun observeLanNetwork() {
+        viewModelScope.launch {
+            lanNetworkObserver.observe().collect { observation ->
+                latestNetworkObservation = observation
+                val current = mutableState.value as? AppUiState.Inventory ?: return@collect
+                val snapshotCurrent = catalogMatchesObservation(current.catalog, observation)
+                if (!snapshotCurrent) {
+                    clearControlSession()
+                    val busy = current.discovery is LanDiscoveryUiState.Scanning ||
+                        current.discovery is LanDiscoveryUiState.ReadingStatus
+                    mutableState.value = current.copy(
+                        discovery = if (busy) current.discovery else changedNetworkError(),
+                        control = LocalControlUiState.Unavailable,
+                        isLanSnapshotCurrent = false,
+                    )
+                } else if (!current.isLanSnapshotCurrent) {
+                    val priorError = current.discovery as? LanDiscoveryUiState.Error
+                    mutableState.value = current.copy(
+                        discovery = if (priorError?.code == LAN_NETWORK_CHANGED) {
+                            LanDiscoveryUiState.Idle
+                        } else {
+                            current.discovery
+                        },
+                        control = LocalControlUiState.Unavailable,
+                        isLanSnapshotCurrent = true,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun inventoryFromCatalog(catalog: DeviceCatalog): AppUiState.Inventory {
+        val snapshotCurrent = latestNetworkObservation?.let { observation ->
+            catalogMatchesObservation(catalog, observation)
+        } ?: true
+        return AppUiState.Inventory(
+            catalog = catalog,
+            discovery = if (catalog.lastDiscoveryAtEpochMillis != null && !snapshotCurrent) {
+                changedNetworkError()
+            } else {
+                LanDiscoveryUiState.Idle
+            },
+            control = LocalControlUiState.Unavailable,
+            isLanSnapshotCurrent = snapshotCurrent,
+        )
+    }
+
+    private fun catalogMatchesObservation(
+        catalog: DeviceCatalog,
+        observation: LanNetworkObservation,
+    ): Boolean {
+        if (catalog.lastDiscoveryAtEpochMillis == null) return true
+        val expected = catalog.lastDiscoveryNetwork ?: return false
+        return observation is LanNetworkObservation.Available && observation.network == expected
+    }
+
+    private fun catalogIsCurrentNow(
+        catalog: DeviceCatalog,
+        fallback: Boolean,
+    ): Boolean = latestNetworkObservation?.let { observation ->
+        catalogMatchesObservation(catalog, observation)
+    } ?: fallback
+
+    private fun observationMatches(network: LanNetworkContext): Boolean =
+        when (val observation = latestNetworkObservation) {
+            null -> true
+            is LanNetworkObservation.Available -> observation.network == network
+            LanNetworkObservation.Unavailable -> false
+        }
+
+    private fun controlSessionMatches(
+        network: LanNetworkContext,
+        catalog: DeviceCatalog,
+    ): Boolean =
+        controlNetwork == network &&
+            controlDiscoveryAtEpochMillis == catalog.lastDiscoveryAtEpochMillis &&
+            observationMatches(network)
+
+    private fun activeDiscoverySessionIsCurrent(catalog: DeviceCatalog): Boolean {
+        val network = controlNetwork ?: return false
+        return controlSessionMatches(network, catalog)
+    }
+
+    private fun activeControlInventory(
+        sessionVersion: Long,
+        network: LanNetworkContext,
+        discoveryAtEpochMillis: Long,
+    ): AppUiState.Inventory? {
+        val live = mutableState.value as? AppUiState.Inventory ?: return null
+        return live.takeIf {
+            controlSessionVersion == sessionVersion &&
+                controlNetwork == network &&
+                controlDiscoveryAtEpochMillis == discoveryAtEpochMillis &&
+                it.catalog.lastDiscoveryAtEpochMillis == discoveryAtEpochMillis &&
+                it.isLanSnapshotCurrent &&
+                observationMatches(network)
+        }
+    }
+
+    private fun publishChangedNetwork(catalog: DeviceCatalog) {
+        clearControlSession()
+        val live = mutableState.value as? AppUiState.Inventory ?: return
+        mutableState.value = live.copy(
+            catalog = catalog,
+            discovery = changedNetworkError(),
+            control = LocalControlUiState.Unavailable,
+            isLanSnapshotCurrent = false,
+        )
+    }
+
+    private fun publishStaleControlResult(catalog: DeviceCatalog?) {
+        val live = mutableState.value as? AppUiState.Inventory ?: return
+        mutableState.value = live.copy(
+            catalog = catalog ?: live.catalog,
+            control = LocalControlUiState.Unavailable,
+        )
+    }
+
+    private fun changedNetworkError() = LanDiscoveryUiState.Error(
+        code = LAN_NETWORK_CHANGED,
+        message = "The active Wi-Fi no longer matches the last local refresh. Refresh local devices before using saved addresses.",
+    )
 
     companion object {
         fun factory(
@@ -319,6 +562,7 @@ class AppViewModel(
             lanDiscoveryCoordinator: LanDiscoveryCoordinator,
             localStatusCoordinator: LocalStatusCoordinator,
             localControlCoordinator: LocalControlCoordinator,
+            lanNetworkObserver: LanNetworkObserver = NoOpLanNetworkObserver,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -329,8 +573,11 @@ class AppViewModel(
                         lanDiscoveryCoordinator,
                         localStatusCoordinator,
                         localControlCoordinator,
+                        lanNetworkObserver,
                     ) as T
                 }
             }
+
+        private const val LAN_NETWORK_CHANGED = "LAN_NETWORK_CHANGED"
     }
 }

@@ -184,7 +184,10 @@ class OnboardingViewModelInstrumentedTest {
             )
         }
 
-        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        override suspend fun mergeLanDiscovery(
+            result: LanDiscoveryResult,
+            network: com.prfd.tinytuya.data.lan.LanNetworkContext,
+        ): DeviceCatalog =
             error("LAN discovery is not used by this onboarding test.")
 
         override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =

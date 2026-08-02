@@ -5,10 +5,23 @@ data class LanNetworkContext(
     val localIpv4: String,
     val prefixLength: Int,
     val broadcastIpv4: String,
+    /** Android identity for this exact network; deliberately omitted from the Python bridge. */
+    val networkHandle: Long = UNKNOWN_NETWORK_HANDLE,
 ) {
     override fun toString(): String =
         "LanNetworkContext(interface=[REDACTED], localIpv4=[REDACTED], " +
-            "prefixLength=$prefixLength, broadcastIpv4=[REDACTED])"
+            "prefixLength=$prefixLength, broadcastIpv4=[REDACTED], " +
+            "networkHandle=[REDACTED])"
+
+    companion object {
+        const val UNKNOWN_NETWORK_HANDLE = 0L
+    }
+}
+
+sealed interface LanNetworkObservation {
+    data class Available(val network: LanNetworkContext) : LanNetworkObservation
+
+    data object Unavailable : LanNetworkObservation
 }
 
 data class LanKnownDevice(

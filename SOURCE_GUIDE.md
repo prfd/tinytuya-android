@@ -38,9 +38,9 @@ Several lists coexist in `DeviceCatalog`. They are not duplicates:
 | State | Type and owner | What it means | Freshness rule |
 | --- | --- | --- | --- |
 | Imported identity | `CloudImportedDevice` in `DeviceCatalog.devices` | Tuya ID, local key, mapping, category, and product metadata imported from the user's cloud project | Replaced by an explicit cloud import |
-| LAN observation | `LanDeviceRecord` in `DeviceCatalog.lanDevices` | An ID was heard at an IP and protocol version on the local network | Current only when `lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis` |
+| LAN observation | `LanDeviceRecord` plus `lastDiscoveryNetwork` in `DeviceCatalog` | An ID was heard at an IP and protocol version on one exact Android network | Current only when its timestamp belongs to the latest generation and the observed Android network handle still matches |
 | Local status | `LocalStatusRecord` in `DeviceCatalog.localStatus` | The latest normalized DPS values or offline/error result | Safe for current controls only when it was polled after the current discovery |
-| Control session | `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel` | The exact Wi-Fi network and discovery generation authorized for writes | Process-only; cleared on reload, navigation, a new scan, or deletion |
+| Control session | `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel` | The exact Wi-Fi network and discovery generation authorized for writes | Process-only; cleared on reload, navigation, a new scan, deletion, or a default-network change |
 
 This split explains an important UI behavior: an old address can remain encrypted as history without being treated as a device found by the latest scan. A control is available only after a fresh discovery and status read in the current app process.
 
@@ -128,12 +128,12 @@ Read:
 
 - `discoverLan` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
 - All of [LanDiscoveryCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinator.kt). It builds a metadata-only request: no local key is given to the scanner.
-- [LanNetworkResolver.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanNetworkResolver.kt). Android chooses the active Wi-Fi interface, IPv4 prefix, and broadcast address; VPN and unsuitable networks are rejected.
+- [LanNetworkResolver.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanNetworkResolver.kt). Android chooses the active Wi-Fi interface, IPv4 prefix, broadcast address, and opaque network handle; VPN and unsuitable networks are rejected. Its default-network observer later invalidates this snapshot if Android reports a different or unavailable network.
 - `discoverLan` and its serializers/parser in [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt).
 - `_parse_lan_input`, `_normalize_lan_devices`, and `discover_lan` in [tuya_bridge.py](app/src/main/python/tuya_bridge.py).
 - `mergeLanDiscovery` in [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt).
 
-The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. That makes an empty scan honestly show “not found” without immediately destroying useful encrypted history.
+The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. The encrypted catalog also saves Android's opaque network handle, which distinguishes two Wi-Fi networks even if both assign the phone the same private IP range. That makes an empty scan honestly show “not found” and a network change honestly show “refresh required” without immediately destroying useful encrypted history.
 
 ### Part B: poll current DPS values
 
@@ -249,7 +249,7 @@ Read it in this order:
 5. `encodeCatalog` and `decodeCatalog` only when you need the on-disk schema.
 6. The validation functions last.
 
-The full catalog is one authenticated ciphertext in `noBackupFilesDir`. A non-exportable Android Keystore AES-256 key protects it with GCM; authenticated associated data and envelope metadata prevent silent format substitution. `AtomicFile` prevents an interrupted write from replacing the last good catalog. The plaintext byte array is wiped after use.
+The full schema-v4 catalog is one authenticated ciphertext in `noBackupFilesDir`. A non-exportable Android Keystore AES-256 key protects it with GCM; authenticated associated data and envelope metadata prevent silent format substitution. `AtomicFile` prevents an interrupted write from replacing the last good catalog. The plaintext byte array is wiped after use.
 
 The encryption envelope version and the catalog schema version solve different problems. The former describes how bytes are encrypted; the latter describes the JSON fields inside the decrypted payload.
 
@@ -360,6 +360,7 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 - **Access kind** — the independent fail-closed policy for polling or writing locally.
 - **Gateway child** — a Zigbee/BLE-style child reached through a Tuya gateway, not a direct TCP 6668 device.
 - **Discovery generation** — the latest `lastDiscoveryAtEpochMillis` marker used to distinguish current addresses from history.
+- **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and encrypted storage and is never sent to Python or displayed.
 - **Bridge envelope** — the versioned success/error JSON shared by Kotlin and Python.
 - **Catalog** — the encrypted local aggregate of imported identity, LAN observations, and local status.
 

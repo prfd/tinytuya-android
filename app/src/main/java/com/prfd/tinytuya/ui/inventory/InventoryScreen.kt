@@ -71,21 +71,24 @@ fun InventoryScreen(
     catalog: DeviceCatalog,
     discovery: LanDiscoveryUiState,
     control: LocalControlUiState,
+    isLanSnapshotCurrent: Boolean = true,
     onDiscoverLan: () -> Unit,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    val currentDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis
+        .takeIf { isLanSnapshotCurrent }
     val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
     val unmatchedLanDevices = remember(
         catalog.devices,
         catalog.lanDevices,
-        catalog.lastDiscoveryAtEpochMillis,
+        currentDiscoveryAtEpochMillis,
     ) {
         catalog.lanDevices.filter { record ->
             record.id !in knownIds &&
-                record.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
+                record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
         }
     }
     val isBusy = discovery is LanDiscoveryUiState.Scanning ||
@@ -111,7 +114,7 @@ fun InventoryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    InventoryHeader(catalog)
+                    InventoryHeader(catalog, currentDiscoveryAtEpochMillis)
                 }
                 item {
                     LocalSecurityCard(catalog)
@@ -119,6 +122,7 @@ fun InventoryScreen(
                 item {
                     LanDiscoveryCard(
                         catalog = catalog,
+                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
                         discovery = discovery,
                         onDiscoverLan = onDiscoverLan,
                         isControlBusy = control is LocalControlUiState.Sending,
@@ -140,7 +144,7 @@ fun InventoryScreen(
                 ) { device ->
                     InventoryDeviceCard(
                         device = device,
-                        lastDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis,
+                        lastDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
                         lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
                         localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
                         discovery = discovery,
@@ -207,10 +211,13 @@ fun InventoryScreen(
 }
 
 @Composable
-private fun InventoryHeader(catalog: DeviceCatalog) {
-    val discoveredIds = remember(catalog.lanDevices, catalog.lastDiscoveryAtEpochMillis) {
+private fun InventoryHeader(
+    catalog: DeviceCatalog,
+    currentDiscoveryAtEpochMillis: Long?,
+) {
+    val discoveredIds = remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
         catalog.lanDevices
-            .filter { it.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis }
+            .filter { it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
             .mapTo(mutableSetOf()) { it.id }
     }
     val matchedCount = catalog.devices.count { it.id in discoveredIds }
@@ -244,9 +251,9 @@ private fun InventoryHeader(catalog: DeviceCatalog) {
         )
         Text(
             text = when {
-                catalog.lastDiscoveryAtEpochMillis != null && catalog.devices.size == 1 ->
+                currentDiscoveryAtEpochMillis != null && catalog.devices.size == 1 ->
                     "$matchedCount of 1 secured device was found on this Wi-Fi."
-                catalog.lastDiscoveryAtEpochMillis != null ->
+                currentDiscoveryAtEpochMillis != null ->
                     "$matchedCount of ${catalog.devices.size} secured devices were found on this Wi-Fi."
                 catalog.devices.size == 1 ->
                     "1 device is secured and ready for local discovery."
@@ -302,6 +309,7 @@ private fun LocalSecurityCard(catalog: DeviceCatalog) {
 @Composable
 private fun LanDiscoveryCard(
     catalog: DeviceCatalog,
+    currentDiscoveryAtEpochMillis: Long?,
     discovery: LanDiscoveryUiState,
     onDiscoverLan: () -> Unit,
     isControlBusy: Boolean,
@@ -319,11 +327,11 @@ private fun LanDiscoveryCard(
         }
     }
     val currentDeviceCount = catalog.lanDevices.count {
-        it.lastSeenAtEpochMillis == catalog.lastDiscoveryAtEpochMillis
+        it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
     }
     val currentResponseCount = catalog.localStatus.count { status ->
         status.state == LocalPollDeviceState.RESPONDED &&
-            status.polledAtEpochMillis >= (catalog.lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+            status.polledAtEpochMillis >= (currentDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
     }
     val isScanning = discovery is LanDiscoveryUiState.Scanning
     val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
@@ -362,6 +370,8 @@ private fun LanDiscoveryCard(
                             isScanning -> "Listening for Tuya devices"
                             isReadingStatus -> "Reading local device status"
                             error != null -> lanErrorTitle(error.code)
+                            currentDiscoveryAtEpochMillis == null && lastScan != null ->
+                                "Refresh on this Wi-Fi"
                             lastStatusRead != null && currentDeviceCount == 1 ->
                                 "1 device found · $currentResponseCount answered"
                             lastStatusRead != null ->
@@ -380,6 +390,8 @@ private fun LanDiscoveryCard(
                             isReadingStatus ->
                                 "Connecting directly over TCP 6668. Tuya Cloud is not contacted."
                             error != null -> error.message
+                            currentDiscoveryAtEpochMillis == null && lastScan != null ->
+                                "The previous local snapshot is not verified on the active Wi-Fi."
                             lastStatusRead != null ->
                                 "Last local refresh $lastStatusRead. Discovery and status stayed on this Wi-Fi."
                             lastScan != null ->
@@ -1244,6 +1256,7 @@ private fun DataControls(
 }
 
 private fun lanErrorTitle(code: String): String = when (code) {
+    "LAN_NETWORK_CHANGED" -> "Wi-Fi changed since refresh"
     "LAN_WIFI_UNAVAILABLE" -> "Connect to your device Wi-Fi"
     "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
     "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"

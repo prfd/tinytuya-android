@@ -90,7 +90,7 @@ class DefaultLanDiscoveryCoordinator(
                 )
             }
             return LanDiscoveryOutcome(
-                catalog = catalogStore.mergeLanDiscovery(result),
+                catalog = catalogStore.mergeLanDiscovery(result, network),
                 network = network,
             )
         } finally {

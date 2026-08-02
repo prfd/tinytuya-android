@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LanNetworkContext
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
@@ -35,6 +36,7 @@ data class DeviceCatalog(
     val region: TuyaCloudRegion,
     val devices: List<CloudImportedDevice>,
     val lastDiscoveryAtEpochMillis: Long? = null,
+    val lastDiscoveryNetwork: LanNetworkContext? = null,
     val lanDevices: List<LanDeviceRecord> = emptyList(),
     val lastLocalPollAtEpochMillis: Long? = null,
     val localStatus: List<LocalStatusRecord> = emptyList(),
@@ -74,7 +76,10 @@ interface DeviceCatalogStore {
 
     suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog
 
-    suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog
+    suspend fun mergeLanDiscovery(
+        result: LanDiscoveryResult,
+        network: LanNetworkContext,
+    ): DeviceCatalog
 
     suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog
 
@@ -115,6 +120,7 @@ class EncryptedDeviceCatalogStore internal constructor(
                     region = result.region,
                     devices = result.devices,
                     lastDiscoveryAtEpochMillis = previous?.lastDiscoveryAtEpochMillis,
+                    lastDiscoveryNetwork = previous?.lastDiscoveryNetwork,
                     lanDevices = previous?.lanDevices.orEmpty(),
                     lastLocalPollAtEpochMillis = previous?.lastLocalPollAtEpochMillis,
                     localStatus = previous?.localStatus.orEmpty().filter { it.id in importedIds },
@@ -176,10 +182,14 @@ class EncryptedDeviceCatalogStore internal constructor(
             }
         }
 
-    override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+    override suspend fun mergeLanDiscovery(
+        result: LanDiscoveryResult,
+        network: LanNetworkContext,
+    ): DeviceCatalog =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 validateLanResult(result)
+                validateDiscoveryNetwork(network)
                 val previous = loadLocked() ?: throw storageError(
                     code = "CATALOG_MISSING",
                     message = "Import devices before saving local discovery results.",
@@ -206,6 +216,7 @@ class EncryptedDeviceCatalogStore internal constructor(
                 val catalog = previous.copy(
                     schemaVersion = CATALOG_SCHEMA_VERSION,
                     lastDiscoveryAtEpochMillis = discoveredAt,
+                    lastDiscoveryNetwork = network,
                     lanDevices = (discoveredRecords.values + retainedKnownRecords)
                         .sortedBy { it.id },
                 )
@@ -448,6 +459,7 @@ class EncryptedDeviceCatalogStore internal constructor(
             }
         )
         catalog.lastDiscoveryAtEpochMillis?.let { put("last_discovery_at_epoch_ms", it) }
+        catalog.lastDiscoveryNetwork?.let { put("last_discovery_network", it.toJson()) }
         put(
             "lan_devices",
             JSONArray().apply {
@@ -495,6 +507,8 @@ class EncryptedDeviceCatalogStore internal constructor(
             }
             val lastDiscoveryAt = root.optLong("last_discovery_at_epoch_ms", 0L)
                 .takeIf { it > 0L }
+            val lastDiscoveryNetwork = root.optJSONObject("last_discovery_network")
+                ?.toLanNetworkContext()
             val lanDevicesJson = root.optJSONArray("lan_devices") ?: JSONArray()
             if (lanDevicesJson.length() > MAX_DEVICE_COUNT) {
                 throw storageError(
@@ -527,6 +541,7 @@ class EncryptedDeviceCatalogStore internal constructor(
                 region = region,
                 devices = devices,
                 lastDiscoveryAtEpochMillis = lastDiscoveryAt,
+                lastDiscoveryNetwork = lastDiscoveryNetwork,
                 lanDevices = lanDevices,
                 lastLocalPollAtEpochMillis = lastLocalPollAt,
                 localStatus = localStatus,
@@ -569,6 +584,14 @@ class EncryptedDeviceCatalogStore internal constructor(
         put("mac", mac)
         put("origin", origin)
         put("last_seen_at_epoch_ms", lastSeenAtEpochMillis)
+    }
+
+    private fun LanNetworkContext.toJson(): JSONObject = JSONObject().apply {
+        put("interface_name", interfaceName)
+        put("local_ipv4", localIpv4)
+        put("prefix_length", prefixLength)
+        put("broadcast_ipv4", broadcastIpv4)
+        put("network_handle", networkHandle)
     }
 
     private fun LocalStatusRecord.toJson(): JSONObject = JSONObject().apply {
@@ -619,6 +642,14 @@ class EncryptedDeviceCatalogStore internal constructor(
         mac = getString("mac"),
         origin = getString("origin"),
         lastSeenAtEpochMillis = getLong("last_seen_at_epoch_ms"),
+    )
+
+    private fun JSONObject.toLanNetworkContext(): LanNetworkContext = LanNetworkContext(
+        interfaceName = getString("interface_name"),
+        localIpv4 = getString("local_ipv4"),
+        prefixLength = getInt("prefix_length"),
+        broadcastIpv4 = getString("broadcast_ipv4"),
+        networkHandle = getLong("network_handle"),
     )
 
     private fun JSONObject.toLocalStatus(): LocalStatusRecord {
@@ -684,7 +715,9 @@ class EncryptedDeviceCatalogStore internal constructor(
             catalog.lanDevices.size > MAX_DEVICE_COUNT ||
             catalog.lanDevices.map { it.id }.toSet().size != catalog.lanDevices.size ||
             (catalog.lastDiscoveryAtEpochMillis == null && catalog.lanDevices.isNotEmpty()) ||
+            (catalog.lastDiscoveryAtEpochMillis == null && catalog.lastDiscoveryNetwork != null) ||
             catalog.lastDiscoveryAtEpochMillis?.let { it <= 0L || it == Long.MAX_VALUE } == true ||
+            catalog.lastDiscoveryNetwork?.let(::invalidDiscoveryNetwork) == true ||
             catalog.lanDevices.any { record ->
                 record.id.isBlank() ||
                     record.id.length > 128 ||
@@ -801,6 +834,23 @@ class EncryptedDeviceCatalogStore internal constructor(
         }
     }
 
+    private fun validateDiscoveryNetwork(network: LanNetworkContext) {
+        if (invalidDiscoveryNetwork(network)) {
+            throw storageError(
+                code = "CATALOG_INVALID",
+                message = "The local discovery result contains an invalid network identity.",
+            )
+        }
+    }
+
+    private fun invalidDiscoveryNetwork(network: LanNetworkContext): Boolean =
+        network.interfaceName.isBlank() ||
+            network.interfaceName.length > 128 ||
+            !network.localIpv4.isIpv4Address() ||
+            network.prefixLength !in 1..30 ||
+            !network.broadcastIpv4.isIpv4Address() ||
+            network.networkHandle <= LanNetworkContext.UNKNOWN_NETWORK_HANDLE
+
     private fun String.isIpv4Address(): Boolean {
         val parts = split('.')
         return parts.size == 4 && parts.all { part ->
@@ -818,7 +868,7 @@ class EncryptedDeviceCatalogStore internal constructor(
         const val CATALOG_DIRECTORY = "device_catalog"
         const val CATALOG_FILE = "catalog.v1.enc"
         const val MIN_SUPPORTED_CATALOG_SCHEMA_VERSION = 1
-        const val CATALOG_SCHEMA_VERSION = 3
+        const val CATALOG_SCHEMA_VERSION = 4
         const val ENVELOPE_VERSION = 1
         const val MAX_CATALOG_BYTES = 16L * 1024L * 1024L
         const val MAX_DEVICE_COUNT = 1_000

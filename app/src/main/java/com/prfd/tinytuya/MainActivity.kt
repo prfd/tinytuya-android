@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
                 lanDiscoveryCoordinator,
                 localStatusCoordinator,
                 localControlCoordinator,
+                networkResolver,
             ),
         )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(

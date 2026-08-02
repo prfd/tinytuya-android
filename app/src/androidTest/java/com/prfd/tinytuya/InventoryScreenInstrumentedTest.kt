@@ -114,6 +114,26 @@ class InventoryScreenInstrumentedTest {
     }
 
     @Test
+    fun changedWifiTreatsSavedAddressesAndStatusAsStale() {
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            discovery = LanDiscoveryUiState.Error(
+                code = "LAN_NETWORK_CHANGED",
+                message = "The active Wi-Fi no longer matches the last local refresh.",
+            ),
+            control = LocalControlUiState.Unavailable,
+            isLanSnapshotCurrent = false,
+        )
+
+        composeRule.onNodeWithText("Wi-Fi changed since refresh").assertExists()
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithText("LAN scan pending").assertExists()
+        composeRule.onNodeWithText("On local network").assertDoesNotExist()
+        composeRule.onNodeWithText("Power is on").assertDoesNotExist()
+        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+    }
+
+    @Test
     fun verifiedLocalSwitchInvokesTheTypedControlCallback() {
         var request: Triple<String, String, Boolean>? = null
         setInventoryContent(
@@ -331,6 +351,7 @@ class InventoryScreenInstrumentedTest {
         catalog: DeviceCatalog = sampleCatalog(),
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
         control: LocalControlUiState = LocalControlUiState.Unavailable,
+        isLanSnapshotCurrent: Boolean = true,
         onDiscoverLan: () -> Unit = {},
         onSetBooleanControl: (String, String, Boolean) -> Unit = { _, _, _ -> },
         onDelete: () -> Unit = {},
@@ -341,6 +362,7 @@ class InventoryScreenInstrumentedTest {
                     catalog = catalog,
                     discovery = discovery,
                     control = control,
+                    isLanSnapshotCurrent = isLanSnapshotCurrent,
                     onDiscoverLan = onDiscoverLan,
                     onSetBooleanControl = onSetBooleanControl,
                     onImportFromCloud = {},

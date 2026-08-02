@@ -72,6 +72,27 @@ class LocalControlCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun differentAndroidNetworkHandleIsRejectedEvenWhenSubnetIsIdentical() = runBlocking {
+        val catalog = sampleCatalog()
+        val gateway = FakeGateway { confirmedResult(false) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(catalog),
+            networkResolver = FakeNetworkResolver(
+                NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+            ),
+        )
+
+        try {
+            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
+            throw AssertionError("Expected a different Android network to reject local control")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_NETWORK_CHANGED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
     fun unverifiedBooleanMappingCannotAuthorizeAWrite() = runBlocking {
         val catalog = sampleCatalog(
             mappingJson = "{\"1\":{\"code\":\"countdown_1\",\"type\":\"Boolean\"}}"
@@ -186,7 +207,10 @@ class LocalControlCoordinatorInstrumentedTest {
         override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
             error("Not used")
 
-        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        override suspend fun mergeLanDiscovery(
+            result: LanDiscoveryResult,
+            network: LanNetworkContext,
+        ): DeviceCatalog =
             error("Not used")
 
         override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog {
@@ -219,6 +243,7 @@ class LocalControlCoordinatorInstrumentedTest {
             localIpv4 = "192.168.10.5",
             prefixLength = 24,
             broadcastIpv4 = "192.168.10.255",
+            networkHandle = 201L,
         )
 
         fun sampleCatalog(

@@ -109,10 +109,14 @@ class LanDiscoveryCoordinatorInstrumentedTest {
         override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
             error("Not used")
 
-        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        override suspend fun mergeLanDiscovery(
+            result: LanDiscoveryResult,
+            network: LanNetworkContext,
+        ): DeviceCatalog =
             sampleCatalog().copy(
                 schemaVersion = 2,
                 lastDiscoveryAtEpochMillis = 10L,
+                lastDiscoveryNetwork = network,
                 lanDevices = result.devices.map { device ->
                     LanDeviceRecord(
                         id = device.id,

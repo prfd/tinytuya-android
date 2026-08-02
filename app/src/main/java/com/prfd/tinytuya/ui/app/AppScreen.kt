@@ -63,6 +63,7 @@ fun AppRoute(
                 catalog = destination.catalog,
                 discovery = destination.discovery,
                 control = destination.control,
+                isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
                 onDiscoverLan = appViewModel::discoverLan,
                 onSetBooleanControl = appViewModel::setBooleanControl,
                 onImportFromCloud = {

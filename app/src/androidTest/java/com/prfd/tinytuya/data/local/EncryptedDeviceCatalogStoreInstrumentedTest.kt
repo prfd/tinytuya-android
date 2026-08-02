@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.prfd.tinytuya.data.lan.LanDiscoveredDevice
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
+import com.prfd.tinytuya.data.lan.LanNetworkContext
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
@@ -98,16 +99,18 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     fun lanDiscoveryRecordsAreMergedAndEncrypted() = runBlocking {
         store.replaceFromCloud(sampleImport())
 
-        val merged = store.mergeLanDiscovery(sampleDiscovery())
+        val merged = store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
         val rawBytes = store.catalogFile.readBytes()
         val loaded = store.load()
 
-        assertEquals(3, merged.schemaVersion)
+        assertEquals(4, merged.schemaVersion)
         assertEquals(FIXED_IMPORT_TIME, merged.lastDiscoveryAtEpochMillis)
+        assertEquals(NETWORK, merged.lastDiscoveryNetwork)
         assertEquals(2, merged.lanDevices.size)
         assertFalse(rawBytes.containsSequence(LAN_IP.toByteArray()))
         assertFalse(rawBytes.containsSequence(UNMATCHED_DEVICE_ID.toByteArray()))
         assertEquals(LAN_IP, loaded?.lanDevices?.first { it.id == DEVICE_ID }?.ip)
+        assertEquals(NETWORK, loaded?.lastDiscoveryNetwork)
         assertEquals(
             UNMATCHED_DEVICE_ID,
             loaded?.lanDevices?.first { it.id == UNMATCHED_DEVICE_ID }?.id,
@@ -117,13 +120,13 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     @Test
     fun localStatusIsMergedAndKeptInsideCiphertext() = runBlocking {
         store.replaceFromCloud(sampleImport())
-        store.mergeLanDiscovery(sampleDiscovery())
+        store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
 
         val merged = store.mergeLocalPoll(sampleLocalPoll())
         val rawBytes = store.catalogFile.readBytes()
         val loaded = store.load()
 
-        assertEquals(3, merged.schemaVersion)
+        assertEquals(4, merged.schemaVersion)
         assertEquals(FIXED_IMPORT_TIME, merged.lastLocalPollAtEpochMillis)
         assertEquals(LocalPollDeviceState.RESPONDED, merged.localStatus.single().state)
         assertFalse(rawBytes.containsSequence(SENSITIVE_DP_VALUE.toByteArray()))
@@ -136,7 +139,7 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     @Test
     fun localStatusRejectsDeviceWhichWasNotFreshlyDiscovered() = runBlocking {
         store.replaceFromCloud(sampleImport())
-        store.mergeLanDiscovery(sampleDiscovery())
+        store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
         val invalid = sampleLocalPoll().copy(
             devices = listOf(
                 sampleLocalPoll().devices.single().copy(id = UNMATCHED_DEVICE_ID)
@@ -154,7 +157,7 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
     @Test
     fun laterEmptyScanRetainsKnownLastSeenAndDropsStaleUnknownDevice() = runBlocking {
         store.replaceFromCloud(sampleImport())
-        val first = store.mergeLanDiscovery(sampleDiscovery())
+        val first = store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
 
         val second = store.mergeLanDiscovery(
             LanDiscoveryResult(
@@ -165,15 +168,35 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
                 durationMillis = 6_000L,
                 warnings = listOf("NO_LAN_DEVICES"),
                 devices = emptyList(),
-            )
+            ),
+            NETWORK,
         )
 
         assertEquals(first.lastDiscoveryAtEpochMillis?.plus(1), second.lastDiscoveryAtEpochMillis)
+        assertEquals(NETWORK, second.lastDiscoveryNetwork)
         assertEquals(listOf(DEVICE_ID), second.lanDevices.map { it.id })
         assertTrue(
             second.lanDevices.single().lastSeenAtEpochMillis <
                 requireNotNull(second.lastDiscoveryAtEpochMillis)
         )
+    }
+
+    @Test
+    fun discoveryRejectsAnUnverifiableAndroidNetworkHandle() = runBlocking {
+        store.replaceFromCloud(sampleImport())
+
+        try {
+            store.mergeLanDiscovery(
+                sampleDiscovery(),
+                NETWORK.copy(networkHandle = LanNetworkContext.UNKNOWN_NETWORK_HANDLE),
+            )
+            throw AssertionError("Expected an unknown Android network handle to be rejected")
+        } catch (error: DeviceCatalogStorageException) {
+            assertEquals("CATALOG_INVALID", error.code)
+        }
+
+        assertNull(store.load()?.lastDiscoveryAtEpochMillis)
+        assertNull(store.load()?.lastDiscoveryNetwork)
     }
 
     @Test
@@ -315,5 +338,12 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         const val LAN_IP = "192.0.2.14"
         const val UNMATCHED_DEVICE_ID = "unmatched-device-id"
         const val SENSITIVE_DP_VALUE = "encrypted-local-status-value"
+        val NETWORK = LanNetworkContext(
+            interfaceName = "wlan0",
+            localIpv4 = "192.0.2.2",
+            prefixLength = 24,
+            broadcastIpv4 = "192.0.2.255",
+            networkHandle = 41L,
+        )
     }
 }

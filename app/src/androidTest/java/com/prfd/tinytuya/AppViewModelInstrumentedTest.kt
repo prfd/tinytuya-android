@@ -2,9 +2,12 @@ package com.prfd.tinytuya
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
+import com.prfd.tinytuya.data.lan.LanDiscoveryException
 import com.prfd.tinytuya.data.lan.LanDiscoveryOutcome
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LanNetworkObservation
+import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
@@ -19,6 +22,9 @@ import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -175,6 +181,162 @@ class AppViewModelInstrumentedTest {
         assertEquals(NETWORK, controlCoordinator.expectedNetwork)
     }
 
+    @Test
+    fun savedLanSnapshotIsRejectedOnAnotherNetworkWithTheSameSubnet() = runBlocking {
+        val observer = FakeLanNetworkObserver(
+            LanNetworkObservation.Available(
+                NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+            )
+        )
+        val viewModel = AppViewModel(
+            FakeCatalogStore(discoveredCatalog()),
+            FakeLanDiscoveryCoordinator(),
+            FakeLocalStatusCoordinator(),
+            FakeLocalControlCoordinator(),
+            observer,
+        )
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory &&
+                    it.discovery is LanDiscoveryUiState.Error &&
+                    !it.isLanSnapshotCurrent
+            }
+        } as AppUiState.Inventory
+
+        assertEquals(
+            "LAN_NETWORK_CHANGED",
+            (state.discovery as LanDiscoveryUiState.Error).code,
+        )
+        assertTrue(state.control is LocalControlUiState.Unavailable)
+        assertEquals(NETWORK.localIpv4, state.catalog.lastDiscoveryNetwork?.localIpv4)
+    }
+
+    @Test
+    fun losingWifiInvalidatesACompletedRefreshAndDisablesControl() = runBlocking {
+        val discovered = discoveredCatalog()
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val controlCoordinator = FakeLocalControlCoordinator()
+        val viewModel = AppViewModel(
+            FakeCatalogStore(sampleCatalog()),
+            FakeLanDiscoveryCoordinator(discovered),
+            FakeLocalStatusCoordinator(discovered),
+            controlCoordinator,
+            observer,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        viewModel.discoverLan()
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
+            }
+        }
+
+        observer.emit(LanNetworkObservation.Unavailable)
+
+        val invalidated = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && !it.isLanSnapshotCurrent
+            }
+        } as AppUiState.Inventory
+        assertTrue(invalidated.discovery is LanDiscoveryUiState.Error)
+        assertTrue(invalidated.control is LocalControlUiState.Unavailable)
+
+        viewModel.setBooleanControl("saved-device", "1", true)
+        assertEquals(0, controlCoordinator.callCount)
+    }
+
+    @Test
+    fun controlResultCannotReauthorizeSessionInvalidatedWhileCommandWasRunning() = runBlocking {
+        val discovered = discoveredCatalog()
+        val confirmed = discovered.copy(lastLocalPollAtEpochMillis = 6L)
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val controlCoordinator = BlockingLocalControlCoordinator()
+        val viewModel = AppViewModel(
+            FakeCatalogStore(sampleCatalog()),
+            FakeLanDiscoveryCoordinator(discovered),
+            FakeLocalStatusCoordinator(discovered),
+            controlCoordinator,
+            observer,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        viewModel.discoverLan()
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
+            }
+        }
+
+        viewModel.setBooleanControl("saved-device", "1", true)
+        withTimeout(5_000) { controlCoordinator.started.await() }
+        observer.emit(
+            LanNetworkObservation.Available(
+                NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+            )
+        )
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && !it.isLanSnapshotCurrent
+            }
+        }
+
+        controlCoordinator.result.complete(confirmed)
+
+        val finalState = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.catalog.lastLocalPollAtEpochMillis == 6L
+            }
+        } as AppUiState.Inventory
+        assertTrue(finalState.control is LocalControlUiState.Unavailable)
+        assertTrue(finalState.discovery is LanDiscoveryUiState.Error)
+        assertTrue(!finalState.isLanSnapshotCurrent)
+    }
+
+    @Test
+    fun failedScanCannotRestoreSnapshotInvalidatedWhileScanWasRunning() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val discoveryCoordinator = BlockingLanDiscoveryCoordinator()
+        val viewModel = AppViewModel(
+            FakeCatalogStore(discoveredCatalog()),
+            discoveryCoordinator,
+            FakeLocalStatusCoordinator(),
+            FakeLocalControlCoordinator(),
+            observer,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+
+        viewModel.discoverLan()
+        withTimeout(5_000) { discoveryCoordinator.started.await() }
+        observer.emit(
+            LanNetworkObservation.Available(
+                NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+            )
+        )
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && !it.isLanSnapshotCurrent
+            }
+        }
+        discoveryCoordinator.result.completeExceptionally(
+            LanDiscoveryException(
+                code = "LAN_SCAN_FAILED",
+                message = "The old network scan stopped.",
+            )
+        )
+
+        val finalState = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Error
+            }
+        } as AppUiState.Inventory
+        assertEquals(
+            "LAN_NETWORK_CHANGED",
+            (finalState.discovery as LanDiscoveryUiState.Error).code,
+        )
+        assertTrue(!finalState.isLanSnapshotCurrent)
+        assertTrue(finalState.control is LocalControlUiState.Unavailable)
+    }
+
     private class FakeLanDiscoveryCoordinator(
         private val result: DeviceCatalog? = null,
     ) : LanDiscoveryCoordinator {
@@ -186,6 +348,16 @@ class AppViewModelInstrumentedTest {
                 catalog = result ?: catalog,
                 network = NETWORK,
             )
+        }
+    }
+
+    private class BlockingLanDiscoveryCoordinator : LanDiscoveryCoordinator {
+        val started = CompletableDeferred<Unit>()
+        val result = CompletableDeferred<LanDiscoveryOutcome>()
+
+        override suspend fun discover(catalog: DeviceCatalog): LanDiscoveryOutcome {
+            started.complete(Unit)
+            return result.await()
         }
     }
 
@@ -222,6 +394,34 @@ class AppViewModelInstrumentedTest {
         }
     }
 
+    private class BlockingLocalControlCoordinator : LocalControlCoordinator {
+        val started = CompletableDeferred<Unit>()
+        val result = CompletableDeferred<DeviceCatalog>()
+
+        override suspend fun setBoolean(
+            catalog: DeviceCatalog,
+            expectedNetwork: LanNetworkContext,
+            deviceId: String,
+            dataPointId: String,
+            value: Boolean,
+        ): DeviceCatalog {
+            started.complete(Unit)
+            return result.await()
+        }
+    }
+
+    private class FakeLanNetworkObserver(initial: LanNetworkObservation) : LanNetworkObserver {
+        private val observations = MutableSharedFlow<LanNetworkObservation>(replay = 1).apply {
+            tryEmit(initial)
+        }
+
+        override fun observe(): Flow<LanNetworkObservation> = observations
+
+        suspend fun emit(observation: LanNetworkObservation) {
+            observations.emit(observation)
+        }
+    }
+
     private class FakeCatalogStore(
         private var catalog: DeviceCatalog? = null,
     ) : DeviceCatalogStore {
@@ -232,7 +432,10 @@ class AppViewModelInstrumentedTest {
         override suspend fun replaceFromCloud(result: CloudImportResult): DeviceCatalog =
             error("Cloud replacement is not used by this app-routing test.")
 
-        override suspend fun mergeLanDiscovery(result: LanDiscoveryResult): DeviceCatalog =
+        override suspend fun mergeLanDiscovery(
+            result: LanDiscoveryResult,
+            network: LanNetworkContext,
+        ): DeviceCatalog =
             error("LAN replacement is not used by this app-routing test.")
 
         override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
@@ -250,6 +453,24 @@ class AppViewModelInstrumentedTest {
             localIpv4 = "192.168.10.5",
             prefixLength = 24,
             broadcastIpv4 = "192.168.10.255",
+            networkHandle = 101L,
+        )
+
+        fun discoveredCatalog() = sampleCatalog().copy(
+            schemaVersion = 4,
+            lastDiscoveryAtEpochMillis = 5L,
+            lastDiscoveryNetwork = NETWORK,
+            lanDevices = listOf(
+                LanDeviceRecord(
+                    id = "saved-device",
+                    ip = "192.168.10.42",
+                    protocolVersion = "3.5",
+                    productKey = "product-key",
+                    mac = "",
+                    origin = "broadcast",
+                    lastSeenAtEpochMillis = 5L,
+                )
+            ),
         )
 
         fun sampleCatalog() = DeviceCatalog(

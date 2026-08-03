@@ -48,6 +48,7 @@ fun AppRoute(
 ) {
     val state by appViewModel.state.collectAsState()
     val settingsState by appViewModel.settingsState.collectAsState()
+    val settingsInventory = state as? AppUiState.Inventory
     var showSettings by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state is AppUiState.Inventory) {
@@ -58,10 +59,21 @@ fun AppRoute(
         showSettings = false
     }
 
-    if (showSettings && state is AppUiState.Inventory) {
+    if (showSettings && settingsInventory != null) {
         SettingsScreen(
             state = settingsState,
             onRefreshWhenAppOpensChanged = appViewModel::setRefreshWhenAppOpens,
+            onSyncFromCloud = {
+                showSettings = false
+                onboardingViewModel.prepareForCloudSync(settingsInventory.catalog.region)
+                appViewModel.showOnboarding()
+            },
+            onUpdateCredentials = {
+                showSettings = false
+                onboardingViewModel.prepareForCredentialUpdate(settingsInventory.catalog.region)
+                appViewModel.showOnboarding()
+            },
+            onForgetCredentials = appViewModel::forgetCloudCredentials,
             onDismissError = appViewModel::dismissSettingsError,
             onBack = { showSettings = false },
         )

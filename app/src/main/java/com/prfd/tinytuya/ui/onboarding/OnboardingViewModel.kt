@@ -4,9 +4,13 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.prfd.tinytuya.data.local.CloudCredentialStorageException
+import com.prfd.tinytuya.data.local.CloudCredentialStore
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
+import com.prfd.tinytuya.data.local.EncryptedCloudCredentialStore
 import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
+import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.data.python.CloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
@@ -48,6 +52,8 @@ data class OnboardingUiState(
     val sampleDeviceId: SensitiveString = SensitiveString.of(""),
     val showAdvanced: Boolean = false,
     val validationAttempted: Boolean = false,
+    val isCredentialUpdate: Boolean = false,
+    val usedSavedCredentials: Boolean = false,
     val cloudImport: CloudImportUiState = CloudImportUiState.Idle,
 ) {
     val canImport: Boolean
@@ -57,6 +63,7 @@ data class OnboardingUiState(
 class OnboardingViewModel(
     private val gateway: TuyaPythonGateway,
     private val catalogStore: DeviceCatalogStore,
+    private val credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(OnboardingUiState())
     val state: StateFlow<OnboardingUiState> = mutableState.asStateFlow()
@@ -154,14 +161,81 @@ class OnboardingViewModel(
         mutableState.update {
             it.copy(
                 validationAttempted = false,
+                usedSavedCredentials = false,
                 cloudImport = CloudImportUiState.Loading,
             )
         }
 
+        runCloudImport(
+            credentialsProvider = { credentials },
+            saveProvidedCredentials = true,
+        )
+    }
+
+    /**
+     * Starts an explicit cloud sync with the retained account when one exists.
+     * No caller other than a user action should invoke this method.
+     */
+    fun prepareForCloudSync(fallbackRegion: TuyaCloudRegion) {
+        if (mutableState.value.cloudImport is CloudImportUiState.Loading) return
+        mutableState.value = OnboardingUiState(
+            page = OnboardingPage.CREDENTIALS,
+            region = fallbackRegion,
+            isCredentialUpdate = true,
+            usedSavedCredentials = true,
+            cloudImport = CloudImportUiState.Loading,
+        )
+        runCloudImport(
+            credentialsProvider = {
+                credentialStore.load()?.let { saved ->
+                    CloudCredentials(
+                        region = saved.region,
+                        clientId = saved.clientId.reveal(),
+                        clientSecret = SensitiveString.of(saved.clientSecret.reveal()),
+                    )
+                }
+            },
+            saveProvidedCredentials = false,
+            onCredentialsMissing = {
+                mutableState.value = OnboardingUiState(
+                    page = OnboardingPage.CREDENTIALS,
+                    region = fallbackRegion,
+                    isCredentialUpdate = true,
+                )
+            },
+        )
+    }
+
+    fun prepareForCredentialUpdate(region: TuyaCloudRegion) {
+        if (mutableState.value.cloudImport is CloudImportUiState.Loading) return
+        mutableState.value = OnboardingUiState(
+            page = OnboardingPage.CREDENTIALS,
+            region = region,
+            isCredentialUpdate = true,
+        )
+    }
+
+    private fun runCloudImport(
+        credentialsProvider: suspend () -> CloudCredentials?,
+        saveProvidedCredentials: Boolean,
+        onCredentialsMissing: () -> Unit = {},
+    ) {
         viewModelScope.launch {
             try {
+                val credentials = credentialsProvider()
+                if (credentials == null) {
+                    onCredentialsMissing()
+                    return@launch
+                }
                 val previousDevices = catalogStore.load()?.devices.orEmpty()
                 val result = gateway.importCloud(credentials, previousDevices)
+                if (saveProvidedCredentials) {
+                    credentialStore.save(
+                        region = credentials.region,
+                        clientId = SensitiveString.of(credentials.clientId),
+                        clientSecret = SensitiveString.of(credentials.clientSecret.reveal()),
+                    )
+                }
                 mutableState.update {
                     it.copy(
                         clientId = SensitiveString.of(""),
@@ -183,6 +257,16 @@ class OnboardingViewModel(
                         cloudImport = CloudImportUiState.Error(
                             code = error.code,
                             message = error.message ?: "Encrypted device storage is unavailable.",
+                        )
+                    )
+                }
+            } catch (error: CloudCredentialStorageException) {
+                mutableState.update {
+                    it.copy(
+                        cloudImport = CloudImportUiState.Error(
+                            code = error.code,
+                            message = error.message
+                                ?: "The saved Tuya Cloud credentials are unavailable.",
                         )
                     )
                 }
@@ -209,23 +293,36 @@ class OnboardingViewModel(
     }
 
     fun dismissError() {
-        mutableState.update { it.copy(cloudImport = CloudImportUiState.Idle) }
+        mutableState.update { current ->
+            if (current.usedSavedCredentials) {
+                current.copy(
+                    clientId = SensitiveString.of(""),
+                    clientSecret = SensitiveString.of(""),
+                    sampleDeviceId = SensitiveString.of(""),
+                    validationAttempted = false,
+                    isCredentialUpdate = true,
+                    usedSavedCredentials = false,
+                    cloudImport = CloudImportUiState.Idle,
+                )
+            } else {
+                current.copy(cloudImport = CloudImportUiState.Idle)
+            }
+        }
     }
 
     fun returnToCredentials() {
         mutableState.update {
             it.copy(
                 page = OnboardingPage.CREDENTIALS,
+                clientId = SensitiveString.of(""),
+                clientSecret = SensitiveString.of(""),
+                sampleDeviceId = SensitiveString.of(""),
+                validationAttempted = false,
+                isCredentialUpdate = true,
+                usedSavedCredentials = false,
                 cloudImport = CloudImportUiState.Idle,
             )
         }
-    }
-
-    fun prepareForCloudSync(region: TuyaCloudRegion) {
-        mutableState.value = OnboardingUiState(
-            page = OnboardingPage.CREDENTIALS,
-            region = region,
-        )
     }
 
     fun clearSession() {
@@ -236,6 +333,8 @@ class OnboardingViewModel(
         fun factory(
             context: Context,
             catalogStore: DeviceCatalogStore = EncryptedDeviceCatalogStore(context.applicationContext),
+            credentialStore: CloudCredentialStore =
+                EncryptedCloudCredentialStore(context.applicationContext),
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -244,6 +343,7 @@ class OnboardingViewModel(
                     return OnboardingViewModel(
                         gateway = ChaquopyTuyaPythonGateway(context.applicationContext),
                         catalogStore = catalogStore,
+                        credentialStore = credentialStore,
                     ) as T
                 }
             }

@@ -24,7 +24,7 @@ Do not begin with either of the 1,000-line Compose files. Read these files in or
 2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, recovery, or the local settings UI.
 3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, and `setBooleanControl`.
 4. [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt) — cloud credentials, imported devices, and the deliberately redacted `SensitiveString`.
-5. [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — initially read only the three catalog record types and the `DeviceCatalogStore` interface near the top.
+5. [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) and [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — the separate encrypted security domains for Tuya Cloud credentials and locally usable device data. Initially read only their models and interfaces.
 6. [LanDiscoveryModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryModels.kt), [LocalStatusModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalStatusModels.kt), and [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt) — the small typed vocabulary used by the coordinators and bridge.
 7. [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt) — the Kotlin side of Chaquopy. Read its interface, the five public methods, and `parseResponse`; skip the detailed JSON fields on the first pass.
 8. [tuya_bridge.py](app/src/main/python/tuya_bridge.py) — the Python boundary. Read the module comment, `_success`, `_failure`, then only the five public functions: `health`, `import_cloud`, `discover_lan`, `poll_local`, and `set_values`.
@@ -50,7 +50,8 @@ Follow this path without entering the large screen implementations:
 
 ```text
 MainActivity.onCreate
-  -> construct EncryptedDeviceCatalogStore and ChaquopyTuyaPythonGateway
+  -> construct separate encrypted credential and device-catalog stores
+  -> construct ChaquopyTuyaPythonGateway
   -> construct quick-refresh, discovery, status, and control coordinators
   -> obtain AppViewModel and OnboardingViewModel
   -> AppRoute
@@ -68,6 +69,7 @@ Read:
 - All of [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt). It is intentionally small manual dependency injection.
 - `AppRoute` in [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt). Notice that callbacks are passed down; screens do not own repositories or sockets. Settings is a lightweight subdestination over a valid inventory, not a socket-owning state.
 - `AppUiState`, `refreshCatalog`, and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). A missing or empty catalog routes to onboarding; a valid catalog routes to inventory; a decryption/storage problem routes to recovery instead of silently deleting data.
+- `CloudAccountUiState`, `refreshCloudAccount`, and `forgetCloudCredentials` in `AppViewModel`. Settings receives only a region and masked Client ID; forgetting the vault does not delete the catalog.
 - [AppSettingsStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/AppSettingsStore.kt). The default-enabled foreground preference is non-sensitive, excluded from backup with all other app data, and reset by “Delete all local data.”
 
 Ignore `AppLoadingScreen` and `CatalogRecoveryScreen` styling for now.
@@ -76,7 +78,7 @@ Checkpoint: find the call which starts initial catalog loading, the Activity cal
 
 ## Pass 2: cloud import, end to end
 
-Cloud access happens only because the user explicitly submits the onboarding form.
+Cloud access happens only because the user explicitly submits the onboarding form or presses “Sync from Tuya.” Automatic foreground refresh never enters this flow.
 
 ```text
 CredentialsScreen
@@ -87,26 +89,30 @@ CredentialsScreen
   -> tinytuya.Cloud.getdevices(include_map=True)
   -> normalized JSON envelope
   -> Kotlin validation and CloudImportResult
+  -> EncryptedCloudCredentialStore.save after accepted new credentials
   -> EncryptedDeviceCatalogStore.replaceFromCloud
   -> AppRoute asks AppViewModel to reload the catalog
 ```
 
+The actual order around the network call is `gateway.importCloud`, credential-vault save, then non-empty catalog replacement. This means an unvalidated form can never replace the last known-good vault record. The saved-account route starts at an explicit inventory or Settings action, calls `prepareForCloudSync`, loads the vault directly inside the coroutine, and sends those values to the gateway without placing them in Compose state.
+
 Read in this order:
 
 1. In [OnboardingScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/onboarding/OnboardingScreen.kt), read `OnboardingRoute`, `OnboardingUiState.destination`, and `CredentialsScreen`. Do not read the illustrations or previews yet.
-2. In [OnboardingViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/onboarding/OnboardingViewModel.kt), read `OnboardingUiState` and `importDevices`. This is where validation, the loading state, prior catalog loading, credential clearing, and persistence are sequenced.
+2. In [OnboardingViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/onboarding/OnboardingViewModel.kt), read `OnboardingUiState`, `importDevices`, `prepareForCloudSync`, and `runCloudImport`. This is where validation, retained-account loading, prior catalog loading, credential clearing, and both persistence writes are sequenced.
 3. Read all of [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt). Notice which `toString` methods redact values.
 4. In [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt), read `importCloud`, `CloudCredentials.toBridgeJson`, `List<CloudImportedDevice>.toCloudBridgeJson`, `parseCloudImport`, and the shared `parseResponse`.
 5. In [tuya_bridge.py](app/src/main/python/tuya_bridge.py), read `_parse_cloud_input`, `_bounded_cloud_requests`, `_normalize_cloud_devices`, and `import_cloud`.
-6. Return to [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) and read `replaceFromCloud`.
+6. Read [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt), then return to [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) and read `replaceFromCloud`.
 
-The previous device list is sent back to TinyTuya during a sync so its cloud import can preserve useful device information. The API credentials themselves are not part of the catalog API and therefore cannot accidentally be persisted by the store.
+The previous device list is sent back to TinyTuya during a sync so its cloud import can preserve useful device information. Cloud credentials are deliberately absent from the catalog API and live in a smaller ciphertext with a different file, schema, authenticated-data label, and Keystore alias.
 
 Security details worth noticing:
 
-- Credential fields live in the onboarding ViewModel, not saved state.
+- Typed credential fields live in the onboarding ViewModel, not Android saved state. Retained credentials are loaded directly from the vault only for an explicit sync.
 - The screen enables Android's secure-window flag while credential values are present.
-- A returned cloud result clears the credential fields before the catalog is saved or success UI is shown. A bridge failure before a result returns keeps them available for correction while the secure-window protection remains active.
+- A successful Tuya result is the authority to save replacement credentials. A bridge failure keeps new values only in memory for correction and leaves the prior vault untouched.
+- After a successful vault write, form fields are cleared before the catalog is saved or success UI is shown. Kotlin and Python require immutable strings at parts of their bridge, so the code minimizes their lifetime and redacts them but does not claim perfect memory zeroization.
 - The Kotlin and Python layers return stable error codes and user-safe messages, never raw request data or tracebacks.
 - Local keys are imported because local Tuya encryption needs them, but they are never rendered in the UI.
 
@@ -281,13 +287,15 @@ Read it in this order:
 
 The full schema-v4 catalog is one authenticated ciphertext in `noBackupFilesDir`. A non-exportable Android Keystore AES-256 key protects it with GCM; authenticated associated data and envelope metadata prevent silent format substitution. `AtomicFile` prevents an interrupted write from replacing the last good catalog. The plaintext byte array is wiped after use.
 
+[CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) applies the same primitives to a much smaller, independent vault. Its decrypted model redacts both identifiers from `toString`, its UI-facing summary contains only the region and a masked Client ID, and deleting its ciphertext and key leaves the device catalog usable.
+
 The encryption envelope version and the catalog schema version solve different problems. The former describes how bytes are encrypted; the latter describes the JSON fields inside the decrypted payload.
 
 Also read [AndroidManifest.xml](app/src/main/AndroidManifest.xml), [backup_rules.xml](app/src/main/res/xml/backup_rules.xml), and [data_extraction_rules.xml](app/src/main/res/xml/data_extraction_rules.xml) to see the no-backup policy outside Kotlin.
 
 The small [AppSettingsStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/AppSettingsStore.kt) uses private `SharedPreferences` only for non-sensitive behavior preferences. Its write uses `commit` on `Dispatchers.IO` so the UI reports success only after persistence. It is deliberately not mixed into the encrypted device-catalog schema.
 
-Checkpoint: follow `deleteAllLocalData` and verify that it removes the ciphertext, Keystore entry, and app preferences.
+Checkpoint: follow `forgetCloudCredentials` and verify that it removes only the credential ciphertext and key. Then follow `deleteAllLocalData` and verify that it attempts credential-vault, catalog, and preference deletion even if one store reports a failure.
 
 ## The Kotlin/Python contract
 
@@ -361,6 +369,7 @@ After each production flow, read its nearest test instead of immediately reading
 | Settings persistence and UI | [AppSettingsStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/AppSettingsStoreInstrumentedTest.kt) and [SettingsScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/SettingsScreenInstrumentedTest.kt) |
 | Onboarding state and credential lifecycle | [OnboardingViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingViewModelInstrumentedTest.kt) and [OnboardingScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingScreenInstrumentedTest.kt) |
 | Kotlin/Python validation | [TuyaPythonGatewayInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/python/TuyaPythonGatewayInstrumentedTest.kt) |
+| Encrypted credential vault and deletion | [EncryptedCloudCredentialStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedCloudCredentialStoreInstrumentedTest.kt) |
 | Encrypted catalog and recovery | [EncryptedDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedDeviceCatalogStoreInstrumentedTest.kt) |
 | Discovery selection and merge | [LanDiscoveryCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinatorInstrumentedTest.kt) |
 | Status eligibility | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt) |

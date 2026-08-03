@@ -15,16 +15,21 @@ import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.local.AppSettings
+import com.prfd.tinytuya.data.local.AppSettingsStorageException
+import com.prfd.tinytuya.data.local.AppSettingsStore
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
+import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
+import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
@@ -36,6 +41,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -97,6 +103,74 @@ class AppViewModelInstrumentedTest {
         }
         assertTrue(store.deleted)
         assertTrue(state is AppUiState.Onboarding)
+    }
+
+    @Test
+    fun savedCloudAccountPublishesOnlyItsMaskedSummary() = runBlocking {
+        val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            credentialStore = credentialStore,
+        )
+
+        val account = withTimeout(5_000) {
+            viewModel.settingsState.first {
+                it.cloudAccount is CloudAccountUiState.Saved
+            }.cloudAccount
+        } as CloudAccountUiState.Saved
+
+        assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, account.summary.region)
+        assertEquals("know••••t-id", account.summary.maskedClientId)
+        assertTrue(!account.toString().contains("known-good-secret"))
+    }
+
+    @Test
+    fun forgettingCloudCredentialsPreservesTheDeviceCatalog() = runBlocking {
+        val catalogStore = FakeCatalogStore(sampleCatalog())
+        val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
+        val viewModel = AppViewModel(
+            catalogStore = catalogStore,
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            credentialStore = credentialStore,
+        )
+        withTimeout(5_000) {
+            viewModel.settingsState.first { it.cloudAccount is CloudAccountUiState.Saved }
+        }
+
+        viewModel.forgetCloudCredentials()
+
+        withTimeout(5_000) {
+            viewModel.settingsState.first { it.cloudAccount is CloudAccountUiState.Missing }
+        }
+        assertNull(credentialStore.load())
+        assertTrue(!catalogStore.deleted)
+        assertTrue(viewModel.state.value is AppUiState.Inventory)
+    }
+
+    @Test
+    fun deletingAllLocalDataAlsoForgetsCloudCredentials() = runBlocking {
+        val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            credentialStore = credentialStore,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+
+        viewModel.deleteAllLocalData()
+
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Onboarding } }
+        assertNull(credentialStore.load())
+        assertTrue(
+            viewModel.settingsState.value.cloudAccount is CloudAccountUiState.Missing
+        )
     }
 
     @Test
@@ -589,6 +663,31 @@ class AppViewModelInstrumentedTest {
         assertTrue(!settingsStore.load().refreshWhenAppOpens)
     }
 
+    @Test
+    fun failedPreferenceWriteDoesNotDiscardLoadedCloudAccountSummary() = runBlocking {
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            settingsStore = FailingAppSettingsStore(),
+            credentialStore = InMemoryCloudCredentialStore(savedCredentials()),
+        )
+        withTimeout(5_000) {
+            viewModel.settingsState.first {
+                it.isLoaded && it.cloudAccount is CloudAccountUiState.Saved
+            }
+        }
+
+        viewModel.setRefreshWhenAppOpens(false)
+
+        val failed = withTimeout(5_000) {
+            viewModel.settingsState.first { it.errorCode == "SETTINGS_WRITE_FAILED" }
+        }
+        assertTrue(failed.cloudAccount is CloudAccountUiState.Saved)
+        assertTrue(failed.refreshWhenAppOpens)
+    }
+
     private class FakeLanDiscoveryCoordinator(
         private val result: DeviceCatalog? = null,
         private val network: LanNetworkContext = NETWORK,
@@ -602,6 +701,19 @@ class AppViewModelInstrumentedTest {
                 network = network,
             )
         }
+    }
+
+    private class FailingAppSettingsStore : AppSettingsStore {
+        override suspend fun load() = AppSettings(refreshWhenAppOpens = true)
+
+        override suspend fun setRefreshWhenAppOpens(enabled: Boolean): AppSettings {
+            throw AppSettingsStorageException(
+                code = "SETTINGS_WRITE_FAILED",
+                message = "The refresh preference could not be saved.",
+            )
+        }
+
+        override suspend fun deleteAll() = Unit
     }
 
     private class FakeKnownDeviceRefreshCoordinator(
@@ -766,6 +878,13 @@ class AppViewModelInstrumentedTest {
                     mappingJson = "{}",
                 )
             ),
+        )
+
+        fun savedCredentials() = StoredCloudCredentials(
+            region = TuyaCloudRegion.CENTRAL_EUROPE,
+            clientId = SensitiveString.of("known-good-client-id"),
+            clientSecret = SensitiveString.of("known-good-secret"),
+            savedAtEpochMillis = 1L,
         )
     }
 }

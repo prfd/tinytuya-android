@@ -20,10 +20,14 @@ import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.lan.hasPreviouslyMatchedStatusTargets
 import com.prfd.tinytuya.data.local.AppSettingsStorageException
 import com.prfd.tinytuya.data.local.AppSettingsStore
+import com.prfd.tinytuya.data.local.CloudCredentialStorageException
+import com.prfd.tinytuya.data.local.CloudCredentialStore
+import com.prfd.tinytuya.data.local.CloudCredentialSummary
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
+import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -110,7 +114,23 @@ data class AppSettingsUiState(
     val isSaving: Boolean = false,
     val errorCode: String? = null,
     val errorMessage: String? = null,
+    val cloudAccount: CloudAccountUiState = CloudAccountUiState.Loading,
 )
+
+sealed interface CloudAccountUiState {
+    data object Loading : CloudAccountUiState
+
+    data object Missing : CloudAccountUiState
+
+    data class Saved(val summary: CloudCredentialSummary) : CloudAccountUiState
+
+    data object Forgetting : CloudAccountUiState
+
+    data class Recovery(
+        val code: String,
+        val message: String,
+    ) : CloudAccountUiState
+}
 
 class AppViewModel(
     private val catalogStore: DeviceCatalogStore,
@@ -122,6 +142,7 @@ class AppViewModel(
         UnavailableKnownDeviceRefreshCoordinator,
     private val settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
     private val elapsedRealtimeMillis: () -> Long = SystemClock::elapsedRealtime,
+    private val credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -133,6 +154,7 @@ class AppViewModel(
     private var latestNetworkObservation: LanNetworkObservation? = null
     private var foregroundRefreshPending = false
     private var lastLocalRefreshStartedAtMillis: Long? = null
+    private var cloudAccountOperationVersion = 0L
 
     init {
         observeLanNetwork()
@@ -141,6 +163,7 @@ class AppViewModel(
     }
 
     fun refreshCatalog() {
+        refreshCloudAccount()
         clearControlSession()
         mutableState.value = AppUiState.Loading
         viewModelScope.launch {
@@ -193,20 +216,25 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val saved = settingsStore.setRefreshWhenAppOpens(enabled)
-                mutableSettingsState.value = AppSettingsUiState(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
                     refreshWhenAppOpens = saved.refreshWhenAppOpens,
                     isLoaded = true,
+                    isSaving = false,
+                    errorCode = null,
+                    errorMessage = null,
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: AppSettingsStorageException) {
-                mutableSettingsState.value = current.copy(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    refreshWhenAppOpens = current.refreshWhenAppOpens,
                     isSaving = false,
                     errorCode = error.code,
                     errorMessage = error.message ?: "The refresh preference could not be saved.",
                 )
             } catch (_: Exception) {
-                mutableSettingsState.value = current.copy(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    refreshWhenAppOpens = current.refreshWhenAppOpens,
                     isSaving = false,
                     errorCode = "SETTINGS_WRITE_FAILED",
                     errorMessage = "The refresh preference could not be saved.",
@@ -220,6 +248,47 @@ class AppViewModel(
             errorCode = null,
             errorMessage = null,
         )
+    }
+
+    fun forgetCloudCredentials() {
+        val current = mutableSettingsState.value.cloudAccount
+        if (
+            current is CloudAccountUiState.Loading ||
+            current is CloudAccountUiState.Forgetting ||
+            current is CloudAccountUiState.Missing
+        ) return
+        val operationVersion = ++cloudAccountOperationVersion
+        mutableSettingsState.value = mutableSettingsState.value.copy(
+            cloudAccount = CloudAccountUiState.Forgetting,
+        )
+        viewModelScope.launch {
+            try {
+                credentialStore.deleteAll()
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = CloudAccountUiState.Missing,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: CloudCredentialStorageException) {
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = CloudAccountUiState.Recovery(
+                        code = error.code,
+                        message = error.message
+                            ?: "The saved Tuya Cloud credentials could not be deleted.",
+                    )
+                )
+            } catch (_: Exception) {
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = CloudAccountUiState.Recovery(
+                        code = "CREDENTIAL_VAULT_DELETE_FAILED",
+                        message = "The saved Tuya Cloud credentials could not be deleted.",
+                    )
+                )
+            }
+        }
     }
 
     fun refreshKnownDevices() {
@@ -587,33 +656,61 @@ class AppViewModel(
 
     fun deleteAllLocalData() {
         foregroundRefreshPending = false
+        cloudAccountOperationVersion += 1
         clearControlSession()
         mutableState.value = AppUiState.Loading
         viewModelScope.launch {
+            var firstFailure: Exception? = null
+            try {
+                credentialStore.deleteAll()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                firstFailure = error
+            }
             try {
                 catalogStore.deleteAll()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (firstFailure == null) firstFailure = error
+            }
+            try {
                 settingsStore.deleteAll()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (firstFailure == null) firstFailure = error
+            }
+
+            val failure = firstFailure
+            if (failure == null) {
                 mutableSettingsState.value = AppSettingsUiState(
                     refreshWhenAppOpens = true,
                     isLoaded = true,
+                    cloudAccount = CloudAccountUiState.Missing,
                 )
                 mutableState.value = AppUiState.Onboarding
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: DeviceCatalogStorageException) {
+            } else if (failure is DeviceCatalogStorageException) {
                 mutableState.value = AppUiState.Recovery(
-                    code = error.code,
-                    message = error.message ?: "The local device data could not be deleted.",
+                    code = failure.code,
+                    message = failure.message ?: "The local device data could not be deleted.",
                 )
-            } catch (error: AppSettingsStorageException) {
+            } else if (failure is AppSettingsStorageException) {
                 mutableState.value = AppUiState.Recovery(
-                    code = error.code,
-                    message = error.message ?: "The local app settings could not be deleted.",
+                    code = failure.code,
+                    message = failure.message ?: "The local app settings could not be deleted.",
                 )
-            } catch (_: Exception) {
+            } else if (failure is CloudCredentialStorageException) {
                 mutableState.value = AppUiState.Recovery(
-                    code = "CATALOG_DELETE_FAILED",
-                    message = "The local device data could not be deleted.",
+                    code = failure.code,
+                    message = failure.message
+                        ?: "The saved Tuya Cloud credentials could not be deleted.",
+                )
+            } else {
+                mutableState.value = AppUiState.Recovery(
+                    code = "LOCAL_DATA_DELETE_FAILED",
+                    message = "All local app data could not be deleted.",
                 )
             }
         }
@@ -623,28 +720,72 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val settings = settingsStore.load()
-                mutableSettingsState.value = AppSettingsUiState(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
                     refreshWhenAppOpens = settings.refreshWhenAppOpens,
                     isLoaded = true,
+                    isSaving = false,
+                    errorCode = null,
+                    errorMessage = null,
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: AppSettingsStorageException) {
-                mutableSettingsState.value = AppSettingsUiState(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
                     refreshWhenAppOpens = false,
                     isLoaded = true,
+                    isSaving = false,
                     errorCode = error.code,
                     errorMessage = error.message ?: "App settings could not be read safely.",
                 )
             } catch (_: Exception) {
-                mutableSettingsState.value = AppSettingsUiState(
+                mutableSettingsState.value = mutableSettingsState.value.copy(
                     refreshWhenAppOpens = false,
                     isLoaded = true,
+                    isSaving = false,
                     errorCode = "SETTINGS_READ_FAILED",
                     errorMessage = "App settings could not be read safely.",
                 )
             }
             maybeStartForegroundRefresh()
+        }
+    }
+
+    private fun refreshCloudAccount() {
+        val operationVersion = ++cloudAccountOperationVersion
+        mutableSettingsState.value = mutableSettingsState.value.copy(
+            cloudAccount = CloudAccountUiState.Loading,
+        )
+        viewModelScope.launch {
+            try {
+                val summary = credentialStore.loadSummary()
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = if (summary == null) {
+                        CloudAccountUiState.Missing
+                    } else {
+                        CloudAccountUiState.Saved(summary)
+                    },
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: CloudCredentialStorageException) {
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = CloudAccountUiState.Recovery(
+                        code = error.code,
+                        message = error.message
+                            ?: "The saved Tuya Cloud credentials could not be opened safely.",
+                    )
+                )
+            } catch (_: Exception) {
+                if (operationVersion != cloudAccountOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    cloudAccount = CloudAccountUiState.Recovery(
+                        code = "CREDENTIAL_VAULT_READ_FAILED",
+                        message = "The saved Tuya Cloud credentials could not be opened safely.",
+                    )
+                )
+            }
         }
     }
 
@@ -851,6 +992,7 @@ class AppViewModel(
             knownDeviceRefreshCoordinator: KnownDeviceRefreshCoordinator =
                 UnavailableKnownDeviceRefreshCoordinator,
             settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
+            credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -864,6 +1006,7 @@ class AppViewModel(
                         lanNetworkObserver,
                         knownDeviceRefreshCoordinator,
                         settingsStore,
+                        credentialStore = credentialStore,
                     ) as T
                 }
             }

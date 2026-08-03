@@ -8,6 +8,8 @@ import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
+import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
@@ -29,6 +31,102 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class OnboardingViewModelInstrumentedTest {
+    @Test
+    fun successfulAuthenticationSavesCredentialsThenClearsTheForm() = runBlocking {
+        val credentialStore = InMemoryCloudCredentialStore()
+        val viewModel = OnboardingViewModel(
+            gateway = FakeGateway { _, _ -> successfulEmptyImport() },
+            catalogStore = FakeCatalogStore(),
+            credentialStore = credentialStore,
+        )
+        viewModel.updateRegion(TuyaCloudRegion.SINGAPORE)
+        viewModel.updateClientId(" saved-client-id ")
+        viewModel.updateClientSecret(" saved-client-secret ")
+
+        viewModel.importDevices()
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first { it.cloudImport is CloudImportUiState.Success }
+        }
+        val saved = requireNotNull(credentialStore.load())
+        assertEquals(TuyaCloudRegion.SINGAPORE, saved.region)
+        assertEquals("saved-client-id", saved.clientId.reveal())
+        assertEquals("saved-client-secret", saved.clientSecret.reveal())
+        assertTrue(state.clientId.isBlank)
+        assertTrue(state.clientSecret.isBlank)
+        assertFalse(saved.toString().contains("saved-client-secret"))
+    }
+
+    @Test
+    fun rejectedReplacementLeavesLastKnownGoodCredentialsIntact() = runBlocking {
+        val credentialStore = InMemoryCloudCredentialStore(
+            StoredCloudCredentials(
+                region = TuyaCloudRegion.CENTRAL_EUROPE,
+                clientId = SensitiveString.of("known-good-id"),
+                clientSecret = SensitiveString.of("known-good-secret"),
+                savedAtEpochMillis = 1L,
+            )
+        )
+        val viewModel = OnboardingViewModel(
+            gateway = FakeGateway { _, _ ->
+                throw PythonBridgeException(
+                    code = "CLOUD_CREDENTIALS_INVALID",
+                    message = "Tuya did not accept these cloud credentials.",
+                )
+            },
+            catalogStore = FakeCatalogStore(),
+            credentialStore = credentialStore,
+        )
+        viewModel.prepareForCredentialUpdate(TuyaCloudRegion.SINGAPORE)
+        viewModel.updateClientId("rejected-id")
+        viewModel.updateClientSecret("rejected-secret")
+
+        viewModel.importDevices()
+
+        withTimeout(5_000) {
+            viewModel.state.first { it.cloudImport is CloudImportUiState.Error }
+        }
+        val retained = requireNotNull(credentialStore.load())
+        assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, retained.region)
+        assertEquals("known-good-id", retained.clientId.reveal())
+        assertEquals("known-good-secret", retained.clientSecret.reveal())
+        assertFalse(viewModel.state.value.clientId.isBlank)
+        assertFalse(viewModel.state.value.clientSecret.isBlank)
+    }
+
+    @Test
+    fun explicitSyncUsesSavedCredentialsWithoutPuttingThemInUiState() = runBlocking {
+        val credentialStore = InMemoryCloudCredentialStore(
+            StoredCloudCredentials(
+                region = TuyaCloudRegion.INDIA,
+                clientId = SensitiveString.of("retained-client-id"),
+                clientSecret = SensitiveString.of("retained-client-secret"),
+                savedAtEpochMillis = 1L,
+            )
+        )
+        var received: CloudCredentials? = null
+        val viewModel = OnboardingViewModel(
+            gateway = FakeGateway { credentials, _ ->
+                received = credentials
+                successfulEmptyImport().copy(region = credentials.region)
+            },
+            catalogStore = FakeCatalogStore(),
+            credentialStore = credentialStore,
+        )
+
+        viewModel.prepareForCloudSync(TuyaCloudRegion.WESTERN_AMERICA)
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first { it.cloudImport is CloudImportUiState.Success }
+        }
+        assertEquals(TuyaCloudRegion.INDIA, received?.region)
+        assertEquals("retained-client-id", received?.clientId)
+        assertEquals("retained-client-secret", received?.clientSecret?.reveal())
+        assertTrue(state.clientId.isBlank)
+        assertTrue(state.clientSecret.isBlank)
+        assertFalse(state.toString().contains("retained-client-secret"))
+    }
+
     @Test
     fun successfulImportClearsEveryCredentialField() = runBlocking {
         val viewModel = OnboardingViewModel(

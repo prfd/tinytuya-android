@@ -18,15 +18,22 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -35,15 +42,22 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.ui.app.AppSettingsUiState
+import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
+import com.prfd.tinytuya.data.python.TuyaCloudRegion
 
 @Composable
 fun SettingsScreen(
     state: AppSettingsUiState,
     onRefreshWhenAppOpensChanged: (Boolean) -> Unit,
+    onSyncFromCloud: () -> Unit,
+    onUpdateCredentials: () -> Unit,
+    onForgetCredentials: () -> Unit,
     onDismissError: () -> Unit,
     onBack: () -> Unit,
 ) {
+    var confirmForget by rememberSaveable { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -68,16 +82,24 @@ fun SettingsScreen(
                 item {
                     Column(Modifier.padding(top = 12.dp, bottom = 4.dp)) {
                         Text(
-                            text = "A quicker local home",
+                            text = "Your TinyTuya setup",
                             style = MaterialTheme.typography.headlineMedium,
                         )
                         Text(
-                            text = "Choose what TinyTuya does when the app becomes visible.",
+                            text = "Manage the explicit cloud connection and everyday local behavior.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
+                }
+                item {
+                    CloudAccountCard(
+                        state = state.cloudAccount,
+                        onSync = onSyncFromCloud,
+                        onUpdate = onUpdateCredentials,
+                        onForget = { confirmForget = true },
+                    )
                 }
                 item {
                     ForegroundRefreshCard(
@@ -99,6 +121,35 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text("Forget Tuya Cloud credentials?") },
+            text = {
+                Text(
+                    "The saved region, Client ID, and Client Secret will be deleted. " +
+                        "Your imported devices and local controls will remain available."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmForget = false
+                        onForgetCredentials()
+                    },
+                    modifier = Modifier.testTag("confirm_forget_credentials"),
+                ) {
+                    Text("Forget credentials")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForget = false }) {
+                    Text("Keep them")
+                }
+            },
+        )
     }
 }
 
@@ -125,12 +176,164 @@ private fun SettingsHeader(onBack: () -> Unit) {
         Column {
             Text("Settings", style = MaterialTheme.typography.titleLarge)
             Text(
-                text = "LOCAL BEHAVIOR",
+                text = "APP SETTINGS",
                 style = MaterialTheme.typography.labelLarge,
                 fontSize = 10.sp,
                 letterSpacing = 1.4.sp,
                 color = MaterialTheme.colorScheme.primary,
             )
+        }
+    }
+}
+
+@Composable
+private fun CloudAccountCard(
+    state: CloudAccountUiState,
+    onSync: () -> Unit,
+    onUpdate: () -> Unit,
+    onForget: () -> Unit,
+) {
+    OutlinedCard(
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("cloud_account_card"),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text("Tuya Cloud account", style = MaterialTheme.typography.titleMedium)
+            when (state) {
+                CloudAccountUiState.Loading -> {
+                    Row(
+                        modifier = Modifier.padding(top = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                        Text(
+                            text = "Opening the encrypted credential vault…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
+                    }
+                }
+
+                CloudAccountUiState.Missing -> {
+                    Text(
+                        text = "No cloud credentials are saved yet. Local device control does not need them.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 7.dp),
+                    )
+                    Button(
+                        onClick = onUpdate,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .testTag("save_cloud_credentials"),
+                    ) {
+                        Text("Save cloud credentials")
+                    }
+                }
+
+                is CloudAccountUiState.Saved -> {
+                    Text(
+                        text = "SAVED ON THIS DEVICE",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                    Text(
+                        text = state.summary.region.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                    Text(
+                        text = "Client ID · ${state.summary.maskedClientId}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                    Text(
+                        text = "The secret stays encrypted and is never shown here. Cloud access happens only when you explicitly sync.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 11.dp),
+                    )
+                    Button(
+                        onClick = onSync,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .testTag("sync_from_tuya"),
+                    ) {
+                        Text("Sync from Tuya")
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            onClick = onUpdate,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("update_cloud_credentials"),
+                        ) {
+                            Text("Update credentials")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onForget,
+                            modifier = Modifier.testTag("forget_cloud_credentials"),
+                        ) {
+                            Text("Forget")
+                        }
+                    }
+                }
+
+                CloudAccountUiState.Forgetting -> {
+                    Row(
+                        modifier = Modifier.padding(top = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                        Text(
+                            text = "Deleting the credential vault…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
+                    }
+                }
+
+                is CloudAccountUiState.Recovery -> {
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 7.dp),
+                    )
+                    Text(
+                        text = "Reference · ${state.code}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 7.dp),
+                    )
+                    OutlinedButton(
+                        onClick = onForget,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .testTag("forget_broken_credentials"),
+                    ) {
+                        Text("Forget and enter again")
+                    }
+                }
+            }
         }
     }
 }
@@ -268,8 +471,22 @@ private fun SettingsPreview() {
                 isLoaded = true,
             ),
             onRefreshWhenAppOpensChanged = {},
+            onSyncFromCloud = {},
+            onUpdateCredentials = {},
+            onForgetCredentials = {},
             onDismissError = {},
             onBack = {},
         )
     }
 }
+
+private val TuyaCloudRegion.displayName: String
+    get() = when (this) {
+        TuyaCloudRegion.CHINA -> "China"
+        TuyaCloudRegion.WESTERN_AMERICA -> "Western America"
+        TuyaCloudRegion.EASTERN_AMERICA -> "Eastern America"
+        TuyaCloudRegion.CENTRAL_EUROPE -> "Central Europe"
+        TuyaCloudRegion.WESTERN_EUROPE -> "Western Europe"
+        TuyaCloudRegion.INDIA -> "India"
+        TuyaCloudRegion.SINGAPORE -> "Singapore"
+    }

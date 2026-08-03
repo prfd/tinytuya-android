@@ -544,12 +544,20 @@ private fun CredentialsScreen(
         Spacer(Modifier.height(28.dp))
         Eyebrow("SECURE IMPORT")
         Text(
-            text = "Connect your project",
+            text = if (state.isCredentialUpdate) {
+                "Update cloud credentials"
+            } else {
+                "Connect your project"
+            },
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            text = "Enter the authorization key shown on your Tuya Cloud project Overview.",
+            text = if (state.isCredentialUpdate) {
+                "Enter the complete replacement authorization key. The saved secret is never revealed or prefilled."
+            } else {
+                "Enter the authorization key shown on your Tuya Cloud project Overview."
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 10.dp, bottom = 24.dp),
@@ -680,12 +688,16 @@ private fun CredentialsScreen(
 
         CredentialPrivacyNote()
         PrimaryActionButton(
-            text = "Connect and import devices",
+            text = if (state.isCredentialUpdate) {
+                "Verify, save, and sync"
+            } else {
+                "Connect and import devices"
+            },
             onClick = onImport,
             modifier = Modifier.padding(top = 18.dp),
         )
         Text(
-            text = "Cloud credentials are never saved. A successful non-empty device import is encrypted with Android Keystore.",
+            text = "Only credentials accepted by Tuya are saved. They use a separate encrypted Android Keystore vault and are never used for automatic local refresh.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -710,9 +722,9 @@ private fun CredentialPrivacyNote() {
             LockMark(Modifier.size(30.dp))
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Ephemeral by design", style = MaterialTheme.typography.titleMedium)
+                Text("Encrypted after verification", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "The form is kept only in memory. Values are not logged or added to Android saved state, and are cleared after a successful import.",
+                    text = "This form stays only in memory while Tuya verifies it. After success, the region, Client ID, and secret are encrypted on this device and the form is cleared.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
                     modifier = Modifier.padding(top = 4.dp),
@@ -818,7 +830,7 @@ private fun ErrorScreen(
             Text("Review setup guide")
         }
         Text(
-            text = "Your entered values remain only in memory so you can correct them. They have not been written to disk.",
+            text = "New values are not saved unless Tuya accepts them. If this sync used the saved account, choose the button above to enter a complete replacement.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -837,6 +849,12 @@ private fun errorTitle(code: String): String = when (code) {
     "CATALOG_KEY_CREATE_FAILED", "CATALOG_KEY_UNAVAILABLE" -> "Secure key unavailable"
     "CATALOG_WRITE_FAILED", "CATALOG_ENCRYPT_FAILED" -> "Could not secure devices"
     "CATALOG_READ_FAILED", "CATALOG_DECRYPT_FAILED", "CATALOG_INVALID" -> "Local catalog needs attention"
+    "CREDENTIAL_VAULT_KEY_CREATE_FAILED", "CREDENTIAL_VAULT_KEY_UNAVAILABLE" ->
+        "Credential key unavailable"
+    "CREDENTIAL_VAULT_WRITE_FAILED", "CREDENTIAL_VAULT_ENCRYPT_FAILED" ->
+        "Could not save credentials"
+    "CREDENTIAL_VAULT_READ_FAILED", "CREDENTIAL_VAULT_DECRYPT_FAILED",
+    "CREDENTIAL_VAULT_INVALID" -> "Saved credentials need attention"
     else -> "Import did not complete"
 }
 
@@ -878,9 +896,9 @@ private fun SuccessScreen(
         }
         Text(
             text = if (result.deviceCount == 0) {
-                "The project connected successfully, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
+                "The project connected successfully and its credentials are encrypted on this device, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
             } else {
-                "The cloud handshake worked. Credentials were cleared, and the device catalog is encrypted locally with Android Keystore."
+                "The cloud handshake worked. The credential form was cleared, and both your cloud account and device catalog are encrypted locally with separate Android Keystore keys."
             },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -926,9 +944,9 @@ private fun SuccessScreen(
                 .padding(top = 16.dp),
         ) {
             Column(Modifier.padding(18.dp)) {
-                Text("Next: find devices on Wi-Fi", style = MaterialTheme.typography.titleMedium)
+                Text("Next: open your local home", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "Bounded local UDP discovery is the next implementation slice. Until then, imported devices are listed as awaiting a LAN scan.",
+                    text = "Open the device list to find devices on Wi-Fi, refresh their current status, and control supported devices locally.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 5.dp),

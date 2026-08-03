@@ -12,6 +12,7 @@ import com.prfd.tinytuya.data.lan.DefaultKnownDeviceRefreshCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalControlCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalStatusCoordinator
 import com.prfd.tinytuya.data.local.AndroidAppSettingsStore
+import com.prfd.tinytuya.data.local.EncryptedCloudCredentialStore
 import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.ui.app.AppRoute
@@ -26,6 +27,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
+        val credentialStore = EncryptedCloudCredentialStore(applicationContext)
         val settingsStore = AndroidAppSettingsStore(applicationContext)
         val gateway = ChaquopyTuyaPythonGateway(applicationContext)
         val networkResolver = AndroidLanNetworkResolver(applicationContext)
@@ -58,11 +60,12 @@ class MainActivity : ComponentActivity() {
                 lanNetworkObserver = networkResolver,
                 knownDeviceRefreshCoordinator = knownDeviceRefreshCoordinator,
                 settingsStore = settingsStore,
+                credentialStore = credentialStore,
             ),
         )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(
             this,
-            OnboardingViewModel.factory(this, catalogStore),
+            OnboardingViewModel.factory(this, catalogStore, credentialStore),
         )[OnboardingViewModel::class.java]
         setContent {
             TinytuyaTheme {

@@ -159,7 +159,7 @@ private fun SettingsHeader(onBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextButton(onClick = onBack, modifier = Modifier.testTag("settings_back")) {
-            Text("Back")
+            Text("←  Back")
         }
         Spacer(Modifier.width(8.dp))
         BrandMark(Modifier.size(38.dp))

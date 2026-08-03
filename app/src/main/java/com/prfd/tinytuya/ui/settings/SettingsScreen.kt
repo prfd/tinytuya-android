@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -37,14 +36,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppSettingsUiState
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
+import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
-import com.prfd.tinytuya.data.python.TuyaCloudRegion
 
 @Composable
 fun SettingsScreen(
@@ -163,15 +162,7 @@ private fun SettingsHeader(onBack: () -> Unit) {
             Text("Back")
         }
         Spacer(Modifier.width(8.dp))
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ) {
-            Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
-                Text("T", fontWeight = FontWeight.Bold)
-            }
-        }
+        BrandMark(Modifier.size(38.dp))
         Spacer(Modifier.width(10.dp))
         Column {
             Text("Settings", style = MaterialTheme.typography.titleLarge)

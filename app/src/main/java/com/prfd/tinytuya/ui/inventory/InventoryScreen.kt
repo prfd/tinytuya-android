@@ -64,6 +64,7 @@ import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
+import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
@@ -223,15 +224,7 @@ private fun InventoryHeader(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ) {
-                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                    Text("T", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                }
-            }
+            BrandMark(Modifier.size(44.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("TinyTuya", style = MaterialTheme.typography.titleLarge)
@@ -1344,7 +1337,7 @@ private fun DataControls(
     ) {
         Text("Data controls", style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "A cloud sync always asks for credentials again because TinyTuya does not retain them.",
+            text = "Cloud access happens only when you choose this action. Saved credentials are reused when available; automatic local refresh never contacts Tuya Cloud.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),

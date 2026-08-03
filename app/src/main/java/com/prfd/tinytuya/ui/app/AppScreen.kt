@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.onboarding.OnboardingRoute
 import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
@@ -138,13 +139,9 @@ private fun AppLoadingScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-            ) {
-                Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(42.dp), strokeWidth = 4.dp)
-                }
+            Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
+                BrandMark(Modifier.size(64.dp))
+                CircularProgressIndicator(Modifier.size(88.dp), strokeWidth = 3.dp)
             }
             Text(
                 text = "Opening your local home…",

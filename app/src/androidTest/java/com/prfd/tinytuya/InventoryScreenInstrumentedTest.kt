@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -34,6 +35,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun inventoryShowsReadinessWithoutRenderingLocalKey() {
         setInventoryContent()
+        composeRule.onNodeWithContentDescription("TinyTuya").assertExists()
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Office lamp").assertExists()
@@ -47,6 +49,7 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(onDelete = { deleteCalled = true })
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
 
+        composeRule.onNodeWithText("Saved credentials are reused", substring = true).assertExists()
         composeRule.onNodeWithText("Delete all local data").performClick()
         composeRule.onNodeWithText("Delete all local data?").assertExists()
         assertFalse(deleteCalled)

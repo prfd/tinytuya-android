@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
+import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 private const val TUYA_SETUP_GUIDE_URL =
@@ -1139,29 +1140,6 @@ private fun Eyebrow(text: String) {
         letterSpacing = 1.5.sp,
         color = MaterialTheme.colorScheme.primary,
     )
-}
-
-@Composable
-private fun BrandMark(modifier: Modifier = Modifier) {
-    val primary = MaterialTheme.colorScheme.primary
-    val container = MaterialTheme.colorScheme.primaryContainer
-    val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
-    Canvas(
-        modifier = modifier.semantics { contentDescription = "TinyTuya" }
-    ) {
-        drawCircle(container)
-        val center = Offset(size.width * 0.5f, size.height * 0.52f)
-        val left = Offset(size.width * 0.27f, size.height * 0.38f)
-        val right = Offset(size.width * 0.74f, size.height * 0.31f)
-        val bottom = Offset(size.width * 0.61f, size.height * 0.76f)
-        drawLine(primary, center, left, strokeWidth = size.width * 0.065f)
-        drawLine(primary, center, right, strokeWidth = size.width * 0.065f)
-        drawLine(primary, center, bottom, strokeWidth = size.width * 0.065f)
-        drawCircle(onContainer, size.width * 0.09f, center)
-        drawCircle(primary, size.width * 0.075f, left)
-        drawCircle(primary, size.width * 0.075f, right)
-        drawCircle(primary, size.width * 0.075f, bottom)
-    }
 }
 
 @Composable

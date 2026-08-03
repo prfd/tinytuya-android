@@ -350,6 +350,8 @@ These files are large because they keep closely related UI or protocol helpers t
 
 Read `OnboardingRoute` and `OnboardingScreen` first, then each destination independently: `WelcomeScreen`, `SetupGuideScreen`, `CredentialsScreen`, `ImportingScreen`, `ErrorScreen`, and `SuccessScreen`. Leave the illustration, small design primitives, and previews until you are modifying visuals.
 
+The code-native app identity lives in [BrandMark.kt](app/src/main/java/com/prfd/tinytuya/ui/components/BrandMark.kt) and is shared by onboarding, inventory, Settings, and app loading. Keep it for app-level identity; device-profile badges and success/error marks communicate different meanings and should remain distinct.
+
 ### `InventoryScreen.kt`
 
 Start with `InventoryScreen` and `InventoryDeviceCard`, then jump to the one panel you are changing. Presentation and policy should remain outside composables where possible, so inspect `LocalStatusPresentation.kt`, `LocalSensorPresentation.kt`, or `LocalDeviceCapabilities.kt` before adding logic directly to the screen.

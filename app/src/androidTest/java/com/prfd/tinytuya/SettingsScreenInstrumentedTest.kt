@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -65,6 +66,7 @@ class SettingsScreenInstrumentedTest {
         setSettingsContent(onBack = { backCalled = true })
 
         composeRule.onNodeWithTag("settings_back").performClick()
+        composeRule.onNodeWithContentDescription("TinyTuya").assertExists()
 
         composeRule.runOnIdle { assertTrue(backCalled) }
     }

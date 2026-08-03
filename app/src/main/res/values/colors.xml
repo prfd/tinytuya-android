@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep in sync with Paper in ui/theme/Color.kt. -->
+    <color name="launch_background">#F8FBF8</color>
+</resources>

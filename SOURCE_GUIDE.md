@@ -20,9 +20,9 @@ Kotlin owns Android lifecycle, UI state, Wi-Fi selection, policy, and encrypted 
 
 Do not begin with either of the 1,000-line Compose files. Read these files in order:
 
-1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the composition root. It constructs the real store, gateway, network resolver, coordinators, and ViewModels.
-2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, or recovery UI.
-3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `discoverLan`, and `setBooleanControl`.
+1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the composition root. It constructs the real stores, gateway, network resolver, coordinators, and ViewModels, then reports foreground entry from `onStart`.
+2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, recovery, or the local settings UI.
+3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, and `setBooleanControl`.
 4. [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt) — cloud credentials, imported devices, and the deliberately redacted `SensitiveString`.
 5. [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — initially read only the three catalog record types and the `DeviceCatalogStore` interface near the top.
 6. [LanDiscoveryModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryModels.kt), [LocalStatusModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalStatusModels.kt), and [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt) — the small typed vocabulary used by the coordinators and bridge.
@@ -51,22 +51,28 @@ Follow this path without entering the large screen implementations:
 ```text
 MainActivity.onCreate
   -> construct EncryptedDeviceCatalogStore and ChaquopyTuyaPythonGateway
-  -> construct discovery, status, and control coordinators
+  -> construct quick-refresh, discovery, status, and control coordinators
   -> obtain AppViewModel and OnboardingViewModel
   -> AppRoute
   -> collect AppViewModel.state
-  -> render Loading, Onboarding, Inventory, or Recovery
+  -> render Loading, Onboarding, Inventory, Settings, or Recovery
+
+MainActivity.onStart
+  -> AppViewModel.onAppForegrounded
+  -> wait until settings, catalog, and an Android network observation are ready
+  -> quick status refresh, discovery fallback, or no-op according to saved state
 ```
 
 Read:
 
 - All of [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt). It is intentionally small manual dependency injection.
-- `AppRoute` in [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt). Notice that callbacks are passed down; screens do not own repositories or sockets.
-- `AppUiState` and `refreshCatalog` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). A missing or empty catalog routes to onboarding; a valid catalog routes to inventory; a decryption/storage problem routes to recovery instead of silently deleting data.
+- `AppRoute` in [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt). Notice that callbacks are passed down; screens do not own repositories or sockets. Settings is a lightweight subdestination over a valid inventory, not a socket-owning state.
+- `AppUiState`, `refreshCatalog`, and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). A missing or empty catalog routes to onboarding; a valid catalog routes to inventory; a decryption/storage problem routes to recovery instead of silently deleting data.
+- [AppSettingsStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/AppSettingsStore.kt). The default-enabled foreground preference is non-sensitive, excluded from backup with all other app data, and reset by “Delete all local data.”
 
 Ignore `AppLoadingScreen` and `CatalogRecoveryScreen` styling for now.
 
-Checkpoint: find the single call which starts initial catalog loading, then find the callback which moves the app from a successful import to inventory. The answers are `AppViewModel.init` and the success callback supplied by `AppRoute`.
+Checkpoint: find the call which starts initial catalog loading, the Activity callback which announces foreground entry, and the callback which moves the app from a successful import to inventory. The answers are `AppViewModel.init`, `MainActivity.onStart`, and the success callback supplied by `AppRoute`.
 
 ## Pass 2: cloud import, end to end
 
@@ -108,9 +114,14 @@ Checkpoint: search for `CLOUD_CREDENTIALS_INVALID` from Python to the onboarding
 
 ## Pass 3: local refresh is two operations
 
-The button labelled refresh performs discovery first and status polling second. Keeping these separate will matter later when periodic sensor refresh is added: normal status refresh should not require a new UDP scan every time.
+The inventory exposes two deliberately separate actions:
 
-### Part A: select the Wi-Fi network and discover addresses
+- **Refresh status** is the fast path. It directly polls addresses verified by the latest discovery on the exact same Android network and never opens UDP discovery listeners.
+- **Find devices** is the slower address-matching path. It listens for Tuya UDP broadcasts, saves the new discovery generation, and then polls status.
+
+Keeping these separate prevents normal startup and future sensor refreshes from paying for a global scan every time.
+
+### Part A: find devices and refresh their addresses
 
 ```text
 AppViewModel.discoverLan
@@ -133,7 +144,7 @@ Read:
 - `_parse_lan_input`, `_normalize_lan_devices`, and `discover_lan` in [tuya_bridge.py](app/src/main/python/tuya_bridge.py).
 - `mergeLanDiscovery` in [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt).
 
-The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. The encrypted catalog also saves Android's opaque network handle, which distinguishes two Wi-Fi networks even if both assign the phone the same private IP range. That makes an empty scan honestly show “not found” and a network change honestly show “refresh required” without immediately destroying useful encrypted history.
+The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. The encrypted catalog also saves Android's opaque network handle, which distinguishes two Wi-Fi networks even if both assign the phone the same private IP range. That makes an empty scan honestly show “not found” and a network change honestly require “Find devices” without immediately destroying useful encrypted history.
 
 ### Part B: poll current DPS values
 
@@ -157,6 +168,22 @@ Read:
 - `mergeLocalPoll` in [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt).
 
 The coordinator supplies local keys only to the bounded status operation after an address is proven current. Python retries short reads, normalizes primitive DPS values, closes the device, and clears TinyTuya's in-memory key fields in `finally`.
+
+### Part C: reuse verified addresses without UDP
+
+```text
+AppViewModel.refreshKnownDevices
+  -> DefaultKnownDeviceRefreshCoordinator.refresh
+  -> AndroidLanNetworkResolver.resolve
+  -> require exact equality with DeviceCatalog.lastDiscoveryNetwork
+  -> LocalStatusCoordinator.poll using the current discovery generation
+  -> TinyTuya TCP 6668 status calls
+  -> Inventory state becomes Completed + control Ready
+```
+
+Read [KnownDeviceRefreshCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinator.kt) in full. It is intentionally small: it requires at least one eligible, previously matched target, re-resolves the active Android network, compares the complete network identity including its opaque handle, and only then delegates to the same bounded status coordinator used after discovery. It does not own or call a discovery coordinator, which makes the “no UDP on quick refresh” boundary explicit.
+
+Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding and never-matched inventories; suppresses duplicate starts for 30 seconds; uses the quick path for a trustworthy snapshot; and uses full discovery only when the prior network or address generation cannot be trusted. Neither path calls Tuya Cloud. There is no timer or background service.
 
 Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons are that the record belongs to an older discovery generation, the device has no key, its protocol version is unsupported, or its access kind blocks direct local access.
 
@@ -255,7 +282,9 @@ The encryption envelope version and the catalog schema version solve different p
 
 Also read [AndroidManifest.xml](app/src/main/AndroidManifest.xml), [backup_rules.xml](app/src/main/res/xml/backup_rules.xml), and [data_extraction_rules.xml](app/src/main/res/xml/data_extraction_rules.xml) to see the no-backup policy outside Kotlin.
 
-Checkpoint: follow `deleteAll` and verify that it removes both the ciphertext and the Keystore entry.
+The small [AppSettingsStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/AppSettingsStore.kt) uses private `SharedPreferences` only for non-sensitive behavior preferences. Its write uses `commit` on `Dispatchers.IO` so the UI reports success only after persistence. It is deliberately not mixed into the encrypted device-catalog schema.
+
+Checkpoint: follow `deleteAllLocalData` and verify that it removes the ciphertext, Keystore entry, and app preferences.
 
 ## The Kotlin/Python contract
 
@@ -324,7 +353,9 @@ After each production flow, read its nearest test instead of immediately reading
 
 | Feature | Best tests to read next |
 | --- | --- |
-| Startup routing and control state | [AppViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/AppViewModelInstrumentedTest.kt) |
+| Startup routing, foreground refresh, and control state | [AppViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/AppViewModelInstrumentedTest.kt) |
+| Known-address quick-refresh boundary | [KnownDeviceRefreshCoordinatorTest.kt](app/src/test/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinatorTest.kt) |
+| Settings persistence and UI | [AppSettingsStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/AppSettingsStoreInstrumentedTest.kt) and [SettingsScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/SettingsScreenInstrumentedTest.kt) |
 | Onboarding state and credential lifecycle | [OnboardingViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingViewModelInstrumentedTest.kt) and [OnboardingScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingScreenInstrumentedTest.kt) |
 | Kotlin/Python validation | [TuyaPythonGatewayInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/python/TuyaPythonGatewayInstrumentedTest.kt) |
 | Encrypted catalog and recovery | [EncryptedDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedDeviceCatalogStoreInstrumentedTest.kt) |
@@ -369,7 +400,7 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 From WSL, `rg` is the quickest way to jump to a symbol:
 
 ```bash
-rg -n 'fun (refreshCatalog|discoverLan|setBooleanControl)' app/src/main/java
+rg -n 'fun (refreshCatalog|refreshKnownDevices|discoverLan|setBooleanControl)' app/src/main/java
 rg -n '^def (import_cloud|discover_lan|poll_local|set_values)' app/src/main/python/tuya_bridge.py
 rg -n 'LOCAL_CONTROL_UNCONFIRMED' app/src
 ```

@@ -1,8 +1,10 @@
 package com.prfd.tinytuya.ui.app
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.prfd.tinytuya.data.lan.KnownDeviceRefreshCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryException
 import com.prfd.tinytuya.data.lan.LanNetworkContext
@@ -13,9 +15,15 @@ import com.prfd.tinytuya.data.lan.LocalControlException
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
+import com.prfd.tinytuya.data.lan.UnavailableKnownDeviceRefreshCoordinator
+import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
+import com.prfd.tinytuya.data.lan.hasPreviouslyMatchedStatusTargets
+import com.prfd.tinytuya.data.local.AppSettingsStorageException
+import com.prfd.tinytuya.data.local.AppSettingsStore
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
+import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,22 +98,39 @@ sealed interface LanDiscoveryUiState {
     ) : LanDiscoveryUiState
 }
 
+data class AppSettingsUiState(
+    val refreshWhenAppOpens: Boolean = true,
+    val isLoaded: Boolean = false,
+    val isSaving: Boolean = false,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+)
+
 class AppViewModel(
     private val catalogStore: DeviceCatalogStore,
     private val lanDiscoveryCoordinator: LanDiscoveryCoordinator,
     private val localStatusCoordinator: LocalStatusCoordinator,
     private val localControlCoordinator: LocalControlCoordinator,
     private val lanNetworkObserver: LanNetworkObserver = NoOpLanNetworkObserver,
+    private val knownDeviceRefreshCoordinator: KnownDeviceRefreshCoordinator =
+        UnavailableKnownDeviceRefreshCoordinator,
+    private val settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
+    private val elapsedRealtimeMillis: () -> Long = SystemClock::elapsedRealtime,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
+    private val mutableSettingsState = MutableStateFlow(AppSettingsUiState())
+    val settingsState: StateFlow<AppSettingsUiState> = mutableSettingsState.asStateFlow()
     private var controlNetwork: LanNetworkContext? = null
     private var controlDiscoveryAtEpochMillis: Long? = null
     private var controlSessionVersion = 0L
     private var latestNetworkObservation: LanNetworkObservation? = null
+    private var foregroundRefreshPending = false
+    private var lastLocalRefreshStartedAtMillis: Long? = null
 
     init {
         observeLanNetwork()
+        loadSettings()
         refreshCatalog()
     }
 
@@ -115,11 +140,13 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val catalog = catalogStore.load()
-                mutableState.value = if (catalog == null || catalog.devices.isEmpty()) {
+                val destination = if (catalog == null || catalog.devices.isEmpty()) {
                     AppUiState.Onboarding
                 } else {
                     inventoryFromCatalog(catalog)
                 }
+                mutableState.value = destination
+                maybeStartForegroundRefresh()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: DeviceCatalogStorageException) {
@@ -137,8 +164,147 @@ class AppViewModel(
     }
 
     fun showOnboarding() {
+        foregroundRefreshPending = false
         clearControlSession()
         mutableState.value = AppUiState.Onboarding
+    }
+
+    fun onAppForegrounded() {
+        foregroundRefreshPending = true
+        maybeStartForegroundRefresh()
+    }
+
+    fun setRefreshWhenAppOpens(enabled: Boolean) {
+        val current = mutableSettingsState.value
+        if (!current.isLoaded || current.isSaving || current.refreshWhenAppOpens == enabled) return
+        if (!enabled) foregroundRefreshPending = false
+        mutableSettingsState.value = current.copy(
+            refreshWhenAppOpens = enabled,
+            isSaving = true,
+            errorCode = null,
+            errorMessage = null,
+        )
+        viewModelScope.launch {
+            try {
+                val saved = settingsStore.setRefreshWhenAppOpens(enabled)
+                mutableSettingsState.value = AppSettingsUiState(
+                    refreshWhenAppOpens = saved.refreshWhenAppOpens,
+                    isLoaded = true,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: AppSettingsStorageException) {
+                mutableSettingsState.value = current.copy(
+                    isSaving = false,
+                    errorCode = error.code,
+                    errorMessage = error.message ?: "The refresh preference could not be saved.",
+                )
+            } catch (_: Exception) {
+                mutableSettingsState.value = current.copy(
+                    isSaving = false,
+                    errorCode = "SETTINGS_WRITE_FAILED",
+                    errorMessage = "The refresh preference could not be saved.",
+                )
+            }
+        }
+    }
+
+    fun dismissSettingsError() {
+        mutableSettingsState.value = mutableSettingsState.value.copy(
+            errorCode = null,
+            errorMessage = null,
+        )
+    }
+
+    fun refreshKnownDevices() {
+        refreshKnownDevices(fallbackToDiscovery = false)
+    }
+
+    private fun refreshKnownDevices(fallbackToDiscovery: Boolean) {
+        val current = mutableState.value as? AppUiState.Inventory ?: return
+        if (
+            current.discovery is LanDiscoveryUiState.Scanning ||
+            current.discovery is LanDiscoveryUiState.ReadingStatus ||
+            current.control is LocalControlUiState.Sending ||
+            !current.isLanSnapshotCurrent ||
+            !current.catalog.hasCurrentKnownStatusTargets()
+        ) return
+        markLocalRefreshStarted()
+        clearControlSession()
+        mutableState.value = current.copy(
+            discovery = LanDiscoveryUiState.ReadingStatus,
+            control = LocalControlUiState.Unavailable,
+        )
+        viewModelScope.launch {
+            try {
+                val outcome = knownDeviceRefreshCoordinator.refresh(current.catalog)
+                if (!observationMatches(outcome.network)) {
+                    publishChangedNetwork(outcome.catalog)
+                    return@launch
+                }
+                openControlSession(
+                    network = outcome.network,
+                    discoveryAtEpochMillis = outcome.catalog.lastDiscoveryAtEpochMillis,
+                )
+                mutableState.value = AppUiState.Inventory(
+                    catalog = outcome.catalog,
+                    discovery = LanDiscoveryUiState.Completed,
+                    control = LocalControlUiState.Ready,
+                    isLanSnapshotCurrent = true,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: LocalStatusException) {
+                if (
+                    fallbackToDiscovery &&
+                    error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED
+                ) {
+                    mutableState.value = current.copy(
+                        discovery = LanDiscoveryUiState.Idle,
+                        control = LocalControlUiState.Unavailable,
+                        isLanSnapshotCurrent = false,
+                    )
+                    discoverLan()
+                    return@launch
+                }
+                val snapshotCurrent = if (error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED) {
+                    false
+                } else {
+                    catalogIsCurrentNow(
+                        catalog = current.catalog,
+                        fallback = current.isLanSnapshotCurrent,
+                    )
+                }
+                mutableState.value = current.copy(
+                    discovery = if (snapshotCurrent) {
+                        LanDiscoveryUiState.Error(
+                            code = error.code,
+                            message = error.message ?: "Local device status could not be read.",
+                        )
+                    } else {
+                        changedNetworkError()
+                    },
+                    control = LocalControlUiState.Unavailable,
+                    isLanSnapshotCurrent = snapshotCurrent,
+                )
+            } catch (error: DeviceCatalogStorageException) {
+                mutableState.value = current.copy(
+                    discovery = LanDiscoveryUiState.Error(
+                        code = error.code,
+                        message = error.message ?: "Local device status could not be saved.",
+                    ),
+                    control = LocalControlUiState.Unavailable,
+                )
+            } catch (_: Exception) {
+                mutableState.value = current.copy(
+                    discovery = LanDiscoveryUiState.Error(
+                        code = "LOCAL_POLL_FAILED",
+                        message = "Local device status could not be read.",
+                    ),
+                    control = LocalControlUiState.Unavailable,
+                )
+            }
+        }
     }
 
     fun discoverLan() {
@@ -148,6 +314,7 @@ class AppViewModel(
             current.discovery is LanDiscoveryUiState.ReadingStatus ||
             current.control is LocalControlUiState.Sending
         ) return
+        markLocalRefreshStarted()
         clearControlSession()
         mutableState.value = current.copy(
             discovery = LanDiscoveryUiState.Scanning,
@@ -396,11 +563,17 @@ class AppViewModel(
     }
 
     fun deleteAllLocalData() {
+        foregroundRefreshPending = false
         clearControlSession()
         mutableState.value = AppUiState.Loading
         viewModelScope.launch {
             try {
                 catalogStore.deleteAll()
+                settingsStore.deleteAll()
+                mutableSettingsState.value = AppSettingsUiState(
+                    refreshWhenAppOpens = true,
+                    isLoaded = true,
+                )
                 mutableState.value = AppUiState.Onboarding
             } catch (error: CancellationException) {
                 throw error
@@ -409,6 +582,11 @@ class AppViewModel(
                     code = error.code,
                     message = error.message ?: "The local device data could not be deleted.",
                 )
+            } catch (error: AppSettingsStorageException) {
+                mutableState.value = AppUiState.Recovery(
+                    code = error.code,
+                    message = error.message ?: "The local app settings could not be deleted.",
+                )
             } catch (_: Exception) {
                 mutableState.value = AppUiState.Recovery(
                     code = "CATALOG_DELETE_FAILED",
@@ -416,6 +594,89 @@ class AppViewModel(
                 )
             }
         }
+    }
+
+    private fun loadSettings() {
+        viewModelScope.launch {
+            try {
+                val settings = settingsStore.load()
+                mutableSettingsState.value = AppSettingsUiState(
+                    refreshWhenAppOpens = settings.refreshWhenAppOpens,
+                    isLoaded = true,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: AppSettingsStorageException) {
+                mutableSettingsState.value = AppSettingsUiState(
+                    refreshWhenAppOpens = false,
+                    isLoaded = true,
+                    errorCode = error.code,
+                    errorMessage = error.message ?: "App settings could not be read safely.",
+                )
+            } catch (_: Exception) {
+                mutableSettingsState.value = AppSettingsUiState(
+                    refreshWhenAppOpens = false,
+                    isLoaded = true,
+                    errorCode = "SETTINGS_READ_FAILED",
+                    errorMessage = "App settings could not be read safely.",
+                )
+            }
+            maybeStartForegroundRefresh()
+        }
+    }
+
+    private fun maybeStartForegroundRefresh() {
+        if (!foregroundRefreshPending) return
+        val settings = mutableSettingsState.value
+        if (!settings.isLoaded) return
+        if (!settings.refreshWhenAppOpens) {
+            foregroundRefreshPending = false
+            return
+        }
+        val current = when (val destination = mutableState.value) {
+            AppUiState.Loading -> return
+            is AppUiState.Inventory -> destination
+            AppUiState.Onboarding,
+            is AppUiState.Recovery -> {
+                foregroundRefreshPending = false
+                return
+            }
+        }
+        val observation = latestNetworkObservation ?: return
+        if (observation is LanNetworkObservation.Unavailable) return
+        if (
+            current.discovery is LanDiscoveryUiState.Scanning ||
+            current.discovery is LanDiscoveryUiState.ReadingStatus ||
+            current.control is LocalControlUiState.Sending
+        ) {
+            foregroundRefreshPending = false
+            return
+        }
+        if (!current.catalog.hasPreviouslyMatchedStatusTargets()) {
+            foregroundRefreshPending = false
+            return
+        }
+        val now = elapsedRealtimeMillis()
+        val lastStartedAt = lastLocalRefreshStartedAtMillis
+        if (
+            lastStartedAt != null &&
+            now >= lastStartedAt &&
+            now - lastStartedAt < FOREGROUND_REFRESH_COOLDOWN_MILLIS
+        ) {
+            foregroundRefreshPending = false
+            return
+        }
+
+        if (current.isLanSnapshotCurrent && current.catalog.hasCurrentKnownStatusTargets()) {
+            refreshKnownDevices(fallbackToDiscovery = true)
+        } else {
+            discoverLan()
+        }
+    }
+
+    private fun markLocalRefreshStarted() {
+        foregroundRefreshPending = false
+        lastLocalRefreshStartedAtMillis = elapsedRealtimeMillis()
     }
 
     private fun clearControlSession() {
@@ -460,6 +721,7 @@ class AppViewModel(
                         isLanSnapshotCurrent = true,
                     )
                 }
+                maybeStartForegroundRefresh()
             }
         }
     }
@@ -553,7 +815,7 @@ class AppViewModel(
 
     private fun changedNetworkError() = LanDiscoveryUiState.Error(
         code = LAN_NETWORK_CHANGED,
-        message = "The active Wi-Fi no longer matches the last local refresh. Refresh local devices before using saved addresses.",
+        message = "The active Wi-Fi no longer matches the last local refresh. Find devices again before using saved addresses.",
     )
 
     companion object {
@@ -563,6 +825,9 @@ class AppViewModel(
             localStatusCoordinator: LocalStatusCoordinator,
             localControlCoordinator: LocalControlCoordinator,
             lanNetworkObserver: LanNetworkObserver = NoOpLanNetworkObserver,
+            knownDeviceRefreshCoordinator: KnownDeviceRefreshCoordinator =
+                UnavailableKnownDeviceRefreshCoordinator,
+            settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -574,10 +839,15 @@ class AppViewModel(
                         localStatusCoordinator,
                         localControlCoordinator,
                         lanNetworkObserver,
+                        knownDeviceRefreshCoordinator,
+                        settingsStore,
                     ) as T
                 }
             }
 
         private const val LAN_NETWORK_CHANGED = "LAN_NETWORK_CHANGED"
+        private const val LOCAL_REFRESH_DISCOVERY_REQUIRED =
+            "LOCAL_REFRESH_DISCOVERY_REQUIRED"
+        private const val FOREGROUND_REFRESH_COOLDOWN_MILLIS = 30_000L
     }
 }

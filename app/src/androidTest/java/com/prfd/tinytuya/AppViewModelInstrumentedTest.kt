@@ -1,6 +1,8 @@
 package com.prfd.tinytuya
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.prfd.tinytuya.data.lan.KnownDeviceRefreshCoordinator
+import com.prfd.tinytuya.data.lan.KnownDeviceRefreshOutcome
 import com.prfd.tinytuya.data.lan.LanDiscoveryCoordinator
 import com.prfd.tinytuya.data.lan.LanDiscoveryException
 import com.prfd.tinytuya.data.lan.LanDiscoveryOutcome
@@ -11,9 +13,12 @@ import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
+import com.prfd.tinytuya.data.lan.LocalStatusException
+import com.prfd.tinytuya.data.local.AppSettings
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.LanDeviceRecord
+import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -23,6 +28,7 @@ import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
@@ -337,8 +343,223 @@ class AppViewModelInstrumentedTest {
         assertTrue(finalState.control is LocalControlUiState.Unavailable)
     }
 
+    @Test
+    fun foregroundOnVerifiedWifiUsesOnlyTheQuickRefreshCoordinator() = runBlocking {
+        val refreshed = discoveredCatalog().copy(lastLocalPollAtEpochMillis = 6L)
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val discoveryCoordinator = FakeLanDiscoveryCoordinator()
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(refreshed)
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = discoveryCoordinator,
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = true)),
+            elapsedRealtimeMillis = { 100_000L },
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+        observer.emit(LanNetworkObservation.Available(NETWORK))
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory &&
+                    it.discovery is LanDiscoveryUiState.Completed
+            }
+        } as AppUiState.Inventory
+        assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
+        assertEquals(1, knownCoordinator.callCount)
+        assertEquals(0, discoveryCoordinator.callCount)
+        assertTrue(state.control is LocalControlUiState.Ready)
+    }
+
+    @Test
+    fun disabledForegroundPreferenceLeavesBothRefreshPathsIdle() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val discoveryCoordinator = FakeLanDiscoveryCoordinator()
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator()
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = discoveryCoordinator,
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = false)),
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+        observer.emit(LanNetworkObservation.Available(NETWORK))
+        delay(150)
+
+        assertEquals(0, knownCoordinator.callCount)
+        assertEquals(0, discoveryCoordinator.callCount)
+    }
+
+    @Test
+    fun foregroundOnChangedWifiRunsFullDiscoveryInsteadOfSavedAddressPoll() = runBlocking {
+        val changedNetwork = NETWORK.copy(networkHandle = 202L)
+        val rediscovered = discoveredCatalog().copy(lastDiscoveryNetwork = changedNetwork)
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(changedNetwork))
+        val discoveryCoordinator = FakeLanDiscoveryCoordinator(
+            result = rediscovered,
+            network = changedNetwork,
+        )
+        val statusCoordinator = FakeLocalStatusCoordinator(rediscovered)
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator()
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = discoveryCoordinator,
+            localStatusCoordinator = statusCoordinator,
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(),
+        )
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && !it.isLanSnapshotCurrent
+            }
+        }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory &&
+                    it.discovery is LanDiscoveryUiState.Completed
+            }
+        }
+        assertEquals(0, knownCoordinator.callCount)
+        assertEquals(1, discoveryCoordinator.callCount)
+        assertEquals(1, statusCoordinator.callCount)
+    }
+
+    @Test
+    fun foregroundDoesNothingBeforeADeviceHasEverBeenMatched() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val discoveryCoordinator = FakeLanDiscoveryCoordinator()
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator()
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = discoveryCoordinator,
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(),
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+        observer.emit(LanNetworkObservation.Available(NETWORK))
+        delay(150)
+
+        assertEquals(0, knownCoordinator.callCount)
+        assertEquals(0, discoveryCoordinator.callCount)
+    }
+
+    @Test
+    fun repeatedForegroundEventInsideCooldownDoesNotRefreshTwice() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(discoveredCatalog())
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(),
+            elapsedRealtimeMillis = { 100_000L },
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+        observer.emit(LanNetworkObservation.Available(NETWORK))
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory &&
+                    it.discovery is LanDiscoveryUiState.Completed
+            }
+        }
+
+        viewModel.onAppForegrounded()
+        delay(150)
+
+        assertEquals(1, knownCoordinator.callCount)
+    }
+
+    @Test
+    fun foregroundQuickRefreshFallsBackWhenNetworkResolverRejectsTheSnapshot() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val discoveryCoordinator = FakeLanDiscoveryCoordinator(discoveredCatalog())
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(
+            error = LocalStatusException(
+                code = "LOCAL_REFRESH_DISCOVERY_REQUIRED",
+                message = "Find devices again.",
+            )
+        )
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = discoveryCoordinator,
+            localStatusCoordinator = FakeLocalStatusCoordinator(discoveredCatalog()),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+            settingsStore = InMemoryAppSettingsStore(),
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.onAppForegrounded()
+        observer.emit(LanNetworkObservation.Available(NETWORK))
+
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory &&
+                    it.discovery is LanDiscoveryUiState.Completed
+            }
+        }
+        assertEquals(1, knownCoordinator.callCount)
+        assertEquals(1, discoveryCoordinator.callCount)
+    }
+
+    @Test
+    fun refreshPreferenceIsSavedThroughTheViewModel() = runBlocking {
+        val settingsStore = InMemoryAppSettingsStore()
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            settingsStore = settingsStore,
+        )
+        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+
+        viewModel.setRefreshWhenAppOpens(false)
+
+        val savedState = withTimeout(5_000) {
+            viewModel.settingsState.first {
+                it.isLoaded && !it.isSaving && !it.refreshWhenAppOpens
+            }
+        }
+        assertTrue(!savedState.refreshWhenAppOpens)
+        assertTrue(!settingsStore.load().refreshWhenAppOpens)
+    }
+
     private class FakeLanDiscoveryCoordinator(
         private val result: DeviceCatalog? = null,
+        private val network: LanNetworkContext = NETWORK,
     ) : LanDiscoveryCoordinator {
         var callCount = 0
 
@@ -346,7 +567,24 @@ class AppViewModelInstrumentedTest {
             callCount += 1
             return LanDiscoveryOutcome(
                 catalog = result ?: catalog,
-                network = NETWORK,
+                network = network,
+            )
+        }
+    }
+
+    private class FakeKnownDeviceRefreshCoordinator(
+        private val result: DeviceCatalog? = null,
+        private val network: LanNetworkContext = NETWORK,
+        private val error: LocalStatusException? = null,
+    ) : KnownDeviceRefreshCoordinator {
+        var callCount = 0
+
+        override suspend fun refresh(catalog: DeviceCatalog): KnownDeviceRefreshOutcome {
+            callCount += 1
+            error?.let { throw it }
+            return KnownDeviceRefreshOutcome(
+                catalog = result ?: catalog,
+                network = network,
             )
         }
     }

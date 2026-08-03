@@ -60,16 +60,51 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(onDiscoverLan = { scanCalled = true })
 
         assertFalse(scanCalled)
-        composeRule.onNodeWithText("Scan & read status").performClick()
+        composeRule.onNodeWithText("Find devices").performClick()
         composeRule.runOnIdle { assertTrue(scanCalled) }
     }
 
     @Test
+    fun quickRefreshContactsKnownDevicesWithoutStartingDiscovery() {
+        var refreshCalled = false
+        var scanCalled = false
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            onRefreshKnownDevices = { refreshCalled = true },
+            onDiscoverLan = { scanCalled = true },
+        )
+
+        composeRule.onNodeWithTag("lan_quick_refresh_button").performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(refreshCalled)
+            assertFalse(scanCalled)
+        }
+        composeRule.onNodeWithText("Fast · contacts only previously matched devices").assertExists()
+        composeRule.onNodeWithText("Slower · listens for new or changed local addresses")
+            .assertExists()
+    }
+
+    @Test
     fun scanningStateDisablesRepeatedScan() {
-        setInventoryContent(discovery = LanDiscoveryUiState.Scanning)
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            discovery = LanDiscoveryUiState.Scanning,
+        )
 
         composeRule.onNodeWithText("Listening for Tuya devices").assertExists()
         composeRule.onNodeWithTag("lan_scan_button").assertIsNotEnabled()
+        composeRule.onNodeWithTag("lan_quick_refresh_button").assertIsNotEnabled()
+    }
+
+    @Test
+    fun settingsActionIsAvailableFromTheInventoryHeader() {
+        var settingsCalled = false
+        setInventoryContent(onOpenSettings = { settingsCalled = true })
+
+        composeRule.onNodeWithTag("open_settings_button").performClick()
+
+        composeRule.runOnIdle { assertTrue(settingsCalled) }
     }
 
     @Test
@@ -110,7 +145,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
 
         composeRule.onNodeWithTag("local_switch_1").assertIsNotEnabled().assertIsOn()
-        composeRule.onNodeWithText("Refresh local devices to enable control.").assertExists()
+        composeRule.onNodeWithText("Refresh status to enable control.").assertExists()
     }
 
     @Test
@@ -259,7 +294,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Unsupported locally").assertExists()
         composeRule.onNodeWithText("communicates through a Tuya gateway", substring = true)
             .assertExists()
-        composeRule.onNodeWithText("Refresh local devices to read", substring = true)
+        composeRule.onNodeWithText("Refresh status to read", substring = true)
             .assertDoesNotExist()
         composeRule.onNodeWithTag("local_switch_20").assertDoesNotExist()
     }
@@ -352,8 +387,10 @@ class InventoryScreenInstrumentedTest {
         discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
         control: LocalControlUiState = LocalControlUiState.Unavailable,
         isLanSnapshotCurrent: Boolean = true,
+        onRefreshKnownDevices: () -> Unit = {},
         onDiscoverLan: () -> Unit = {},
         onSetBooleanControl: (String, String, Boolean) -> Unit = { _, _, _ -> },
+        onOpenSettings: () -> Unit = {},
         onDelete: () -> Unit = {},
     ) {
         composeRule.setContent {
@@ -363,8 +400,10 @@ class InventoryScreenInstrumentedTest {
                     discovery = discovery,
                     control = control,
                     isLanSnapshotCurrent = isLanSnapshotCurrent,
+                    onRefreshKnownDevices = onRefreshKnownDevices,
                     onDiscoverLan = onDiscoverLan,
                     onSetBooleanControl = onSetBooleanControl,
+                    onOpenSettings = onOpenSettings,
                     onImportFromCloud = {},
                     onDeleteAllLocalData = onDelete,
                 )

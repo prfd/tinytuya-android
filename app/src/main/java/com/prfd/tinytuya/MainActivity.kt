@@ -8,8 +8,10 @@ import androidx.lifecycle.ViewModelProvider
 import com.prfd.tinytuya.data.lan.AndroidLanDiscoveryRadio
 import com.prfd.tinytuya.data.lan.AndroidLanNetworkResolver
 import com.prfd.tinytuya.data.lan.DefaultLanDiscoveryCoordinator
+import com.prfd.tinytuya.data.lan.DefaultKnownDeviceRefreshCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalControlCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalStatusCoordinator
+import com.prfd.tinytuya.data.local.AndroidAppSettingsStore
 import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.ui.app.AppRoute
@@ -18,10 +20,13 @@ import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 class MainActivity : ComponentActivity() {
+    private lateinit var appViewModel: AppViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
+        val settingsStore = AndroidAppSettingsStore(applicationContext)
         val gateway = ChaquopyTuyaPythonGateway(applicationContext)
         val networkResolver = AndroidLanNetworkResolver(applicationContext)
         val lanDiscoveryCoordinator = DefaultLanDiscoveryCoordinator(
@@ -39,14 +44,20 @@ class MainActivity : ComponentActivity() {
             catalogStore = catalogStore,
             networkResolver = networkResolver,
         )
-        val appViewModel = ViewModelProvider(
+        val knownDeviceRefreshCoordinator = DefaultKnownDeviceRefreshCoordinator(
+            networkResolver = networkResolver,
+            localStatusCoordinator = localStatusCoordinator,
+        )
+        appViewModel = ViewModelProvider(
             this,
             AppViewModel.factory(
-                catalogStore,
-                lanDiscoveryCoordinator,
-                localStatusCoordinator,
-                localControlCoordinator,
-                networkResolver,
+                catalogStore = catalogStore,
+                lanDiscoveryCoordinator = lanDiscoveryCoordinator,
+                localStatusCoordinator = localStatusCoordinator,
+                localControlCoordinator = localControlCoordinator,
+                lanNetworkObserver = networkResolver,
+                knownDeviceRefreshCoordinator = knownDeviceRefreshCoordinator,
+                settingsStore = settingsStore,
             ),
         )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(
@@ -61,5 +72,10 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appViewModel.onAppForegrounded()
     }
 }

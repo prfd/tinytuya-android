@@ -57,6 +57,7 @@ import com.prfd.tinytuya.data.lan.LocalDeviceProfile
 import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.lan.LocalSensorKind
+import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
@@ -72,8 +73,10 @@ fun InventoryScreen(
     discovery: LanDiscoveryUiState,
     control: LocalControlUiState,
     isLanSnapshotCurrent: Boolean = true,
+    onRefreshKnownDevices: () -> Unit,
     onDiscoverLan: () -> Unit,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
 ) {
@@ -114,7 +117,11 @@ fun InventoryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    InventoryHeader(catalog, currentDiscoveryAtEpochMillis)
+                    InventoryHeader(
+                        catalog = catalog,
+                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+                        onOpenSettings = onOpenSettings,
+                    )
                 }
                 item {
                     LocalSecurityCard(catalog)
@@ -124,6 +131,7 @@ fun InventoryScreen(
                         catalog = catalog,
                         currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
                         discovery = discovery,
+                        onRefreshKnownDevices = onRefreshKnownDevices,
                         onDiscoverLan = onDiscoverLan,
                         isControlBusy = control is LocalControlUiState.Sending,
                     )
@@ -214,6 +222,7 @@ fun InventoryScreen(
 private fun InventoryHeader(
     catalog: DeviceCatalog,
     currentDiscoveryAtEpochMillis: Long?,
+    onOpenSettings: () -> Unit,
 ) {
     val discoveredIds = remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
         catalog.lanDevices
@@ -233,7 +242,7 @@ private fun InventoryHeader(
                 }
             }
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("TinyTuya", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "LOCAL HOME",
@@ -242,6 +251,12 @@ private fun InventoryHeader(
                     letterSpacing = 1.7.sp,
                     color = MaterialTheme.colorScheme.primary,
                 )
+            }
+            TextButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.testTag("open_settings_button"),
+            ) {
+                Text("Settings")
             }
         }
         Spacer(Modifier.height(28.dp))
@@ -311,6 +326,7 @@ private fun LanDiscoveryCard(
     catalog: DeviceCatalog,
     currentDiscoveryAtEpochMillis: Long?,
     discovery: LanDiscoveryUiState,
+    onRefreshKnownDevices: () -> Unit,
     onDiscoverLan: () -> Unit,
     isControlBusy: Boolean,
 ) {
@@ -337,6 +353,8 @@ private fun LanDiscoveryCard(
     val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
     val isBusy = isScanning || isReadingStatus || isControlBusy
     val error = discovery as? LanDiscoveryUiState.Error
+    val canRefreshKnownDevices = currentDiscoveryAtEpochMillis != null &&
+        catalog.hasCurrentKnownStatusTargets()
 
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(
@@ -393,7 +411,7 @@ private fun LanDiscoveryCard(
                             currentDiscoveryAtEpochMillis == null && lastScan != null ->
                                 "The previous local snapshot is not verified on the active Wi-Fi."
                             lastStatusRead != null ->
-                                "Last local refresh $lastStatusRead. Discovery and status stayed on this Wi-Fi."
+                                "Last status refresh $lastStatusRead. Tuya Cloud was not contacted."
                             lastScan != null ->
                                 "Last scan $lastScan. Only local broadcasts were used."
                             else ->
@@ -417,17 +435,42 @@ private fun LanDiscoveryCard(
                     }
                 }
             }
+            if (canRefreshKnownDevices) {
+                Button(
+                    onClick = onRefreshKnownDevices,
+                    enabled = !isBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp)
+                        .height(50.dp)
+                        .testTag("lan_quick_refresh_button"),
+                ) {
+                    Text("Refresh status")
+                }
+                Text(
+                    text = "Fast · contacts only previously matched devices",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             OutlinedButton(
                 onClick = onDiscoverLan,
                 enabled = !isBusy,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp)
+                    .padding(top = if (canRefreshKnownDevices) 10.dp else 14.dp)
                     .height(50.dp)
                     .testTag("lan_scan_button"),
             ) {
-                Text(if (lastScan == null) "Scan & read status" else "Refresh local devices")
+                Text("Find devices")
             }
+            Text(
+                text = "Slower · listens for new or changed local addresses",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
     }
 }
@@ -653,7 +696,7 @@ private fun LocalStatusPanel(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 !isCurrentStatus -> Text(
-                    text = "Refresh local devices to read its current data points.",
+                    text = "Refresh status to read its current data points.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -1111,7 +1154,7 @@ private fun localControlSupportingText(
     appliesToControl: Boolean,
     requestedValue: Boolean?,
 ): String = when {
-    state is LocalControlUiState.Unavailable -> "Refresh local devices to enable control."
+    state is LocalControlUiState.Unavailable -> "Refresh status to enable control."
     appliesToControl && state is LocalControlUiState.Sending ->
         if (requestedValue == true) "Turning on and confirming…" else "Turning off and confirming…"
     appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
@@ -1257,6 +1300,7 @@ private fun DataControls(
 
 private fun lanErrorTitle(code: String): String = when (code) {
     "LAN_NETWORK_CHANGED" -> "Wi-Fi changed since refresh"
+    "LOCAL_REFRESH_DISCOVERY_REQUIRED" -> "Find devices again"
     "LAN_WIFI_UNAVAILABLE" -> "Connect to your device Wi-Fi"
     "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
     "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"
@@ -1402,8 +1446,10 @@ private fun InventoryPreview() {
             ),
             discovery = LanDiscoveryUiState.Idle,
             control = LocalControlUiState.Unavailable,
+            onRefreshKnownDevices = {},
             onDiscoverLan = {},
             onSetBooleanControl = { _, _, _ -> },
+            onOpenSettings = {},
             onImportFromCloud = {},
             onDeleteAllLocalData = {},
         )

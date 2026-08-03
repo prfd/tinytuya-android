@@ -46,7 +46,7 @@ class DefaultLocalControlCoordinator(
         if (currentNetwork != expectedNetwork) {
             throw controlError(
                 code = "LOCAL_CONTROL_NETWORK_CHANGED",
-                message = "Wi-Fi changed after the last refresh. Refresh local devices before controlling them.",
+                message = "Wi-Fi changed after the last refresh. Find devices again before controlling them.",
             )
         }
 
@@ -151,7 +151,7 @@ class DefaultLocalControlCoordinator(
 
     private fun refreshRequired() = controlError(
         code = "LOCAL_CONTROL_REFRESH_REQUIRED",
-        message = "Refresh local devices before controlling this device.",
+        message = "Refresh status before controlling this device.",
     )
 
     private fun unsupportedControl() = controlError(

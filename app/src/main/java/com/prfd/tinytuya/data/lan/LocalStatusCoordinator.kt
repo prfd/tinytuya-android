@@ -35,7 +35,7 @@ class DefaultLocalStatusCoordinator(
                 val lanDevice = currentLanById[cloudDevice.id] ?: return@mapNotNull null
                 val protocolVersion = lanDevice.protocolVersion
                     .ifBlank { cloudDevice.protocolVersion }
-                if (protocolVersion !in SUPPORTED_LOCAL_PROTOCOLS) return@mapNotNull null
+                if (!isSupportedLocalProtocol(protocolVersion)) return@mapNotNull null
                 LocalPollDevice(
                     id = cloudDevice.id,
                     ip = lanDevice.ip,
@@ -64,6 +64,10 @@ class DefaultLocalStatusCoordinator(
 
     private companion object {
         const val MAX_DEVICES_PER_REFRESH = 32
-        val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")
     }
 }
+
+internal fun isSupportedLocalProtocol(version: String): Boolean =
+    version in SUPPORTED_LOCAL_PROTOCOLS
+
+private val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")

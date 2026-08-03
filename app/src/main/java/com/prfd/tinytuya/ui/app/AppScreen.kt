@@ -1,5 +1,6 @@
 package com.prfd.tinytuya.ui.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,10 +25,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.onboarding.OnboardingRoute
 import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
+import com.prfd.tinytuya.ui.settings.SettingsScreen
 
 @Composable
 fun AppRoute(
@@ -43,6 +47,26 @@ fun AppRoute(
     onboardingViewModel: OnboardingViewModel,
 ) {
     val state by appViewModel.state.collectAsState()
+    val settingsState by appViewModel.settingsState.collectAsState()
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(state is AppUiState.Inventory) {
+        if (state !is AppUiState.Inventory) showSettings = false
+    }
+
+    BackHandler(enabled = showSettings) {
+        showSettings = false
+    }
+
+    if (showSettings && state is AppUiState.Inventory) {
+        SettingsScreen(
+            state = settingsState,
+            onRefreshWhenAppOpensChanged = appViewModel::setRefreshWhenAppOpens,
+            onDismissError = appViewModel::dismissSettingsError,
+            onBack = { showSettings = false },
+        )
+        return
+    }
 
     AnimatedContent(
         targetState = state,
@@ -64,8 +88,10 @@ fun AppRoute(
                 discovery = destination.discovery,
                 control = destination.control,
                 isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
+                onRefreshKnownDevices = appViewModel::refreshKnownDevices,
                 onDiscoverLan = appViewModel::discoverLan,
                 onSetBooleanControl = appViewModel::setBooleanControl,
+                onOpenSettings = { showSettings = true },
                 onImportFromCloud = {
                     onboardingViewModel.prepareForCloudSync(destination.catalog.region)
                     appViewModel.showOnboarding()

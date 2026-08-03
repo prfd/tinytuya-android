@@ -20,6 +20,7 @@ import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,7 +34,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun inventoryShowsReadinessWithoutRenderingLocalKey() {
         setInventoryContent()
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Office lamp").assertExists()
         composeRule.onNodeWithText("Key secured").assertExists()
@@ -44,7 +45,7 @@ class InventoryScreenInstrumentedTest {
     fun deletingDataRequiresExplicitConfirmation() {
         var deleteCalled = false
         setInventoryContent(onDelete = { deleteCalled = true })
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(5)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
 
         composeRule.onNodeWithText("Delete all local data").performClick()
         composeRule.onNodeWithText("Delete all local data?").assertExists()
@@ -74,14 +75,15 @@ class InventoryScreenInstrumentedTest {
             onDiscoverLan = { scanCalled = true },
         )
 
-        composeRule.onNodeWithTag("lan_quick_refresh_button").performClick()
+        composeRule.onNodeWithTag("inventory_refresh_button").performClick()
 
         composeRule.runOnIdle {
             assertTrue(refreshCalled)
             assertFalse(scanCalled)
         }
-        composeRule.onNodeWithText("Fast · contacts only previously matched devices").assertExists()
-        composeRule.onNodeWithText("Slower · listens for new or changed local addresses")
+        composeRule.onNodeWithTag("find_devices_card").assertExists()
+        composeRule.onNodeWithTag("device_inventory_header").assertExists()
+        composeRule.onNodeWithText("Discovery · listens locally for new or changed addresses")
             .assertExists()
     }
 
@@ -94,7 +96,33 @@ class InventoryScreenInstrumentedTest {
 
         composeRule.onNodeWithText("Listening for Tuya devices").assertExists()
         composeRule.onNodeWithTag("lan_scan_button").assertIsNotEnabled()
-        composeRule.onNodeWithTag("lan_quick_refresh_button").assertIsNotEnabled()
+        composeRule.onNodeWithTag("inventory_refresh_button").assertIsNotEnabled()
+    }
+
+    @Test
+    fun statusFailureBelongsToTheDeviceInventoryInsteadOfTheDiscoveryCard() {
+        setInventoryContent(
+            catalog = controlledCatalog(),
+            discovery = LanDiscoveryUiState.Error(
+                code = "LOCAL_POLL_FAILED",
+                message = "Local device status could not be read.",
+                phase = LocalRefreshPhase.STATUS,
+            ),
+        )
+
+        composeRule.onNodeWithTag("status_refresh_error").assertExists()
+        composeRule.onNodeWithText("Local status could not be read").assertExists()
+        composeRule.onNodeWithText("1 Tuya device found").assertExists()
+    }
+
+    @Test
+    fun encryptionHeadsUpIsTheFinalInventoryItem() {
+        setInventoryContent()
+
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(5)
+
+        composeRule.onNodeWithTag("local_security_card").assertExists()
+        composeRule.onNodeWithText("Encrypted on this device").assertExists()
     }
 
     @Test
@@ -118,7 +146,7 @@ class InventoryScreenInstrumentedTest {
             ),
         )
         setInventoryContent(catalog = catalog)
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(6)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(5)
 
         composeRule.onNodeWithText("Unlinked Tuya device").assertExists()
         composeRule.onNodeWithText("Cloud key unavailable").assertExists()
@@ -131,7 +159,7 @@ class InventoryScreenInstrumentedTest {
         val catalog = controlledCatalog()
 
         setInventoryContent(catalog = catalog)
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Power is on").assertExists()
         composeRule.onNodeWithText("Power").assertExists()
@@ -142,7 +170,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun localSwitchRequiresAnInProcessRefreshBeforeControl() {
         setInventoryContent(catalog = controlledCatalog())
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithTag("local_switch_1").assertIsNotEnabled().assertIsOn()
         composeRule.onNodeWithText("Refresh status to enable control.").assertExists()
@@ -161,7 +189,7 @@ class InventoryScreenInstrumentedTest {
         )
 
         composeRule.onNodeWithText("Wi-Fi changed since refresh").assertExists()
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
         composeRule.onNodeWithText("LAN scan pending").assertExists()
         composeRule.onNodeWithText("On local network").assertDoesNotExist()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
@@ -178,7 +206,7 @@ class InventoryScreenInstrumentedTest {
                 request = Triple(deviceId, dataPointId, value)
             },
         )
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithTag("local_switch_1").assertIsOn().performClick()
 
@@ -194,7 +222,7 @@ class InventoryScreenInstrumentedTest {
             catalog = controlledCatalog(),
             control = LocalControlUiState.Sending("office-lamp", "1", false),
         )
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithTag("local_switch_1").assertIsOn().assertIsNotEnabled()
         composeRule.onNodeWithText("Turning off and confirming…").assertExists()
@@ -225,7 +253,7 @@ class InventoryScreenInstrumentedTest {
                 message = "The device did not confirm its new state.",
             ),
         )
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Could not confirm the requested state").assertExists()
         composeRule.onNodeWithText("Refresh to verify", substring = true).assertExists()
@@ -242,7 +270,7 @@ class InventoryScreenInstrumentedTest {
                 request = Triple(deviceId, dataPointId, value)
             },
         )
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("3-gang switch", substring = true).assertExists()
         composeRule.onNodeWithText("2 of 3 switches on").assertExists()
@@ -259,7 +287,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun outletCardPrioritizesScaledElectricalMetricsAfterItsSwitch() {
         setInventoryContent(catalog = outletMetricsCatalog())
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Smart outlet", substring = true).assertExists()
         composeRule.onNodeWithText("Power draw").assertExists()
@@ -288,7 +316,7 @@ class InventoryScreenInstrumentedTest {
             )
         )
         setInventoryContent(catalog = catalog)
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Gateway child").assertExists()
         composeRule.onNodeWithText("Unsupported locally").assertExists()
@@ -310,7 +338,7 @@ class InventoryScreenInstrumentedTest {
             )
         )
         setInventoryContent(catalog = catalog, control = LocalControlUiState.Ready)
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Smart camera", substring = true).assertExists()
         composeRule.onNodeWithText("Camera controls disabled").assertExists()
@@ -324,7 +352,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun statusOnlyDeviceOffersBoundedDpsDetailsWithoutRenderingPrivatePayloads() {
         setInventoryContent(catalog = statusOnlyCatalog())
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Status only").assertExists()
         composeRule.onNodeWithText("Status-only profile").assertExists()
@@ -350,7 +378,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun climateSensorUsesAReadOnlyHeroWithScaledLocalReadings() {
         setInventoryContent(catalog = climateSensorCatalog())
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Temperature and humidity sensor", substring = true)
             .assertExists()
@@ -371,7 +399,7 @@ class InventoryScreenInstrumentedTest {
     @Test
     fun waterSensorShowsAnExplicitAlarmWithoutExposingAControl() {
         setInventoryContent(catalog = waterSensorCatalog())
-        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Water leak sensor", substring = true).assertExists()
         composeRule.onNodeWithText("Sensor readings").assertExists()

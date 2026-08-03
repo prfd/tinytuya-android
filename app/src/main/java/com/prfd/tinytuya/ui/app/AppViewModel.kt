@@ -95,7 +95,13 @@ sealed interface LanDiscoveryUiState {
     data class Error(
         val code: String,
         val message: String,
+        val phase: LocalRefreshPhase = LocalRefreshPhase.DISCOVERY,
     ) : LanDiscoveryUiState
+}
+
+enum class LocalRefreshPhase {
+    DISCOVERY,
+    STATUS,
 }
 
 data class AppSettingsUiState(
@@ -280,6 +286,7 @@ class AppViewModel(
                         LanDiscoveryUiState.Error(
                             code = error.code,
                             message = error.message ?: "Local device status could not be read.",
+                            phase = LocalRefreshPhase.STATUS,
                         )
                     } else {
                         changedNetworkError()
@@ -292,6 +299,7 @@ class AppViewModel(
                     discovery = LanDiscoveryUiState.Error(
                         code = error.code,
                         message = error.message ?: "Local device status could not be saved.",
+                        phase = LocalRefreshPhase.STATUS,
                     ),
                     control = LocalControlUiState.Unavailable,
                 )
@@ -300,6 +308,7 @@ class AppViewModel(
                     discovery = LanDiscoveryUiState.Error(
                         code = "LOCAL_POLL_FAILED",
                         message = "Local device status could not be read.",
+                        phase = LocalRefreshPhase.STATUS,
                     ),
                     control = LocalControlUiState.Unavailable,
                 )
@@ -385,6 +394,7 @@ class AppViewModel(
                     discovery = LanDiscoveryUiState.Error(
                         code = error.code,
                         message = error.message ?: "Local device status could not be read.",
+                        phase = LocalRefreshPhase.STATUS,
                     ),
                     control = LocalControlUiState.Ready,
                     isLanSnapshotCurrent = true,
@@ -407,8 +417,16 @@ class AppViewModel(
                     discovery = if (snapshotCurrent) {
                         LanDiscoveryUiState.Error(
                             code = error.code,
-                            message = error.message
-                                ?: "The discovery result could not be stored safely.",
+                            message = error.message ?: if (readingStatus) {
+                                "Local device status could not be saved."
+                            } else {
+                                "The discovery result could not be stored safely."
+                            },
+                            phase = if (readingStatus) {
+                                LocalRefreshPhase.STATUS
+                            } else {
+                                LocalRefreshPhase.DISCOVERY
+                            },
                         )
                     } else {
                         changedNetworkError()
@@ -446,6 +464,11 @@ class AppViewModel(
                                 "Local device status could not be read."
                             } else {
                                 "Local Tuya discovery could not be completed."
+                            },
+                            phase = if (readingStatus) {
+                                LocalRefreshPhase.STATUS
+                            } else {
+                                LocalRefreshPhase.DISCOVERY
                             },
                         )
                     } else {

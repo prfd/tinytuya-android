@@ -63,6 +63,7 @@ import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
@@ -119,31 +120,25 @@ fun InventoryScreen(
                 item {
                     InventoryHeader(
                         catalog = catalog,
-                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
                         onOpenSettings = onOpenSettings,
                     )
                 }
                 item {
-                    LocalSecurityCard(catalog)
-                }
-                item {
-                    LanDiscoveryCard(
+                    FindDevicesCard(
                         catalog = catalog,
                         currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
                         discovery = discovery,
-                        onRefreshKnownDevices = onRefreshKnownDevices,
                         onDiscoverLan = onDiscoverLan,
                         isControlBusy = control is LocalControlUiState.Sending,
                     )
                 }
                 item {
-                    Text(
-                        text = "DEVICE INVENTORY",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.5.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                    DeviceInventoryHeader(
+                        catalog = catalog,
+                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+                        discovery = discovery,
+                        isControlBusy = control is LocalControlUiState.Sending,
+                        onRefreshKnownDevices = onRefreshKnownDevices,
                     )
                 }
                 items(
@@ -185,6 +180,9 @@ fun InventoryScreen(
                         onDeleteAllLocalData = { confirmDelete = true },
                     )
                 }
+                item {
+                    LocalSecurityCard(catalog)
+                }
             }
         }
     }
@@ -221,15 +219,8 @@ fun InventoryScreen(
 @Composable
 private fun InventoryHeader(
     catalog: DeviceCatalog,
-    currentDiscoveryAtEpochMillis: Long?,
     onOpenSettings: () -> Unit,
 ) {
-    val discoveredIds = remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
-        catalog.lanDevices
-            .filter { it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
-            .mapTo(mutableSetOf()) { it.id }
-    }
-    val matchedCount = catalog.devices.count { it.id in discoveredIds }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
@@ -266,14 +257,10 @@ private fun InventoryHeader(
         )
         Text(
             text = when {
-                currentDiscoveryAtEpochMillis != null && catalog.devices.size == 1 ->
-                    "$matchedCount of 1 secured device was found on this Wi-Fi."
-                currentDiscoveryAtEpochMillis != null ->
-                    "$matchedCount of ${catalog.devices.size} secured devices were found on this Wi-Fi."
                 catalog.devices.size == 1 ->
-                    "1 device is secured and ready for local discovery."
+                    "1 secured device is stored for private local control."
                 else ->
-                    "${catalog.devices.size} devices are secured and ready for local discovery."
+                    "${catalog.devices.size} secured devices are stored for private local control."
             },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -292,7 +279,9 @@ private fun LocalSecurityCard(catalog: DeviceCatalog) {
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("local_security_card"),
     ) {
         Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -322,11 +311,10 @@ private fun LocalSecurityCard(catalog: DeviceCatalog) {
 }
 
 @Composable
-private fun LanDiscoveryCard(
+private fun FindDevicesCard(
     catalog: DeviceCatalog,
     currentDiscoveryAtEpochMillis: Long?,
     discovery: LanDiscoveryUiState,
-    onRefreshKnownDevices: () -> Unit,
     onDiscoverLan: () -> Unit,
     isControlBusy: Boolean,
 ) {
@@ -336,32 +324,23 @@ private fun LanDiscoveryCard(
                 .format(Date(timestamp))
         }
     }
-    val lastStatusRead = remember(catalog.lastLocalPollAtEpochMillis) {
-        catalog.lastLocalPollAtEpochMillis?.let { timestamp ->
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(timestamp))
-        }
-    }
     val currentDeviceCount = catalog.lanDevices.count {
         it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
-    }
-    val currentResponseCount = catalog.localStatus.count { status ->
-        status.state == LocalPollDeviceState.RESPONDED &&
-            status.polledAtEpochMillis >= (currentDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
     }
     val isScanning = discovery is LanDiscoveryUiState.Scanning
     val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
     val isBusy = isScanning || isReadingStatus || isControlBusy
-    val error = discovery as? LanDiscoveryUiState.Error
-    val canRefreshKnownDevices = currentDiscoveryAtEpochMillis != null &&
-        catalog.hasCurrentKnownStatusTargets()
+    val error = (discovery as? LanDiscoveryUiState.Error)
+        ?.takeIf { it.phase == LocalRefreshPhase.DISCOVERY }
 
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("find_devices_card"),
     ) {
         Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -371,7 +350,7 @@ private fun LanDiscoveryCard(
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 ) {
                     Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-                        if (isBusy) {
+                        if (isScanning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(22.dp),
                                 strokeWidth = 2.5.dp,
@@ -386,17 +365,14 @@ private fun LanDiscoveryCard(
                     Text(
                         text = when {
                             isScanning -> "Listening for Tuya devices"
-                            isReadingStatus -> "Reading local device status"
                             error != null -> lanErrorTitle(error.code)
                             currentDiscoveryAtEpochMillis == null && lastScan != null ->
-                                "Refresh on this Wi-Fi"
-                            lastStatusRead != null && currentDeviceCount == 1 ->
-                                "1 device found · $currentResponseCount answered"
-                            lastStatusRead != null ->
-                                "$currentDeviceCount devices found · $currentResponseCount answered"
+                                "Find devices on this Wi-Fi"
+                            lastScan != null && currentDeviceCount == 0 ->
+                                "No devices found in the last search"
                             lastScan != null && currentDeviceCount == 1 ->
-                                "1 device heard on the LAN"
-                            lastScan != null -> "$currentDeviceCount devices heard on the LAN"
+                                "1 Tuya device found"
+                            lastScan != null -> "$currentDeviceCount Tuya devices found"
                             else -> "Find devices on this Wi-Fi"
                         },
                         style = MaterialTheme.typography.titleMedium,
@@ -405,15 +381,11 @@ private fun LanDiscoveryCard(
                         text = when {
                             isScanning ->
                                 "Listening on UDP 6666, 6667, and 7000 for up to twelve seconds."
-                            isReadingStatus ->
-                                "Connecting directly over TCP 6668. Tuya Cloud is not contacted."
                             error != null -> error.message
                             currentDiscoveryAtEpochMillis == null && lastScan != null ->
                                 "The previous local snapshot is not verified on the active Wi-Fi."
-                            lastStatusRead != null ->
-                                "Last status refresh $lastStatusRead. Tuya Cloud was not contacted."
                             lastScan != null ->
-                                "Last scan $lastScan. Only local broadcasts were used."
+                                "Last searched $lastScan. Search again after a device or Wi-Fi address changes."
                             else ->
                                 "Match the encrypted cloud inventory to devices broadcasting on the phone's current Wi-Fi."
                         },
@@ -435,42 +407,149 @@ private fun LanDiscoveryCard(
                     }
                 }
             }
-            if (canRefreshKnownDevices) {
-                Button(
-                    onClick = onRefreshKnownDevices,
-                    enabled = !isBusy,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 14.dp)
-                        .height(50.dp)
-                        .testTag("lan_quick_refresh_button"),
-                ) {
-                    Text("Refresh status")
-                }
-                Text(
-                    text = "Fast · contacts only previously matched devices",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
             OutlinedButton(
                 onClick = onDiscoverLan,
                 enabled = !isBusy,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = if (canRefreshKnownDevices) 10.dp else 14.dp)
+                    .padding(top = 14.dp)
                     .height(50.dp)
                     .testTag("lan_scan_button"),
             ) {
                 Text("Find devices")
             }
             Text(
-                text = "Slower · listens for new or changed local addresses",
+                text = "Discovery · listens locally for new or changed addresses",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun DeviceInventoryHeader(
+    catalog: DeviceCatalog,
+    currentDiscoveryAtEpochMillis: Long?,
+    discovery: LanDiscoveryUiState,
+    isControlBusy: Boolean,
+    onRefreshKnownDevices: () -> Unit,
+) {
+    val currentLanIds = remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
+        catalog.lanDevices
+            .asSequence()
+            .filter { record -> record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
+            .mapTo(mutableSetOf()) { record -> record.id }
+    }
+    val matchedCount = catalog.devices.count { device -> device.id in currentLanIds }
+    val currentResponseCount = catalog.localStatus.count { status ->
+        status.id in currentLanIds &&
+            status.state == LocalPollDeviceState.RESPONDED &&
+            status.polledAtEpochMillis >=
+            (currentDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+    }
+    val currentStatusReadAt = catalog.lastLocalPollAtEpochMillis?.takeIf { timestamp ->
+        currentDiscoveryAtEpochMillis != null && timestamp >= currentDiscoveryAtEpochMillis
+    }?.let { timestamp ->
+        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+            .format(Date(timestamp))
+    }
+    val canRefreshKnownDevices = currentDiscoveryAtEpochMillis != null &&
+        catalog.hasCurrentKnownStatusTargets()
+    val isScanning = discovery is LanDiscoveryUiState.Scanning
+    val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
+    val statusError = (discovery as? LanDiscoveryUiState.Error)
+        ?.takeIf { it.phase == LocalRefreshPhase.STATUS }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 2.dp)
+            .testTag("device_inventory_header"),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "DEVICE INVENTORY",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.5.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = when {
+                        isReadingStatus ->
+                            "Reading saved devices directly on this Wi-Fi…"
+                        currentDiscoveryAtEpochMillis == null ->
+                            "Find devices to match their current local addresses."
+                        matchedCount == 0 ->
+                            "No secured devices matched in the last search."
+                        currentStatusReadAt != null && matchedCount == 1 ->
+                            "$currentResponseCount of 1 device answered · $currentStatusReadAt"
+                        currentStatusReadAt != null ->
+                            "$currentResponseCount of $matchedCount devices answered · $currentStatusReadAt"
+                        matchedCount == 1 ->
+                            "1 device matched · Refresh to read its current status."
+                        else ->
+                            "$matchedCount devices matched · Refresh to read their current status."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            if (canRefreshKnownDevices) {
+                Spacer(Modifier.width(12.dp))
+                OutlinedButton(
+                    onClick = onRefreshKnownDevices,
+                    enabled = !isScanning && !isReadingStatus && !isControlBusy,
+                    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .height(42.dp)
+                        .testTag("inventory_refresh_button"),
+                ) {
+                    if (isReadingStatus) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (isReadingStatus) "Refreshing" else "Refresh status")
+                }
+            }
+        }
+        if (statusError != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .testTag("status_refresh_error"),
+            ) {
+                Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
+                    Text(
+                        text = lanErrorTitle(statusError.code),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        text = statusError.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    Text(
+                        text = "Reference · ${statusError.code}",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                }
+            }
         }
     }
 }

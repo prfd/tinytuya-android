@@ -185,6 +185,8 @@ Read [KnownDeviceRefreshCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data
 
 Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding and never-matched inventories; suppresses duplicate starts for 30 seconds; uses the quick path for a trustworthy snapshot; and uses full discovery only when the prior network or address generation cannot be trusted. Neither path calls Tuya Cloud. There is no timer or background service.
 
+`LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`.
+
 Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons are that the record belongs to an older discovery generation, the device has no key, its protocol version is unsupported, or its access kind blocks direct local access.
 
 ## Pass 4: capability policy and device cards
@@ -218,13 +220,14 @@ Then read the presentation pipeline:
 For `InventoryScreen.kt`, search for and read only these functions at first:
 
 1. `InventoryScreen`
-2. `LanDiscoveryCard`
-3. `InventoryDeviceCard`
-4. `LocalStatusPanel`
-5. `LocalSensorSummary`
-6. `LocalAccessNotice`
-7. `LocalDpsInspector`
-8. `LocalBooleanControls`
+2. `FindDevicesCard`
+3. `DeviceInventoryHeader`
+4. `InventoryDeviceCard`
+5. `LocalStatusPanel`
+6. `LocalSensorSummary`
+7. `LocalAccessNotice`
+8. `LocalDpsInspector`
+9. `LocalBooleanControls`
 
 The remaining functions are mostly reusable rows, labels, badges, previews, and styling.
 

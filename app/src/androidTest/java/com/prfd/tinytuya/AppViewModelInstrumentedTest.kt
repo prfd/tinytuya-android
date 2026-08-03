@@ -27,6 +27,7 @@ import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -532,6 +533,37 @@ class AppViewModelInstrumentedTest {
         }
         assertEquals(1, knownCoordinator.callCount)
         assertEquals(1, discoveryCoordinator.callCount)
+    }
+
+    @Test
+    fun quickRefreshFailureIsOwnedByTheInventoryStatusAction() = runBlocking {
+        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(
+            error = LocalStatusException(
+                code = "LOCAL_POLL_FAILED",
+                message = "Local device status could not be read.",
+            )
+        )
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(discoveredCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            lanNetworkObserver = observer,
+            knownDeviceRefreshCoordinator = knownCoordinator,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+
+        viewModel.refreshKnownDevices()
+
+        val error = withTimeout(5_000) {
+            val inventory = viewModel.state.first {
+                it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Error
+            } as AppUiState.Inventory
+            inventory.discovery as LanDiscoveryUiState.Error
+        }
+        assertEquals(LocalRefreshPhase.STATUS, error.phase)
+        assertEquals(1, knownCoordinator.callCount)
     }
 
     @Test

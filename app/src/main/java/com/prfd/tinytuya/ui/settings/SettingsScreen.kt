@@ -36,12 +36,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppSettingsUiState
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
+import com.prfd.tinytuya.ui.app.TinyTuyaHealthUiState
 import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
@@ -91,6 +93,11 @@ fun SettingsScreen(
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
+                }
+                item {
+                    TinyTuyaHealthCard(
+                        state = state.tinyTuyaHealth,
+                    )
                 }
                 item {
                     CloudAccountCard(
@@ -326,6 +333,154 @@ private fun CloudAccountCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TinyTuyaHealthCard(
+    state: TinyTuyaHealthUiState,
+) {
+    val isHealthy = state is TinyTuyaHealthUiState.Ready &&
+        state.health.crypto.gcmAvailable &&
+        state.health.crypto.selfTestPassed
+    val status = when (state) {
+        TinyTuyaHealthUiState.Loading -> "CHECKING"
+        TinyTuyaHealthUiState.Unavailable -> "UNAVAILABLE"
+        is TinyTuyaHealthUiState.Ready -> if (isHealthy) "READY" else "CHECK REQUIRED"
+        is TinyTuyaHealthUiState.Error -> "CHECK REQUIRED"
+    }
+    val statusColor = when (state) {
+        TinyTuyaHealthUiState.Loading -> MaterialTheme.colorScheme.onSurfaceVariant
+        TinyTuyaHealthUiState.Unavailable,
+        is TinyTuyaHealthUiState.Error -> MaterialTheme.colorScheme.error
+        is TinyTuyaHealthUiState.Ready -> if (isHealthy) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.error
+        }
+    }
+
+    OutlinedCard(
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("tinytuya_health_card"),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "TinyTuya Info",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = statusColor,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+                if (state is TinyTuyaHealthUiState.Loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(22.dp),
+                        strokeWidth = 2.5.dp,
+                    )
+                }
+            }
+
+            when (state) {
+                TinyTuyaHealthUiState.Loading -> {
+                    Text(
+                        text = "Checking the bundled Python runtime and crypto self-test…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 13.dp),
+                    )
+                }
+
+                TinyTuyaHealthUiState.Unavailable -> {
+                    Text(
+                        text = "This app build did not provide the embedded runtime check.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 13.dp),
+                    )
+                }
+
+                is TinyTuyaHealthUiState.Error -> {
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 13.dp),
+                    )
+                    Text(
+                        text = "Reference · ${state.code}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 7.dp),
+                    )
+                }
+
+                is TinyTuyaHealthUiState.Ready -> {
+                    HealthValueRow("Embedded Python", state.health.pythonVersion)
+                    HealthValueRow("TinyTuya", state.health.tinytuyaVersion)
+                    HealthValueRow(
+                        label = "Crypto",
+                        value = "${state.health.crypto.library} ${state.health.crypto.version}",
+                    )
+                    HealthValueRow(
+                        label = "AES-GCM",
+                        value = if (state.health.crypto.gcmAvailable) "Available" else "Unavailable",
+                    )
+                    HealthValueRow(
+                        label = "AES self-test",
+                        value = if (state.health.crypto.selfTestPassed) "Passed" else "Failed",
+                    )
+                    HealthValueRow(
+                        label = "Protocols",
+                        value = state.health.supportedProtocols.joinToString(", "),
+                    )
+                    HealthValueRow(
+                        label = "Bridge contract",
+                        value = "v${state.health.contractVersion}",
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HealthValueRow(
+    label: String,
+    value: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 9.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value.ifBlank { "Unknown" },
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1.25f),
+        )
     }
 }
 

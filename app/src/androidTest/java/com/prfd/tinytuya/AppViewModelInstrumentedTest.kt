@@ -25,6 +25,9 @@ import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
+import com.prfd.tinytuya.data.python.PythonBridgeException
+import com.prfd.tinytuya.data.python.PythonCryptoHealth
+import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppUiState
@@ -33,6 +36,7 @@ import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
+import com.prfd.tinytuya.ui.app.TinyTuyaHealthUiState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -125,6 +129,76 @@ class AppViewModelInstrumentedTest {
         assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, account.summary.region)
         assertEquals("know••••t-id", account.summary.maskedClientId)
         assertTrue(!account.toString().contains("known-good-secret"))
+    }
+
+    @Test
+    fun openingTheHealthCheckPublishesEmbeddedTinyTuyaInfo() = runBlocking {
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            pythonHealthCheck = {
+                PythonRuntimeHealth(
+                    contractVersion = 1,
+                    pythonVersion = "3.11.13",
+                    tinytuyaVersion = "1.20.0",
+                    crypto = PythonCryptoHealth(
+                        library = "cryptography",
+                        version = "45.0.0",
+                        gcmAvailable = true,
+                        selfTestPassed = true,
+                    ),
+                    supportedProtocols = listOf("3.1", "3.2", "3.3", "3.4", "3.5"),
+                )
+            },
+        )
+
+        assertTrue(viewModel.settingsState.value.tinyTuyaHealth is TinyTuyaHealthUiState.Loading)
+        viewModel.checkPythonHealth()
+
+        val healthState = withTimeout(5_000) {
+            viewModel.settingsState.first {
+                it.tinyTuyaHealth is TinyTuyaHealthUiState.Ready
+            }.tinyTuyaHealth
+        } as TinyTuyaHealthUiState.Ready
+
+        assertEquals("3.11.13", healthState.health.pythonVersion)
+        assertEquals("1.20.0", healthState.health.tinytuyaVersion)
+        assertTrue(healthState.health.crypto.gcmAvailable)
+        assertTrue(healthState.health.crypto.selfTestPassed)
+        assertEquals(listOf("3.1", "3.2", "3.3", "3.4", "3.5"), healthState.health.supportedProtocols)
+    }
+
+    @Test
+    fun embeddedTinyTuyaHealthFailureIsMappedToSafeUiState() = runBlocking {
+        val viewModel = AppViewModel(
+            catalogStore = FakeCatalogStore(sampleCatalog()),
+            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+            localStatusCoordinator = FakeLocalStatusCoordinator(),
+            localControlCoordinator = FakeLocalControlCoordinator(),
+            pythonHealthCheck = {
+                throw PythonBridgeException(
+                    code = "BRIDGE_HEALTH_FAILED",
+                    message = "The embedded TinyTuya runtime could not be initialized.",
+                )
+            },
+        )
+
+        viewModel.checkPythonHealth()
+
+        val healthState = withTimeout(5_000) {
+            viewModel.settingsState.first {
+                it.tinyTuyaHealth is TinyTuyaHealthUiState.Error
+            }.tinyTuyaHealth
+        } as TinyTuyaHealthUiState.Error
+
+        assertEquals("BRIDGE_HEALTH_FAILED", healthState.code)
+        assertEquals(
+            "The embedded TinyTuya runtime could not be initialized.",
+            healthState.message,
+        )
+        assertTrue(!healthState.toString().contains("client-secret"))
     }
 
     @Test

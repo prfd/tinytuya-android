@@ -56,6 +56,10 @@ fun AppRoute(
         if (state !is AppUiState.Inventory) showSettings = false
     }
 
+    LaunchedEffect(showSettings) {
+        if (showSettings) appViewModel.checkPythonHealth()
+    }
+
     BackHandler(enabled = showSettings) {
         showSettings = false
     }

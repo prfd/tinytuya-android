@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
                 knownDeviceRefreshCoordinator = knownDeviceRefreshCoordinator,
                 settingsStore = settingsStore,
                 credentialStore = credentialStore,
+                pythonHealthCheck = { gateway.health() },
             ),
         )[AppViewModel::class.java]
         val onboardingViewModel = ViewModelProvider(

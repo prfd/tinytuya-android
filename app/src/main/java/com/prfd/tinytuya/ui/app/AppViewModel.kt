@@ -28,6 +28,8 @@ import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.python.PythonBridgeException
+import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -115,7 +117,23 @@ data class AppSettingsUiState(
     val errorCode: String? = null,
     val errorMessage: String? = null,
     val cloudAccount: CloudAccountUiState = CloudAccountUiState.Loading,
+    val tinyTuyaHealth: TinyTuyaHealthUiState = TinyTuyaHealthUiState.Loading,
 )
+
+sealed interface TinyTuyaHealthUiState {
+    data object Loading : TinyTuyaHealthUiState
+
+    data object Unavailable : TinyTuyaHealthUiState
+
+    data class Ready(
+        val health: PythonRuntimeHealth,
+    ) : TinyTuyaHealthUiState
+
+    data class Error(
+        val code: String,
+        val message: String,
+    ) : TinyTuyaHealthUiState
+}
 
 sealed interface CloudAccountUiState {
     data object Loading : CloudAccountUiState
@@ -143,6 +161,7 @@ class AppViewModel(
     private val settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
     private val elapsedRealtimeMillis: () -> Long = SystemClock::elapsedRealtime,
     private val credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
+    private val pythonHealthCheck: (suspend () -> PythonRuntimeHealth)? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -155,6 +174,7 @@ class AppViewModel(
     private var foregroundRefreshPending = false
     private var lastLocalRefreshStartedAtMillis: Long? = null
     private var cloudAccountOperationVersion = 0L
+    private var pythonHealthOperationVersion = 0L
 
     init {
         observeLanNetwork()
@@ -201,6 +221,48 @@ class AppViewModel(
     fun onAppForegrounded() {
         foregroundRefreshPending = true
         maybeStartForegroundRefresh()
+    }
+
+    fun checkPythonHealth() {
+        val healthCheck = pythonHealthCheck
+        if (healthCheck == null) {
+            mutableSettingsState.value = mutableSettingsState.value.copy(
+                tinyTuyaHealth = TinyTuyaHealthUiState.Unavailable,
+            )
+            return
+        }
+
+        val operationVersion = ++pythonHealthOperationVersion
+        mutableSettingsState.value = mutableSettingsState.value.copy(
+            tinyTuyaHealth = TinyTuyaHealthUiState.Loading,
+        )
+        viewModelScope.launch {
+            try {
+                val health = healthCheck()
+                if (operationVersion != pythonHealthOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    tinyTuyaHealth = TinyTuyaHealthUiState.Ready(health),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: PythonBridgeException) {
+                if (operationVersion != pythonHealthOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    tinyTuyaHealth = TinyTuyaHealthUiState.Error(
+                        code = error.code,
+                        message = error.message ?: "The embedded TinyTuya runtime could not be initialized.",
+                    ),
+                )
+            } catch (_: Exception) {
+                if (operationVersion != pythonHealthOperationVersion) return@launch
+                mutableSettingsState.value = mutableSettingsState.value.copy(
+                    tinyTuyaHealth = TinyTuyaHealthUiState.Error(
+                        code = "BRIDGE_HEALTH_FAILED",
+                        message = "The embedded TinyTuya runtime could not be initialized.",
+                    ),
+                )
+            }
+        }
     }
 
     fun setRefreshWhenAppOpens(enabled: Boolean) {
@@ -993,6 +1055,7 @@ class AppViewModel(
                 UnavailableKnownDeviceRefreshCoordinator,
             settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
             credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
+            pythonHealthCheck: (suspend () -> PythonRuntimeHealth)? = null,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -1007,6 +1070,7 @@ class AppViewModel(
                         knownDeviceRefreshCoordinator,
                         settingsStore,
                         credentialStore = credentialStore,
+                        pythonHealthCheck = pythonHealthCheck,
                     ) as T
                 }
             }

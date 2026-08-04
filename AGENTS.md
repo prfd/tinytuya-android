@@ -8,7 +8,7 @@ These instructions apply to the entire repository.
 - Run Gradle from the repository root with:
 
   ```bash
-  /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat <tasks>
+  /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat <tasks> -q --warning-mode=none --console=plain
   ```
 
 - Use the Windows SDK `adb.exe` at `/mnt/c/Users/paulo/AppData/Local/Android/Sdk/platform-tools/adb.exe`. If it moves, derive its WSL path from `sdk.dir` in untracked `local.properties`.
@@ -29,7 +29,7 @@ These instructions apply to the entire repository.
 - Run relevant checks through Windows Gradle. For substantial changes, normally run:
 
   ```bash
-  /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat testDebugUnitTest connectedDebugAndroidTest lint assembleDebug installDebug
+  /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat testDebugUnitTest connectedDebugAndroidTest lint assembleDebug installDebug -q --warning-mode=none --console=plain
   ```
 
 - Assume the device is connected, but do not claim a test, physical-device check, or real-Tuya validation unless it actually ran. Report unavailable accounts, networks, or hardware clearly.

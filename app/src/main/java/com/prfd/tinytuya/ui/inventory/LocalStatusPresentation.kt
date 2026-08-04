@@ -42,6 +42,7 @@ internal fun presentLocalDataPoints(
         code == "switch" || code == "switch_led" || code.startsWith("switch_")
     }
     return candidates
+        .filter { candidate -> isCardHighlight(candidate.code) }
         .sortedWith(
             compareBy<PresentationCandidate> { dataPointPriority(it.code) }
                 .thenBy { it.dataPoint.id.toIntOrNull() ?: Int.MAX_VALUE }
@@ -80,7 +81,6 @@ internal fun inspectLocalDataPoints(
             compareBy<LocalDataPoint> { it.id.toIntOrNull() ?: Int.MAX_VALUE }
                 .thenBy { it.id }
         )
-        .take(MAX_INSPECTED_DATA_POINTS)
         .map { dataPoint ->
             val definition = mapping?.optJSONObject(dataPoint.id)
             InspectedDataPoint(
@@ -120,8 +120,8 @@ private fun dataPointValue(
     definition: JSONObject?,
     isPower: Boolean,
 ): String {
-    if (code.startsWith("countdown_")) {
-        formatCountdown(dataPoint.value)?.let { return it }
+    if (code in PERCENTAGE_CODES) {
+        formatMappedPercentage(dataPoint.value, definition)?.let { return it }
     }
     return when (dataPoint.kind) {
         LocalDataPointKind.BOOLEAN -> when {
@@ -145,6 +145,11 @@ private fun dataPointValue(
         }
         LocalDataPointKind.STRING -> when {
             dataPoint.value.isBlank() -> "Empty"
+            code == "work_mode" -> mappedEnumValue(
+                definition = definition,
+                value = dataPoint.value,
+                maximumLength = MAX_PRESENTED_VALUE_LENGTH,
+            )?.toReadableLabel() ?: "Unknown mode"
             else -> mappedEnumValue(
                 definition = definition,
                 value = dataPoint.value,
@@ -180,14 +185,7 @@ private fun inspectionValue(
             value.length <= MAX_INSPECTED_VALUE_LENGTH && NUMERIC_WIRE_VALUE.matches(value)
         }
         ?: "Invalid numeric value hidden"
-    LocalDataPointKind.STRING -> when {
-        dataPoint.value.isBlank() -> "Empty"
-        else -> mappedEnumValue(
-            definition = definition,
-            value = dataPoint.value,
-            maximumLength = MAX_INSPECTED_VALUE_LENGTH,
-        ) ?: "Text value hidden"
-    }
+    LocalDataPointKind.STRING -> inspectedTextValue(dataPoint.value, definition)
     LocalDataPointKind.JSON -> "Structured value hidden"
     LocalDataPointKind.NULL -> "No value"
 }
@@ -210,18 +208,54 @@ private fun mappedEnumValue(
     }
 }
 
+private fun inspectedTextValue(value: String, definition: JSONObject?): String {
+    if (value.isBlank()) return "Empty"
+    val code = definition.safeMappingCode() ?: return "Unmapped text hidden"
+    val type = definition?.optString("type").orEmpty()
+    if (
+        type.equals("Raw", ignoreCase = true) ||
+        code.containsSensitiveTerm() ||
+        value.length > MAX_INSPECTED_TEXT_LENGTH ||
+        value.any { character -> character.isISOControl() }
+    ) {
+        return "Sensitive or invalid text hidden"
+    }
+    return value
+}
+
+private fun String.containsSensitiveTerm(): Boolean =
+    split('_').any { segment -> segment in SENSITIVE_CODE_SEGMENTS }
+
+private fun isCardHighlight(code: String): Boolean =
+    code in CARD_HIGHLIGHT_CODES
+
+private fun formatMappedPercentage(rawValue: String, definition: JSONObject?): String? {
+    val value = rawValue.toBigDecimalOrNull() ?: return null
+    val values = definition.mappingValues()
+    val minimum = values?.optString("min")?.toBigDecimalOrNull()
+    val maximum = values?.optString("max")?.toBigDecimalOrNull()
+    val normalized = if (minimum != null && maximum != null && maximum > minimum) {
+        value.subtract(minimum)
+            .multiply(BigDecimal(100))
+            .divide(maximum.subtract(minimum), 0, java.math.RoundingMode.HALF_UP)
+    } else {
+        value
+    }
+    return normalized
+        .coerceIn(BigDecimal.ZERO, BigDecimal(100))
+        .stripTrailingZeros()
+        .toPlainString() + "%"
+}
+
 private fun standardDataPointLabel(code: String): String? = when {
     code == "cur_power" -> "Power draw"
     code == "cur_voltage" -> "Voltage"
     code == "cur_current" -> "Current"
     code == "add_ele" -> "Energy"
-    code == "relay_status" -> "Power-on state"
-    code == "child_lock" -> "Child lock"
-    code == "switch_backlight" -> "Indicator"
-    code.startsWith("countdown_") -> code.removePrefix("countdown_")
-        .toIntOrNull()
-        ?.let { channel -> if (channel == 1) "Countdown" else "Switch $channel countdown" }
-        ?: "Countdown"
+    code == "bright_value" || code == "bright_value_v2" -> "Brightness"
+    code == "temp_value" || code == "temp_value_v2" -> "Color temperature"
+    code == "work_mode" -> "Mode"
+    code == "percent_state" || code == "percent_state_2" -> "Position"
     else -> null
 }
 
@@ -230,21 +264,11 @@ private fun dataPointPriority(code: String): Int = when {
     code == "cur_voltage" -> 1
     code == "cur_current" -> 2
     code == "add_ele" -> 3
-    code.startsWith("countdown_") -> 4
+    code == "bright_value" || code == "bright_value_v2" -> 4
+    code == "temp_value" || code == "temp_value_v2" -> 5
+    code == "work_mode" -> 6
+    code == "percent_state" || code == "percent_state_2" -> 7
     else -> 10
-}
-
-private fun formatCountdown(rawValue: String): String? {
-    val totalSeconds = rawValue.toLongOrNull()?.takeIf { it >= 0L } ?: return null
-    if (totalSeconds == 0L) return "Off"
-    val hours = totalSeconds / 3_600L
-    val minutes = totalSeconds % 3_600L / 60L
-    val seconds = totalSeconds % 60L
-    return buildList {
-        if (hours > 0L) add("${hours}h")
-        if (minutes > 0L) add("${minutes}m")
-        if (seconds > 0L && hours == 0L) add("${seconds}s")
-    }.joinToString(" ")
 }
 
 private fun JSONObject?.mappingValues(): JSONObject? {
@@ -277,10 +301,39 @@ private fun String.toReadableLabel(): String =
 private val SWITCH_CATEGORIES = setOf("kg", "cz", "pc")
 private val MAPPING_CODE = Regex("[a-z0-9_]+")
 private val NUMERIC_WIRE_VALUE = Regex("-?[0-9]+(?:\\.[0-9]+)?")
+private val CARD_HIGHLIGHT_CODES = setOf(
+    "cur_power",
+    "cur_voltage",
+    "cur_current",
+    "add_ele",
+    "bright_value",
+    "bright_value_v2",
+    "temp_value",
+    "temp_value_v2",
+    "work_mode",
+    "percent_state",
+    "percent_state_2",
+)
+private val PERCENTAGE_CODES = setOf(
+    "bright_value",
+    "bright_value_v2",
+    "temp_value",
+    "temp_value_v2",
+    "percent_state",
+    "percent_state_2",
+)
+private val SENSITIVE_CODE_SEGMENTS = setOf(
+    "auth",
+    "credential",
+    "key",
+    "password",
+    "secret",
+    "token",
+)
 private const val MAX_PRESENTED_DATA_POINTS = 6
 private const val MAX_PRESENTED_VALUE_LENGTH = 80
-private const val MAX_INSPECTED_DATA_POINTS = 16
 private const val MAX_INSPECTED_VALUE_LENGTH = 40
+private const val MAX_INSPECTED_TEXT_LENGTH = 120
 private const val MAX_MAPPING_CODE_LENGTH = 64
 
 private data class PresentationCandidate(

@@ -39,7 +39,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Office lamp").assertExists()
-        composeRule.onNodeWithText("Key secured").assertExists()
+        composeRule.onNodeWithText("Scan needed").assertExists()
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
     }
 
@@ -164,7 +164,8 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(catalog = catalog)
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-        composeRule.onNodeWithText("Power is on").assertExists()
+        composeRule.onNodeWithText("Power is on").assertDoesNotExist()
+        composeRule.onNodeWithText("Control").assertExists()
         composeRule.onNodeWithText("Power").assertExists()
         composeRule.onNodeWithTag("local_switch_1").assertIsOn()
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
@@ -193,8 +194,8 @@ class InventoryScreenInstrumentedTest {
 
         composeRule.onNodeWithText("Wi-Fi changed since refresh").assertExists()
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
-        composeRule.onNodeWithText("LAN scan pending").assertExists()
-        composeRule.onNodeWithText("On local network").assertDoesNotExist()
+        composeRule.onNodeWithText("Scan needed").assertExists()
+        composeRule.onNodeWithText("Local").assertDoesNotExist()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
         composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
     }
@@ -264,7 +265,7 @@ class InventoryScreenInstrumentedTest {
     }
 
     @Test
-    fun multiGangCardSummarizesAndControlsEachVerifiedChannel() {
+    fun multiGangCardUsesTheSwitchesAsStateAndControlsEachVerifiedChannel() {
         var request: Triple<String, String, Boolean>? = null
         setInventoryContent(
             catalog = multiGangCatalog(),
@@ -276,8 +277,8 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("3-gang switch", substring = true).assertExists()
-        composeRule.onNodeWithText("2 of 3 switches on").assertExists()
-        composeRule.onNodeWithText("3 LOCAL SWITCHES").assertExists()
+        composeRule.onNodeWithText("2 of 3 switches on").assertDoesNotExist()
+        composeRule.onNodeWithText("Controls").assertExists()
         composeRule.onNodeWithTag("local_switch_1").assertIsOn()
         composeRule.onNodeWithTag("local_switch_2").assertIsOff().performClick()
         composeRule.onNodeWithTag("local_switch_3").assertIsOn()
@@ -301,10 +302,32 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("421 mA").assertExists()
         composeRule.onNodeWithText("Energy").assertExists()
         composeRule.onNodeWithText("1.234 kWh").assertExists()
-        composeRule.onNodeWithText("Countdown").assertExists()
-        composeRule.onNodeWithText("Off").assertExists()
-        composeRule.onNodeWithText("Child lock").assertExists()
-        composeRule.onNodeWithText("Yes").assertExists()
+        composeRule.onNodeWithText("Countdown").assertDoesNotExist()
+        composeRule.onNodeWithText("Child lock").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("dps_inspector_toggle").performClick()
+
+        composeRule.onNodeWithText("countdown_1").assertExists()
+        composeRule.onNodeWithText("child_lock").assertExists()
+    }
+
+    @Test
+    fun lightCardHasItsOwnControlSectionAndCuratedLightDetails() {
+        setInventoryContent(catalog = lightCatalog(), control = LocalControlUiState.Ready)
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+
+        composeRule.onNodeWithText("Smart light", substring = true).assertExists()
+        composeRule.onNodeWithText("Light controls").assertExists()
+        composeRule.onNodeWithTag("local_switch_20").assertIsOn()
+        composeRule.onNodeWithText("Power is on").assertDoesNotExist()
+        composeRule.onNodeWithText("Light details").assertExists()
+        composeRule.onNodeWithText("Brightness").assertExists()
+        composeRule.onNodeWithText("73%").assertExists()
+        composeRule.onNodeWithText("Color temperature").assertExists()
+        composeRule.onNodeWithText("42%").assertExists()
+        composeRule.onNodeWithText("Mode").assertExists()
+        composeRule.onNodeWithText("White").assertExists()
+        composeRule.onNodeWithText("Colour data").assertDoesNotExist()
     }
 
     @Test
@@ -322,7 +345,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Gateway child").assertExists()
-        composeRule.onNodeWithText("Unsupported locally").assertExists()
+        composeRule.onNodeWithText("Unsupported").assertExists()
         composeRule.onNodeWithText("communicates through a Tuya gateway", substring = true)
             .assertExists()
         composeRule.onNodeWithText("Refresh status to read", substring = true)
@@ -357,7 +380,7 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(catalog = statusOnlyCatalog())
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-        composeRule.onNodeWithText("Status only").assertExists()
+        composeRule.onNodeWithText("Read only").assertExists()
         composeRule.onNodeWithText("Status-only profile").assertExists()
         composeRule.onNodeWithText("Local DPS stays read-only", substring = true).assertExists()
         composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
@@ -366,12 +389,13 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("dps_inspector_toggle").performClick()
 
         composeRule.onNodeWithTag("dps_inspector_panel").assertExists()
-        composeRule.onNodeWithText("LOCAL DPS · READ ONLY").assertExists()
+        composeRule.onNodeWithText("ALL LOCAL DEVICE DATA · READ ONLY").assertExists()
         composeRule.onNodeWithText("DP 1 · Boolean").assertExists()
         composeRule.onNodeWithText("DP 3 · Enum").assertExists()
         composeRule.onNodeWithText("DP 4 · Text").assertExists()
         composeRule.onNodeWithText("DP 5 · Structured").assertExists()
-        composeRule.onNodeWithText("Text and structured payloads stay hidden", substring = true)
+        composeRule.onNodeWithText("Ready for use").assertExists()
+        composeRule.onNodeWithText("potentially sensitive values stay hidden", substring = true)
             .assertExists()
         composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
         composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
@@ -386,10 +410,9 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Temperature and humidity sensor", substring = true)
             .assertExists()
         composeRule.onNodeWithText("Read only").assertExists()
-        composeRule.onNodeWithText("Read-only sensor").assertExists()
-        composeRule.onNodeWithText("never sends commands", substring = true).assertExists()
+        composeRule.onNodeWithText("Read only").assertExists()
         composeRule.onNodeWithTag("local_sensor_summary").assertExists()
-        composeRule.onNodeWithText("LIVE SENSOR").assertExists()
+        composeRule.onNodeWithText("Current reading").assertExists()
         composeRule.onNodeWithText("Temperature").assertExists()
         composeRule.onNodeWithText("21.7 °C").assertExists()
         composeRule.onNodeWithText("Humidity").assertExists()
@@ -405,7 +428,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithText("Water leak sensor", substring = true).assertExists()
-        composeRule.onNodeWithText("Sensor readings").assertExists()
+        composeRule.onNodeWithText("Current reading").assertExists()
         composeRule.onNodeWithText("Water").assertExists()
         composeRule.onNodeWithText("Leak detected").assertExists()
         composeRule.onNodeWithText("64 %").assertExists()
@@ -553,6 +576,35 @@ class InventoryScreenInstrumentedTest {
         ),
     )
 
+    private fun lightCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "dj",
+                productName = "Color bulb",
+                mappingJson = """
+                    {
+                      "20":{"code":"switch_led","type":"Boolean"},
+                      "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
+                      "22":{"code":"bright_value","type":"Integer","values":{"min":10,"max":1000,"scale":0}},
+                      "23":{"code":"temp_value","type":"Integer","values":{"min":0,"max":1000,"scale":0}},
+                      "24":{"code":"colour_data","type":"String"}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
+                    LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+                    LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
+                    LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
+                    LocalDataPoint("24", LocalDataPointKind.STRING, "00d003e803e8"),
+                )
+            )
+        ),
+    )
+
     private fun statusOnlyCatalog() = controlledCatalog().copy(
         devices = listOf(
             controlledCatalog().devices.single().copy(
@@ -564,7 +616,8 @@ class InventoryScreenInstrumentedTest {
                       "2":{"code":"sample_count","type":"Integer"},
                       "3":{"code":"mode","type":"Enum","values":"{\"range\":[\"auto\",\"manual\"]}"},
                       "4":{"code":"api_token","type":"String"},
-                      "5":{"code":"raw_blob","type":"Raw"}
+                      "5":{"code":"raw_blob","type":"Raw"},
+                      "6":{"code":"display_message","type":"String"}
                     }
                 """.trimIndent(),
             )
@@ -577,6 +630,7 @@ class InventoryScreenInstrumentedTest {
                     LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
                     LocalDataPoint("4", LocalDataPointKind.STRING, PRIVATE_DP_TEXT),
                     LocalDataPoint("2", LocalDataPointKind.INTEGER, "42"),
+                    LocalDataPoint("6", LocalDataPointKind.STRING, "Ready for use"),
                 )
             )
         ),

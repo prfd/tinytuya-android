@@ -1,6 +1,7 @@
 package com.prfd.tinytuya.ui.inventory
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -40,6 +42,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -548,7 +554,7 @@ private fun DeviceInventoryHeader(
 }
 
 @Composable
-private fun InventoryDeviceCard(
+internal fun InventoryDeviceCard(
     device: CloudImportedDevice,
     lastDiscoveryAtEpochMillis: Long?,
     lanRecord: LanDeviceRecord?,
@@ -588,65 +594,26 @@ private fun InventoryDeviceCard(
         sensorPresentation?.tone == LocalSensorTone.ALERT
     val isProfileActive = isCurrentStatus &&
         (profile.booleanControls.any { localControl -> localControl.currentValue } || hasActiveSensor)
-    val lanStatus = when {
-        lastDiscoveryAtEpochMillis == null -> "LAN scan pending" to false
-        isOnCurrentLan -> "On local network" to true
-        else -> "Not found in last scan" to false
-    }
-    val accessPill = when (profile.access) {
-        LocalDeviceAccessKind.DIRECT_CONTROL -> {
-            val hasLocalKey = !device.localKey.isBlank
-            (if (hasLocalKey) "Key secured" else "Local key missing") to hasLocalKey
-        }
-        LocalDeviceAccessKind.STATUS_ONLY -> {
-            val label = if (profile.kind == LocalDeviceProfileKind.SENSOR) {
-                "Read only"
-            } else {
-                "Status only"
-            }
-            label to false
-        }
-        LocalDeviceAccessKind.GATEWAY_CHILD,
-        LocalDeviceAccessKind.GATEWAY,
-        LocalDeviceAccessKind.CAMERA,
-        LocalDeviceAccessKind.LOCK -> "Unsupported locally" to false
+    val localAvailability = when {
+        lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
+        isOnCurrentLan -> LocalAvailability("Local", true)
+        else -> LocalAvailability("Not found", false)
     }
     OutlinedCard(
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
+        ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(17.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = when {
-                        sensorPresentation?.tone == LocalSensorTone.ALERT ->
-                            MaterialTheme.colorScheme.errorContainer
-                        sensorPresentation?.tone == LocalSensorTone.ACTIVE ->
-                            MaterialTheme.colorScheme.tertiaryContainer
-                        isProfileActive -> MaterialTheme.colorScheme.primaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    contentColor = when {
-                        sensorPresentation?.tone == LocalSensorTone.ALERT ->
-                            MaterialTheme.colorScheme.onErrorContainer
-                        sensorPresentation?.tone == LocalSensorTone.ACTIVE ->
-                            MaterialTheme.colorScheme.onTertiaryContainer
-                        isProfileActive -> MaterialTheme.colorScheme.onPrimaryContainer
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                ) {
-                    Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = deviceProfileBadge(profile),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.testTag("device_profile_badge"),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(13.dp))
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 17.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                DeviceProfileMark(
+                    profile = profile,
+                    tone = sensorPresentation?.tone,
+                    active = isProfileActive,
+                )
+                Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = device.name.ifBlank { "Unnamed Tuya device" },
@@ -662,18 +629,37 @@ private fun InventoryDeviceCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.width(12.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    LocalAvailabilityLabel(localAvailability)
+                    when {
+                        profile.access == LocalDeviceAccessKind.STATUS_ONLY -> Text(
+                            text = "Read only",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 5.dp),
+                        )
+                        profile.access == LocalDeviceAccessKind.DIRECT_CONTROL &&
+                            device.localKey.isBlank -> Text(
+                            text = "Key missing",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 5.dp),
+                        )
+                        profile.access != LocalDeviceAccessKind.DIRECT_CONTROL -> Text(
+                            text = "Unsupported",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 5.dp),
+                        )
+                    }
+                }
             }
-            Row(
-                modifier = Modifier.padding(top = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            if (
+                profile.access != LocalDeviceAccessKind.DIRECT_CONTROL &&
+                !(profile.access == LocalDeviceAccessKind.STATUS_ONLY &&
+                    profile.kind == LocalDeviceProfileKind.SENSOR)
             ) {
-                StatusPill(
-                    text = accessPill.first,
-                    positive = accessPill.second,
-                )
-                StatusPill(text = lanStatus.first, positive = lanStatus.second)
-            }
-            if (profile.access != LocalDeviceAccessKind.DIRECT_CONTROL) {
                 LocalAccessNotice(profile)
             }
             LocalStatusPanel(
@@ -734,32 +720,30 @@ private fun LocalStatusPanel(
             ?.let { currentStatus -> inspectLocalDataPoints(device, currentStatus.dataPoints) }
     }
 
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.medium,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 14.dp),
+            .padding(top = 16.dp),
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                text = when {
-                    isReadingStatus -> "Reading status…"
-                    !isCurrentStatus -> "Local status not read yet"
-                    status?.state == LocalPollDeviceState.RESPONDED ->
-                        localResponseTitle(booleanControls, sensorPresentation)
-                    status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
-                        "Could not confirm the requested state"
-                    status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
-                    else -> "Status could not be decoded"
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isCurrentStatus && status?.state == LocalPollDeviceState.RESPONDED) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.padding(top = 14.dp)) {
+            val statusTitle = when {
+                isReadingStatus -> "Reading status…"
+                !isCurrentStatus -> "Local status not read yet"
+                status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
+                    "Could not confirm the requested state"
+                status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
+                status?.state != LocalPollDeviceState.RESPONDED ->
+                    "Status could not be decoded"
+                else -> null
+            }
+            statusTitle?.let { title ->
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             when {
                 isReadingStatus -> Text(
                     text = "Using the encrypted local key directly on this Wi-Fi.",
@@ -777,56 +761,44 @@ private fun LocalStatusPanel(
                     sensorPresentation?.let { presentation ->
                         LocalSensorSummary(presentation)
                     }
+                    if (booleanControls.isNotEmpty()) {
+                        LocalDeviceControls(
+                            deviceId = device.id,
+                            profileKind = profile.kind,
+                            controls = booleanControls,
+                            controlState = control,
+                            onSetBooleanControl = onSetBooleanControl,
+                        )
+                    }
+                    if (presentedDataPoints.isNotEmpty()) {
+                        DeviceHighlights(
+                            title = when (profile.kind) {
+                                LocalDeviceProfileKind.LIGHT -> "Light details"
+                                LocalDeviceProfileKind.COVER -> "Cover position"
+                                else -> "At a glance"
+                            },
+                            dataPoints = presentedDataPoints,
+                        )
+                    }
                     if (
                         presentedDataPoints.isEmpty() &&
                         booleanControls.isEmpty() &&
                         sensorPresentation == null
                     ) {
                         Text(
-                            text = "The device answered but did not return readable data points.",
+                            text = "No everyday controls or readings are available for this " +
+                                "device profile.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
                         )
-                    } else {
-                        presentedDataPoints.forEach { dataPoint ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    text = dataPoint.label,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    text = dataPoint.value,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
                     }
                     updatedAt?.let {
                         Text(
-                            text = "Read locally $it · ${status.durationMillis} ms",
+                            text = "Updated locally · $it",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 10.dp),
-                        )
-                    }
-                    if (booleanControls.isNotEmpty()) {
-                        LocalBooleanControls(
-                            deviceId = device.id,
-                            controls = booleanControls,
-                            controlState = control,
-                            onSetBooleanControl = onSetBooleanControl,
+                            modifier = Modifier.padding(top = 14.dp),
                         )
                     }
                     inspection?.takeIf { it.totalCount > 0 }?.let { localInspection ->
@@ -839,6 +811,62 @@ private fun LocalStatusPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceHighlights(
+    title: String,
+    dataPoints: List<PresentedDataPoint>,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp)
+            .testTag("device_highlights"),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+        )
+        dataPoints.chunked(2).forEach { rowDataPoints ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rowDataPoints.forEach { dataPoint ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = MaterialTheme.shapes.small,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Text(
+                                text = dataPoint.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = dataPoint.value,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                }
+                if (rowDataPoints.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
         }
     }
@@ -877,10 +905,8 @@ private fun LocalSensorSummary(presentation: LocalSensorPresentation) {
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Text(
-                    text = "LIVE SENSOR",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.3.sp,
+                    text = "Current reading",
+                    style = MaterialTheme.typography.labelMedium,
                 )
                 Text(
                     text = presentation.primary.label,
@@ -1031,9 +1057,9 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
         ) {
             Text(
                 if (expanded) {
-                    "Hide DPS details"
+                    "Hide device data"
                 } else {
-                    "DPS details · ${inspection.totalCount}"
+                    "Show all device data · ${inspection.totalCount}"
                 }
             )
         }
@@ -1048,28 +1074,19 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
-                        text = "LOCAL DPS · READ ONLY",
+                        text = "ALL LOCAL DEVICE DATA · READ ONLY",
                         style = MaterialTheme.typography.labelLarge,
                         fontSize = 10.sp,
                         letterSpacing = 1.3.sp,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "Boolean, numeric, and declared enum values are shown. " +
-                            "Text and structured payloads stay hidden.",
+                        text = "Boolean, numeric, enum, and safe mapped text values are shown. " +
+                            "Structured and potentially sensitive values stay hidden.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )
-                    if (inspection.dataPoints.size < inspection.totalCount) {
-                        Text(
-                            text = "Showing the first ${inspection.dataPoints.size} of " +
-                                "${inspection.totalCount} data points.",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 7.dp),
-                        )
-                    }
                     inspection.dataPoints.forEach { dataPoint ->
                         Column(
                             modifier = Modifier
@@ -1113,9 +1130,55 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
 }
 
 @Composable
+private fun LocalDeviceControls(
+    deviceId: String,
+    profileKind: LocalDeviceProfileKind,
+    controls: List<LocalBooleanControl>,
+    controlState: LocalControlUiState,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+) {
+    when (profileKind) {
+        LocalDeviceProfileKind.LIGHT -> LocalLightControls(
+            deviceId = deviceId,
+            powerControls = controls,
+            controlState = controlState,
+            onSetBooleanControl = onSetBooleanControl,
+        )
+        else -> LocalBooleanControls(
+            deviceId = deviceId,
+            controls = controls,
+            sectionTitle = if (controls.size == 1) "Control" else "Controls",
+            controlState = controlState,
+            onSetBooleanControl = onSetBooleanControl,
+        )
+    }
+}
+
+/**
+ * Light controls have a dedicated composition boundary so brightness, temperature, work mode,
+ * and color can be added without turning the generic switch row into a device-specific panel.
+ */
+@Composable
+private fun LocalLightControls(
+    deviceId: String,
+    powerControls: List<LocalBooleanControl>,
+    controlState: LocalControlUiState,
+    onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+) {
+    LocalBooleanControls(
+        deviceId = deviceId,
+        controls = powerControls,
+        sectionTitle = "Light controls",
+        controlState = controlState,
+        onSetBooleanControl = onSetBooleanControl,
+    )
+}
+
+@Composable
 private fun LocalBooleanControls(
     deviceId: String,
     controls: List<LocalBooleanControl>,
+    sectionTitle: String,
     controlState: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
 ) {
@@ -1126,54 +1189,32 @@ private fun LocalBooleanControls(
             .padding(top = 16.dp),
     ) {
         Text(
-            text = if (controls.size == 1) "LOCAL SWITCH" else "${controls.size} LOCAL SWITCHES",
-            style = MaterialTheme.typography.labelLarge,
-            fontSize = 10.sp,
-            letterSpacing = 1.4.sp,
-            color = MaterialTheme.colorScheme.primary,
+            text = sectionTitle,
+            style = MaterialTheme.typography.titleSmall,
         )
         controls.forEach { localControl ->
             val appliesToControl = controlState.appliesTo(
                 deviceId = deviceId,
                 dataPointId = localControl.dataPointId,
             )
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                shape = MaterialTheme.shapes.small,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 7.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (localControl.currentValue) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant
-                        },
-                        modifier = Modifier.size(8.dp),
-                        content = {},
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = localControl.label,
+                        style = MaterialTheme.typography.titleMedium,
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
+                    localControlSupportingText(
+                        state = controlState,
+                        appliesToControl = appliesToControl,
+                        requestedValue = (controlState as? LocalControlUiState.Sending)?.value,
+                    )?.let { supportingText ->
                         Text(
-                            text = localControl.label,
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            text = localControlSupportingText(
-                                state = controlState,
-                                appliesToControl = appliesToControl,
-                                requestedValue =
-                                    (controlState as? LocalControlUiState.Sending)?.value,
-                            ),
+                            text = supportingText,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (
                                 appliesToControl && controlState is LocalControlUiState.Error
@@ -1185,29 +1226,29 @@ private fun LocalBooleanControls(
                             modifier = Modifier.padding(top = 2.dp),
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
-                    if (appliesToControl && isSending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .testTag("local_control_progress"),
-                            strokeWidth = 2.5.dp,
-                        )
-                        Spacer(Modifier.width(10.dp))
-                    }
-                    Switch(
-                        checked = localControl.currentValue,
-                        onCheckedChange = { requestedValue ->
-                            onSetBooleanControl(
-                                deviceId,
-                                localControl.dataPointId,
-                                requestedValue,
-                            )
-                        },
-                        enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
-                        modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
-                    )
                 }
+                Spacer(Modifier.width(10.dp))
+                if (appliesToControl && isSending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .testTag("local_control_progress"),
+                        strokeWidth = 2.5.dp,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                }
+                Switch(
+                    checked = localControl.currentValue,
+                    onCheckedChange = { requestedValue ->
+                        onSetBooleanControl(
+                            deviceId,
+                            localControl.dataPointId,
+                            requestedValue,
+                        )
+                    },
+                    enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
+                    modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
+                )
             }
         }
     }
@@ -1225,32 +1266,13 @@ private fun localControlSupportingText(
     state: LocalControlUiState,
     appliesToControl: Boolean,
     requestedValue: Boolean?,
-): String = when {
+): String? = when {
     state is LocalControlUiState.Unavailable -> "Refresh status to enable control."
     appliesToControl && state is LocalControlUiState.Sending ->
         if (requestedValue == true) "Turning on and confirming…" else "Turning off and confirming…"
     appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
     appliesToControl && state is LocalControlUiState.Error -> state.message
-    else -> "Local Wi-Fi · confirmed after every change."
-}
-
-private fun localResponseTitle(
-    controls: List<LocalBooleanControl>,
-    sensorPresentation: LocalSensorPresentation?,
-): String {
-    if (sensorPresentation != null) return "Sensor readings"
-    if (controls.isEmpty()) return "Last local response"
-    if (controls.size == 1) return if (controls.single().currentValue) {
-        "Power is on"
-    } else {
-        "Power is off"
-    }
-    val onCount = controls.count { control -> control.currentValue }
-    return when (onCount) {
-        0 -> "All ${controls.size} switches are off"
-        controls.size -> "All ${controls.size} switches are on"
-        else -> "$onCount of ${controls.size} switches on"
-    }
+    else -> null
 }
 
 @Composable
@@ -1323,6 +1345,108 @@ private fun StatusPill(text: String, positive: Boolean) {
         )
     }
 }
+
+@Composable
+private fun DeviceProfileMark(
+    profile: LocalDeviceProfile,
+    tone: LocalSensorTone?,
+    active: Boolean,
+) {
+    val containerColor = when {
+        tone == LocalSensorTone.ALERT -> MaterialTheme.colorScheme.errorContainer
+        tone == LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
+        active -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when {
+        tone == LocalSensorTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
+        tone == LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
+        active -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = containerColor,
+        contentColor = contentColor,
+        modifier = Modifier.testTag("device_profile_badge"),
+    ) {
+        Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+            if (
+                (profile.access == LocalDeviceAccessKind.DIRECT_CONTROL ||
+                    profile.access == LocalDeviceAccessKind.STATUS_ONLY) &&
+                profile.kind == LocalDeviceProfileKind.SWITCH_OR_OUTLET
+            ) {
+                SwitchProfileIcon(
+                    color = contentColor,
+                    modifier = Modifier.size(27.dp),
+                )
+            } else {
+                Text(
+                    text = deviceProfileSymbol(profile),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchProfileIcon(
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val strokeWidth = size.minDimension * 0.09f
+        drawArc(
+            color = color,
+            startAngle = -40f,
+            sweepAngle = 260f,
+            useCenter = false,
+            topLeft = Offset(size.width * 0.12f, size.height * 0.18f),
+            size = Size(size.width * 0.76f, size.height * 0.76f),
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+        )
+        drawLine(
+            color = color,
+            start = Offset(size.width * 0.5f, size.height * 0.08f),
+            end = Offset(size.width * 0.5f, size.height * 0.48f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+    }
+}
+
+@Composable
+private fun LocalAvailabilityLabel(availability: LocalAvailability) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            shape = CircleShape,
+            color = if (availability.isLocal) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.outline
+            },
+            modifier = Modifier.size(7.dp),
+            content = {},
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = availability.label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (availability.isLocal) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+private data class LocalAvailability(
+    val label: String,
+    val isLocal: Boolean,
+)
 
 @Composable
 private fun DataControls(
@@ -1435,18 +1559,18 @@ private fun deviceProfileLabel(
     }
 }
 
-private fun deviceProfileBadge(profile: LocalDeviceProfile): String = when (profile.access) {
-    LocalDeviceAccessKind.GATEWAY_CHILD -> "CH"
-    LocalDeviceAccessKind.GATEWAY -> "GW"
-    LocalDeviceAccessKind.CAMERA -> "CAM"
-    LocalDeviceAccessKind.LOCK -> "LK"
+private fun deviceProfileSymbol(profile: LocalDeviceProfile): String = when (profile.access) {
+    LocalDeviceAccessKind.GATEWAY_CHILD -> "⌁"
+    LocalDeviceAccessKind.GATEWAY -> "⌂"
+    LocalDeviceAccessKind.CAMERA -> "◉"
+    LocalDeviceAccessKind.LOCK -> "◇"
     LocalDeviceAccessKind.DIRECT_CONTROL,
     LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
-        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "SW"
-        LocalDeviceProfileKind.LIGHT -> "LT"
-        LocalDeviceProfileKind.COVER -> "CV"
-        LocalDeviceProfileKind.SENSOR -> sensorProfileBadge(profile.sensorKind)
-        LocalDeviceProfileKind.GENERIC -> "TU"
+        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "⏻"
+        LocalDeviceProfileKind.LIGHT -> "✦"
+        LocalDeviceProfileKind.COVER -> "↕"
+        LocalDeviceProfileKind.SENSOR -> sensorProfileSymbol(profile.sensorKind)
+        LocalDeviceProfileKind.GENERIC -> "••"
     }
 }
 
@@ -1461,15 +1585,15 @@ private fun sensorProfileLabel(sensorKind: LocalSensorKind?): String = when (sen
     null -> "Tuya sensor"
 }
 
-private fun sensorProfileBadge(sensorKind: LocalSensorKind?): String = when (sensorKind) {
-    LocalSensorKind.CLIMATE -> "CL"
-    LocalSensorKind.CONTACT -> "CT"
-    LocalSensorKind.MOTION -> "MV"
-    LocalSensorKind.PRESENCE -> "PR"
-    LocalSensorKind.WATER_LEAK -> "WL"
-    LocalSensorKind.SMOKE -> "SM"
-    LocalSensorKind.GAS -> "GS"
-    null -> "SN"
+private fun sensorProfileSymbol(sensorKind: LocalSensorKind?): String = when (sensorKind) {
+    LocalSensorKind.CLIMATE -> "°"
+    LocalSensorKind.CONTACT -> "▯"
+    LocalSensorKind.MOTION -> "⌁"
+    LocalSensorKind.PRESENCE -> "◎"
+    LocalSensorKind.WATER_LEAK -> "≈"
+    LocalSensorKind.SMOKE -> "≋"
+    LocalSensorKind.GAS -> "◇"
+    null -> "·"
 }
 
 private val LocalDeviceAccessKind.canReadLocalStatus: Boolean

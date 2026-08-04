@@ -5,12 +5,12 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyDefinition
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyRegistry
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
-import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 import com.prfd.tinytuya.device.core.profile.DeviceMatch
 import com.prfd.tinytuya.device.core.profile.DeviceMatchStrength
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
 import com.prfd.tinytuya.device.core.profile.DeviceSupport
 import com.prfd.tinytuya.device.core.profile.DeviceSupportLevel
+import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import com.prfd.tinytuya.device.core.schema.DpDeclaredType
 import com.prfd.tinytuya.device.core.schema.DpDefinition
 import com.prfd.tinytuya.device.core.schema.DpSchema
@@ -28,19 +28,6 @@ object BuiltinDeviceFamilyIds {
     val GAS_SENSOR = DeviceFamilyId("sensor_gas")
 }
 
-object BuiltinDeviceLayoutIds {
-    val SWITCH_OR_OUTLET = DeviceLayoutId("switch_or_outlet")
-    val LIGHT = DeviceLayoutId("light")
-    val COVER = DeviceLayoutId("cover")
-    val CLIMATE_SENSOR = DeviceLayoutId("sensor.climate")
-    val CONTACT_SENSOR = DeviceLayoutId("sensor.contact")
-    val MOTION_SENSOR = DeviceLayoutId("sensor.motion")
-    val PRESENCE_SENSOR = DeviceLayoutId("sensor.presence")
-    val WATER_LEAK_SENSOR = DeviceLayoutId("sensor.water_leak")
-    val SMOKE_SENSOR = DeviceLayoutId("sensor.smoke")
-    val GAS_SENSOR = DeviceLayoutId("sensor.gas")
-}
-
 object BuiltinDeviceFamilies {
     val definitions: List<DeviceFamilyDefinition> = listOf(
         DeclarativeDeviceFamily(
@@ -50,7 +37,7 @@ object BuiltinDeviceFamilies {
                 "Switch and outlet control validated on representative local hardware.",
             ),
             presentation = DevicePresentation(
-                BuiltinDeviceLayoutIds.SWITCH_OR_OUTLET,
+                StandardDeviceLayoutIds.GENERIC_CONTROLS,
                 typeLabel = "Switch or outlet",
                 symbol = "⏻",
             ),
@@ -68,7 +55,7 @@ object BuiltinDeviceFamilies {
                 "Power and first-release light controls validated on a category dj bulb.",
             ),
             presentation = DevicePresentation(
-                BuiltinDeviceLayoutIds.LIGHT,
+                StandardDeviceLayoutIds.LIGHT,
                 typeLabel = "Smart light",
                 symbol = "✦",
             ),
@@ -82,7 +69,7 @@ object BuiltinDeviceFamilies {
                 "Cover recognition is synthetic-only until representative hardware is tested.",
             ),
             presentation = DevicePresentation(
-                BuiltinDeviceLayoutIds.COVER,
+                StandardDeviceLayoutIds.COVER,
                 typeLabel = "Curtain or cover",
                 symbol = "↕",
             ),
@@ -91,7 +78,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.CLIMATE_SENSOR,
             label = "Temperature and humidity sensor",
             symbol = "°",
             categories = setOf("wsdcg"),
@@ -99,7 +85,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.CONTACT_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.CONTACT_SENSOR,
             label = "Contact sensor",
             symbol = "▯",
             categories = setOf("mcs"),
@@ -107,7 +92,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.MOTION_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.MOTION_SENSOR,
             label = "Motion sensor",
             symbol = "⌁",
             categories = setOf("pir"),
@@ -115,7 +99,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.PRESENCE_SENSOR,
             label = "Presence sensor",
             symbol = "◎",
             categories = setOf("hps"),
@@ -123,7 +106,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.WATER_LEAK_SENSOR,
             label = "Water leak sensor",
             symbol = "≈",
             categories = setOf("sj"),
@@ -131,7 +113,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.SMOKE_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.SMOKE_SENSOR,
             label = "Smoke alarm",
             symbol = "≋",
             categories = setOf("ywbj"),
@@ -139,7 +120,6 @@ object BuiltinDeviceFamilies {
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.GAS_SENSOR,
-            layoutId = BuiltinDeviceLayoutIds.GAS_SENSOR,
             label = "Gas alarm",
             symbol = "◇",
             categories = setOf("rqbj"),
@@ -172,7 +152,6 @@ private class DeclarativeDeviceFamily(
 
 private fun sensorFamily(
     id: DeviceFamilyId,
-    layoutId: DeviceLayoutId,
     label: String,
     symbol: String,
     categories: Set<String>,
@@ -183,7 +162,11 @@ private fun sensorFamily(
         DeviceSupportLevel.SYNTHETIC_ONLY,
         "$label presentation has synthetic coverage without a real-hardware compatibility claim.",
     ),
-    presentation = DevicePresentation(layoutId, typeLabel = label, symbol = symbol),
+    presentation = DevicePresentation(
+        StandardDeviceLayoutIds.SENSOR_SUMMARY,
+        typeLabel = label,
+        symbol = symbol,
+    ),
     categories = categories,
     schemaMatcher = { definition -> definition.code in codes },
 )

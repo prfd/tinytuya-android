@@ -77,7 +77,7 @@ class DeviceCapabilityRenderersInstrumentedTest {
             }
         }
 
-        assertEquals("generic.controls", model.layoutId)
+        assertEquals(DeviceLayoutId("generic.controls"), model.layoutId)
         assertEquals(listOf(CapabilityId("power")), model.capabilities.map { it.id })
         assertFalse(model.toString().contains(SECRET_DEVICE_ID))
         assertFalse(model.toString().contains("19"))

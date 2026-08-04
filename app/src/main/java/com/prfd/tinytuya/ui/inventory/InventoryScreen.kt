@@ -84,12 +84,19 @@ import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
+import com.prfd.tinytuya.device.ui.BinaryStateUiModel
 import com.prfd.tinytuya.device.ui.DeviceCapabilityList
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
+import com.prfd.tinytuya.device.ui.DeviceLayoutHost
+import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
 import com.prfd.tinytuya.device.ui.DeviceUiMapper
 import com.prfd.tinytuya.device.ui.DeviceUiModel
+import com.prfd.tinytuya.device.ui.LightDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.SensorSummaryLayoutRenderer
+import com.prfd.tinytuya.device.ui.ToggleUiModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.components.BrandMark
@@ -102,6 +109,13 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+private val inventoryDeviceLayoutRegistry = DeviceLayoutRendererRegistry(
+    listOf(
+        LightDeviceLayoutRenderer,
+        SensorSummaryLayoutRenderer,
+    )
+)
 
 @Composable
 fun InventoryScreen(
@@ -603,25 +617,22 @@ internal fun InventoryDeviceCard(
             lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
         )
     }
-    val sensorPresentation = remember(
-        device.mappingJson,
-        localStatus?.dataPoints,
-        localStatus?.state,
-        profile.sensorKind,
-        isCurrentStatus,
-    ) {
-        if (isCurrentStatus && localStatus?.state == LocalPollDeviceState.RESPONDED) {
-            profile.sensorKind?.let { sensorKind ->
-                presentLocalSensor(sensorKind, profile.capabilities)
-            }
-        } else {
-            null
-        }
+    val deviceUiModel = remember(profile.resolvedDevice) {
+        DeviceUiMapper.map(profile.resolvedDevice)
     }
-    val hasActiveSensor = sensorPresentation?.tone == LocalSensorTone.ACTIVE ||
-        sensorPresentation?.tone == LocalSensorTone.ALERT
+    val summaryTone = deviceUiModel.capabilities
+        .filterIsInstance<BinaryStateUiModel>()
+        .firstOrNull()
+        ?.tone
+    val hasActiveSensor = summaryTone == CapabilityTone.ACTIVE ||
+        summaryTone == CapabilityTone.ALERT
     val isProfileActive = isCurrentStatus &&
-        (profile.booleanControls.any { localControl -> localControl.currentValue } || hasActiveSensor)
+        (
+            deviceUiModel.capabilities
+                .filterIsInstance<ToggleUiModel>()
+                .any(ToggleUiModel::currentValue) ||
+                hasActiveSensor
+        )
     val localAvailability = when {
         lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
         isOnCurrentLan -> LocalAvailability("Local", true)
@@ -638,7 +649,7 @@ internal fun InventoryDeviceCard(
             Row(verticalAlignment = Alignment.Top) {
                 DeviceProfileMark(
                     profile = profile,
-                    tone = sensorPresentation?.tone,
+                    tone = summaryTone,
                     active = isProfileActive,
                 )
                 Spacer(Modifier.width(14.dp))
@@ -693,8 +704,8 @@ internal fun InventoryDeviceCard(
             LocalStatusPanel(
                 device = device,
                 profile = profile,
+                deviceUiModel = deviceUiModel,
                 status = localStatus,
-                sensorPresentation = sensorPresentation,
                 isCurrentStatus = isCurrentStatus,
                 isOnCurrentLan = isOnCurrentLan,
                 isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
@@ -709,8 +720,8 @@ internal fun InventoryDeviceCard(
 private fun LocalStatusPanel(
     device: CloudImportedDevice,
     profile: LocalDeviceProfile,
+    deviceUiModel: DeviceUiModel,
     status: LocalStatusRecord?,
-    sensorPresentation: LocalSensorPresentation?,
     isCurrentStatus: Boolean,
     isOnCurrentLan: Boolean,
     isReadingStatus: Boolean,
@@ -722,36 +733,6 @@ private fun LocalStatusPanel(
         status?.polledAtEpochMillis?.let { timestamp ->
             DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                 .format(Date(timestamp))
-        }
-    }
-    val booleanControls = profile.booleanControls
-    val atomicCapabilityIds = remember(profile) { profile.atomicCapabilityIds() }
-    val presentedDataPoints = remember(
-        device.mappingJson,
-        status?.dataPoints,
-        booleanControls,
-        sensorPresentation,
-        profile.lightControls,
-        atomicCapabilityIds,
-    ) {
-        val featuredIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
-        profile.capabilities.capabilities
-            .filter { capability -> capability.id in atomicCapabilityIds }
-            .mapTo(featuredIds) { capability -> capability.dataPointId }
-        sensorPresentation?.consumedDataPointIds?.let(featuredIds::addAll)
-        profile.lightControls?.let { lightControls ->
-            lightControls.mode?.dataPointId?.let(featuredIds::add)
-            lightControls.whiteBrightness?.dataPointId?.let(featuredIds::add)
-            lightControls.colorTemperature?.dataPointId?.let(featuredIds::add)
-            lightControls.color?.dataPointId?.let(featuredIds::add)
-        }
-        if (status != null) {
-            presentLocalDataPoints(
-                capabilities = profile.capabilities,
-                excludedDataPointIds = featuredIds,
-            )
-        } else {
-            emptyList()
         }
     }
     val inspection = remember(device.mappingJson, status?.dataPoints, status?.state) {
@@ -798,41 +779,12 @@ private fun LocalStatusPanel(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 status?.state == LocalPollDeviceState.RESPONDED -> {
-                    sensorPresentation?.let { presentation ->
-                        LocalSensorSummary(presentation)
-                    }
-                    if (profile.kind != LocalDeviceProfileKind.SENSOR) {
-                        LocalDeviceControls(
-                            profile = profile,
-                            atomicCapabilityIds = atomicCapabilityIds,
-                            controlState = control,
-                            onIntent = onIntent,
-                        )
-                    }
-                    if (presentedDataPoints.isNotEmpty()) {
-                        DeviceHighlights(
-                            title = when (profile.kind) {
-                                LocalDeviceProfileKind.LIGHT -> "Light details"
-                                LocalDeviceProfileKind.COVER -> "Cover position"
-                                else -> "At a glance"
-                            },
-                            dataPoints = presentedDataPoints,
-                        )
-                    }
-                    if (
-                        presentedDataPoints.isEmpty() &&
-                        sensorPresentation == null &&
-                        atomicCapabilityIds.isEmpty() &&
-                        profile.kind != LocalDeviceProfileKind.GENERIC
-                    ) {
-                        Text(
-                            text = "No everyday controls or readings are available for this " +
-                                "device profile.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
+                    DeviceLayoutHost(
+                        device = deviceUiModel,
+                        registry = inventoryDeviceLayoutRegistry,
+                        controlState = control,
+                        onIntent = onIntent,
+                    )
                     updatedAt?.let {
                         Text(
                             text = "Updated locally · $it",
@@ -1785,18 +1737,18 @@ private fun StatusPill(text: String, positive: Boolean) {
 @Composable
 private fun DeviceProfileMark(
     profile: LocalDeviceProfile,
-    tone: LocalSensorTone?,
+    tone: CapabilityTone?,
     active: Boolean,
 ) {
     val containerColor = when {
-        tone == LocalSensorTone.ALERT -> MaterialTheme.colorScheme.errorContainer
-        tone == LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
+        tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.errorContainer
+        tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
         active -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val contentColor = when {
-        tone == LocalSensorTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
-        tone == LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
+        tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
+        tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
         active -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.primary
     }

@@ -5,6 +5,7 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyResolution
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.profile.DeviceMatchStrength
 import com.prfd.tinytuya.device.core.profile.DeviceSupportLevel
+import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import com.prfd.tinytuya.device.core.schema.DpDefinitionInput
 import com.prfd.tinytuya.device.core.schema.DpSchema
 import com.prfd.tinytuya.device.core.capability.CapabilityId
@@ -121,6 +122,19 @@ class BuiltinDeviceFamiliesTest {
                 definition -> definition.id == BuiltinDeviceFamilyIds.COVER
             }.support.level,
         )
+    }
+
+    @Test
+    fun `families select reusable layout contracts instead of product-specific UI`() {
+        fun layoutFor(category: String) = (resolve(category, DpSchema.empty())
+            as DeviceFamilyResolution.Matched).definition.presentation.layoutId
+
+        assertEquals(StandardDeviceLayoutIds.GENERIC_CONTROLS, layoutFor("kg"))
+        assertEquals(StandardDeviceLayoutIds.LIGHT, layoutFor("dj"))
+        assertEquals(StandardDeviceLayoutIds.COVER, layoutFor("cl"))
+        listOf("wsdcg", "mcs", "pir", "hps", "sj", "ywbj", "rqbj").forEach { category ->
+            assertEquals(StandardDeviceLayoutIds.SENSOR_SUMMARY, layoutFor(category))
+        }
     }
 
     @Test

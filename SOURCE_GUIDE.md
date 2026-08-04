@@ -210,8 +210,9 @@ Read the capability path in three pieces:
 2. `CapabilitySpecs.kt`, `DeviceObservation.kt`, and `CapabilityResolver.kt` in `:device-core`
    define the reusable primitives and fail-closed schema/freshness/access intersection.
 3. [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilities.kt)
-   packages the canonical capabilities and selected layout as a redacted `ResolvedDevice`; its
-   Boolean/light fields are temporary adapters for layouts which migrate in Phase 6.
+   packages the canonical capabilities and selected layout as a redacted `ResolvedDevice`. Its
+   Boolean/light compatibility fields remain only for legacy tests and Phase 8 removal; the runtime
+   renderer path does not consume them.
 
 A Boolean control exists only when all of these agree:
 
@@ -228,9 +229,13 @@ Then read the presentation pipeline:
 - `DeviceUiModels.kt` and `DeviceCapabilityRenderers.kt` in `:device-ui` map `ResolvedDevice` into
   bounded display-only models and render toggle, range, choice, action, color, measurement, binary,
   and safe-text primitives. This module sees no catalog, mapping JSON, network, key, or Python type.
+- `StandardDeviceLayoutIds.kt` in `:device-core`, followed by `DeviceLayoutRenderers.kt`,
+  `LightDeviceLayoutRenderer.kt`, and `SensorSummaryLayoutRenderer.kt` in `:device-ui`, define stable
+  arrangement hints, the explicit renderer/fallback contract, and the two reusable compound layouts.
+  A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
 - [LocalStatusPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentation.kt) turns safe mapped DPS primitives into readable rows and builds the capped inspector.
-- [LocalSensorPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalSensorPresentation.kt) promotes a small allow-list of validated sensor values into a compact summary.
-- [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) renders the result.
+- [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) assembles
+  the renderer registry and hosts the selected compound or complete generic atomic fallback.
 
 For `InventoryScreen.kt`, search for and read only these functions at first:
 
@@ -239,13 +244,12 @@ For `InventoryScreen.kt`, search for and read only these functions at first:
 3. `DeviceInventoryHeader`
 4. `InventoryDeviceCard`
 5. `LocalStatusPanel`
-6. `LocalSensorSummary`
-7. `LocalAccessNotice`
-8. `LocalDpsInspector`
-9. `LocalDeviceControls`
-10. `LocalLightControls` (the temporary compound-light adapter)
+6. `LocalAccessNotice`
+7. `LocalDpsInspector`
 
-The remaining functions are mostly reusable rows, labels, badges, previews, and styling.
+The remaining functions are mostly reusable rows, labels, badges, previews, and styling. Legacy
+sensor/light composables are currently unreachable compatibility code scheduled for Phase 8 removal;
+they are not part of the renderer extension path.
 
 Checkpoint: choose one displayed value, such as outlet power or temperature. Trace it backward from a composable, through a presentation function, to `LocalStatusRecord.dataPoints`, and finally to `_normalize_local_data_points` in Python.
 
@@ -254,8 +258,8 @@ Checkpoint: choose one displayed value, such as outlet power or temperature. Tra
 A switch tap or light adjustment is deliberately non-optimistic. The UI retains the last confirmed state while the command is pending.
 
 ```text
-DeviceCapabilityList callback
-  or the temporary LocalLightControls callback
+DeviceLayoutHost
+  -> compound renderer or atomic DeviceCapabilityList callback
   -> DeviceIntent(device ID, semantic capability ID, semantic value)
   -> AppViewModel.submitControl
   -> DefaultLocalControlCoordinator.execute
@@ -271,8 +275,11 @@ DeviceCapabilityList callback
 
 Read:
 
-- `DeviceControlUiState` and the atomic renderer matching the intent in `:device-ui`.
-- `LocalDeviceControls` and `LocalLightControls` in [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt). Inventory chooses only which safe capability IDs belong in its current arrangement; the reusable renderer owns primitive state and feedback.
+- `DeviceControlUiState`, `DeviceLayoutHost`, and the atomic or compound renderer matching the intent
+  in `:device-ui`. The renderer sees only safe UI models and emits the same semantic intent vocabulary.
+- `inventoryDeviceLayoutRegistry` and `LocalStatusPanel` in
+  [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt). Inventory
+  explicitly registers layouts but does not interpret their capabilities or choose a transport action.
 - `DeviceIntent.kt` and `CapabilityCommandAuthorizer.kt` in `:device-core`.
 - `AppUiState` and `submitControl` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
 - All of [LocalControlCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlCoordinator.kt).

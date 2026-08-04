@@ -11,6 +11,7 @@ import com.prfd.tinytuya.device.core.capability.ResolvedMeasurement
 import com.prfd.tinytuya.device.core.capability.ResolvedRange
 import com.prfd.tinytuya.device.core.capability.ResolvedSafeText
 import com.prfd.tinytuya.device.core.capability.ResolvedToggle
+import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 
 sealed interface CapabilityUiModel {
     val id: CapabilityId
@@ -166,7 +167,7 @@ data class SafeTextUiModel(
 
 class DeviceUiModel internal constructor(
     val deviceId: String,
-    val layoutId: String?,
+    val layoutId: DeviceLayoutId?,
     capabilities: List<CapabilityUiModel>,
 ) {
     val capabilities: List<CapabilityUiModel> = capabilities.toList()
@@ -188,7 +189,7 @@ class DeviceUiModel internal constructor(
 object DeviceUiMapper {
     fun map(device: ResolvedDevice): DeviceUiModel = DeviceUiModel(
         deviceId = device.deviceId,
-        layoutId = device.layoutId?.value,
+        layoutId = device.layoutId,
         capabilities = device.capabilities.capabilities.mapNotNull { capability ->
             when (capability) {
                 is ResolvedToggle -> ToggleUiModel(

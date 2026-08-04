@@ -193,8 +193,8 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("light_controls").assertExists()
         composeRule.onNodeWithTag("light_mode_white").assertExists()
         composeRule.onNodeWithTag("light_mode_color").assertExists()
-        composeRule.onNodeWithTag("light_slider_bright_value_v2").assertExists()
-        composeRule.onNodeWithTag("light_slider_temp_value_v2").assertExists()
+        composeRule.onNodeWithTag("light_slider_light_brightness").assertExists()
+        composeRule.onNodeWithTag("light_slider_light_temperature").assertExists()
         composeRule.onNodeWithTag("light_color_wheel").assertDoesNotExist()
         composeRule.onNodeWithText("Light details").assertDoesNotExist()
         composeRule.onNodeWithText("Brightness").assertExists()
@@ -239,7 +239,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
         composeRule.onNodeWithTag("light_color_wheel").assertExists()
         composeRule.onNodeWithTag("light_slider_color_brightness").assertExists()
-        composeRule.onNodeWithTag("light_slider_temp_value_v2").assertDoesNotExist()
+        composeRule.onNodeWithTag("light_slider_light_temperature").assertDoesNotExist()
     }
 
     @Test
@@ -267,7 +267,7 @@ class InventoryScreenInstrumentedTest {
             }
         }
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
-        val slider = composeRule.onNodeWithTag("light_slider_bright_value_v2")
+        val slider = composeRule.onNodeWithTag("light_slider_light_brightness")
         slider.performScrollTo().performTouchInput {
             swipe(
                 start = Offset(width * 0.73f, height / 2f),

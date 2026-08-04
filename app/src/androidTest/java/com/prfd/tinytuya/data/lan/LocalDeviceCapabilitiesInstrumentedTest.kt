@@ -5,6 +5,9 @@ import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.ResolvedActionGroup
+import com.prfd.tinytuya.device.core.capability.ResolvedMeasurement
+import com.prfd.tinytuya.device.core.capability.ResolvedRange
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -285,6 +288,39 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             assertTrue(profile.booleanControls.isEmpty())
             assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
         }
+    }
+
+    @Test
+    fun coverUsesFreshMappedActionsAndPositionWithoutTypeSpecificTransport() {
+        val device = sampleDevice(
+            category = "cl",
+            mappingJson = """
+                {
+                  "7":{"code":"control_2","type":"Enum","values":{"range":["up","stop","down"]}},
+                  "8":{"code":"percent_control_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
+                  "9":{"code":"percent_state_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
+                }
+            """.trimIndent(),
+        )
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = respondedStatus(
+                LocalDataPoint("7", LocalDataPointKind.STRING, "stop"),
+                LocalDataPoint("8", LocalDataPointKind.INTEGER, "45"),
+                LocalDataPoint("9", LocalDataPointKind.INTEGER, "48"),
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.COVER, profile.kind)
+        assertEquals(LocalDeviceAccessKind.DIRECT_CONTROL, profile.access)
+        val actions = profile.capabilities.ofType<ResolvedActionGroup>().single()
+        assertEquals("7", actions.dataPointId)
+        assertEquals(listOf("up", "stop", "down"), actions.actions.map { it.wireValue })
+        assertTrue(actions.writable)
+        assertEquals("8", profile.capabilities.ofType<ResolvedRange>().single().dataPointId)
+        assertEquals("48%", profile.capabilities.ofType<ResolvedMeasurement>().single().displayValue)
+        assertTrue(profile.booleanControls.isEmpty())
     }
 
     @Test

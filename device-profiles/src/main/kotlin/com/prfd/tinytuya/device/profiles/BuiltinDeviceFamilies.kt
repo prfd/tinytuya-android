@@ -66,7 +66,7 @@ object BuiltinDeviceFamilies {
             id = BuiltinDeviceFamilyIds.COVER,
             support = DeviceSupport(
                 DeviceSupportLevel.SYNTHETIC_ONLY,
-                "Cover recognition is synthetic-only until representative hardware is tested.",
+                "Mapped open, stop, close, and optional position controls have synthetic coverage only.",
             ),
             presentation = DevicePresentation(
                 StandardDeviceLayoutIds.COVER,

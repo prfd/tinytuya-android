@@ -88,6 +88,7 @@ import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
 import com.prfd.tinytuya.device.ui.BinaryStateUiModel
+import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.DeviceCapabilityList
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
@@ -112,6 +113,7 @@ import kotlin.math.sin
 
 private val inventoryDeviceLayoutRegistry = DeviceLayoutRendererRegistry(
     listOf(
+        CoverDeviceLayoutRenderer,
         LightDeviceLayoutRenderer,
         SensorSummaryLayoutRenderer,
     )

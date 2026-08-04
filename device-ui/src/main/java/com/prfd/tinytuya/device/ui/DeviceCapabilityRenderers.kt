@@ -189,11 +189,7 @@ fun RangeCapability(
                 }
             },
             valueRange = 0f..1f,
-            steps = if (intervals <= MAX_SLIDER_STEPS + 1L) {
-                (intervals - 1L).coerceAtLeast(0L).toInt()
-            } else {
-                0
-            },
+            steps = rangeSliderVisualSteps(intervals),
             enabled = presentation.enabled,
             modifier = Modifier
                 .semantics { contentDescription = capability.label }
@@ -629,4 +625,15 @@ private val DeviceIntent.sendingMessage: String
         is DeviceIntent.SetColor -> "Updating color and confirming…"
     }
 
-private const val MAX_SLIDER_STEPS = 1_000
+/**
+ * Material renders one tick for every discrete slider step. Fine-grained ranges still snap through
+ * [alignRangeProgress], but rendering all of their ticks creates a dense dotted track.
+ */
+internal fun rangeSliderVisualSteps(intervals: Long): Int =
+    if (intervals in 2L..MAX_VISIBLE_SLIDER_INTERVALS) {
+        (intervals - 1L).toInt()
+    } else {
+        0
+    }
+
+private const val MAX_VISIBLE_SLIDER_INTERVALS = 10L

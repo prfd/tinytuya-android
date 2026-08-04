@@ -226,6 +226,58 @@ class DeviceLayoutRenderersInstrumentedTest {
     }
 
     @Test
+    fun coverLayoutReusesActionsRangeAndReadingAndEmitsSemanticIntent() {
+        val actionsId = CapabilityId("cover.actions")
+        val device = device(
+            StandardDeviceLayoutIds.COVER,
+            listOf(
+                ActionGroupUiModel(
+                    actionsId,
+                    "Cover",
+                    true,
+                    "stop",
+                    listOf(
+                        ChoiceUiOption("open", "Open"),
+                        ChoiceUiOption("stop", "Stop"),
+                        ChoiceUiOption("close", "Close"),
+                    ),
+                ),
+                RangeUiModel(
+                    CapabilityId("cover.position"),
+                    "Target position",
+                    true,
+                    0,
+                    100,
+                    1,
+                    62,
+                    "62%",
+                ),
+                MeasurementUiModel(
+                    CapabilityId("cover.position.reading"),
+                    "Current position",
+                    "60%",
+                ),
+            ),
+        )
+        var emitted: DeviceIntent? = null
+
+        setHost(
+            device,
+            DeviceLayoutRendererRegistry(listOf(CoverDeviceLayoutRenderer)),
+            onIntent = { emitted = it },
+        )
+
+        composeRule.onNodeWithText("Cover controls").assertExists()
+        composeRule.onNodeWithTag("capability_actions_cover_actions").assertExists()
+        composeRule.onNodeWithTag("capability_range_cover_position").assertExists()
+        composeRule.onNodeWithTag("capability_measurement_cover_position_reading").assertExists()
+        composeRule.onNodeWithText("Open").performClick()
+        composeRule.runOnIdle {
+            assertEquals(DeviceIntent.InvokeAction(DEVICE_ID, actionsId, "open"), emitted)
+        }
+    }
+
+    @Test
     fun duplicateRendererIdsAreRejectedAtRegistryAssembly() {
         val layoutId = DeviceLayoutId("custom.duplicate")
         val first = testRenderer(layoutId) { setOf(CapabilityId("power")) }

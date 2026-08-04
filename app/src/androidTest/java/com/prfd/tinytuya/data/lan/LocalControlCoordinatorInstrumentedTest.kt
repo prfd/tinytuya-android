@@ -83,6 +83,80 @@ class LocalControlCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun verifiedCoverActionsAndPositionUseTheGenericConfirmedWritePath() = runBlocking {
+        val catalog = coverCatalog()
+        val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+        listOf<DeviceIntent>(
+            DeviceIntent.InvokeAction(DEVICE_ID, CapabilityId("cover.actions"), "up"),
+            DeviceIntent.SetRange(DEVICE_ID, CapabilityId("cover.position"), 75),
+        ).forEach { intent ->
+            DefaultLocalControlCoordinator(
+                gateway = gateway,
+                catalogStore = FakeStore(catalog),
+                networkResolver = FakeNetworkResolver(NETWORK),
+            ).execute(NETWORK, intent)
+        }
+
+        assertEquals(
+            listOf(
+                LocalControlChange("7", LocalDataPointKind.STRING, "up"),
+                LocalControlChange("8", LocalDataPointKind.INTEGER, "75"),
+            ),
+            gateway.requests.map { request -> request.changes.single() },
+        )
+    }
+
+    @Test
+    fun unknownOrStaleCoverVocabularyCannotReachThePythonBridge() = runBlocking {
+        val unknownVocabulary = coverCatalog().copy(
+            devices = listOf(
+                coverCatalog().devices.single().copy(
+                    mappingJson = """
+                        {
+                          "7":{"code":"control_2","type":"Enum","values":{"range":["raise","pause","lower"]}}
+                        }
+                    """.trimIndent(),
+                )
+            ),
+            localStatus = listOf(
+                coverCatalog().localStatus.single().copy(
+                    dataPoints = listOf(LocalDataPoint("7", LocalDataPointKind.STRING, "pause"))
+                )
+            ),
+        )
+        val stale = coverCatalog().copy(
+            localStatus = listOf(coverCatalog().localStatus.single().copy(polledAtEpochMillis = 9L))
+        )
+
+        listOf(
+            unknownVocabulary to DeviceIntent.InvokeAction(
+                DEVICE_ID,
+                CapabilityId("cover.actions"),
+                "raise",
+            ),
+            stale to DeviceIntent.InvokeAction(
+                DEVICE_ID,
+                CapabilityId("cover.actions"),
+                "up",
+            ),
+        ).forEach { (catalog, intent) ->
+            val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+            val coordinator = DefaultLocalControlCoordinator(
+                gateway = gateway,
+                catalogStore = FakeStore(catalog),
+                networkResolver = FakeNetworkResolver(NETWORK),
+            )
+            try {
+                coordinator.execute(NETWORK, intent)
+                throw AssertionError("Expected unverified cover control to be rejected")
+            } catch (error: LocalControlException) {
+                assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+            }
+            assertEquals(0, gateway.callCount)
+        }
+    }
+
+    @Test
     fun invalidLightValueIsRejectedBeforeThePythonBridge() = runBlocking {
         val catalog = lightCatalog()
         val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
@@ -502,6 +576,32 @@ class LocalControlCoordinatorInstrumentedTest {
                         LocalDataPoint("22", LocalDataPointKind.INTEGER, "1000"),
                         LocalDataPoint("23", LocalDataPointKind.INTEGER, "1000"),
                         LocalDataPoint("24", LocalDataPointKind.STRING, "000003e803e8"),
+                    ),
+                    polledAtEpochMillis = 10L,
+                )
+            ),
+        )
+
+        fun coverCatalog() = sampleCatalog(
+            category = "cl",
+            mappingJson = """
+                {
+                  "7":{"code":"control_2","type":"Enum","values":{"range":["up","stop","down"]}},
+                  "8":{"code":"percent_control_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
+                  "9":{"code":"percent_state_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
+                }
+            """.trimIndent(),
+        ).copy(
+            localStatus = listOf(
+                LocalStatusRecord(
+                    id = DEVICE_ID,
+                    state = LocalPollDeviceState.RESPONDED,
+                    errorCode = "",
+                    durationMillis = 20L,
+                    dataPoints = listOf(
+                        LocalDataPoint("7", LocalDataPointKind.STRING, "stop"),
+                        LocalDataPoint("8", LocalDataPointKind.INTEGER, "50"),
+                        LocalDataPoint("9", LocalDataPointKind.INTEGER, "52"),
                     ),
                     polledAtEpochMillis = 10L,
                 )

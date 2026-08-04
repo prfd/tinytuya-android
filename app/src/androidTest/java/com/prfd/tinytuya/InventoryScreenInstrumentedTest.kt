@@ -321,6 +321,35 @@ class InventoryScreenInstrumentedTest {
     }
 
     @Test
+    fun verifiedCoverUsesRegisteredPrimitiveLayoutAndEmitsSemanticAction() {
+        var request: DeviceIntent? = null
+        setInventoryContent(
+            catalog = coverCatalog(),
+            control = LocalControlUiState.Ready,
+            onIntent = { request = it },
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+
+        composeRule.onNodeWithText("Cover controls").assertExists()
+        composeRule.onNodeWithTag("capability_actions_cover_actions").assertExists()
+        composeRule.onNodeWithTag("capability_range_cover_position").assertExists()
+        composeRule.onNodeWithTag("capability_measurement_cover_position_reading").assertExists()
+        composeRule.onNodeWithText("Open").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(
+                DeviceIntent.InvokeAction(
+                    "office-lamp",
+                    CapabilityId("cover.actions"),
+                    "open",
+                ),
+                request,
+            )
+        }
+        composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
+    }
+
+    @Test
     fun protectedCameraHidesCachedDpsAndControlEvenWithASwitchMapping() {
         val catalog = controlledCatalog().copy(
             devices = listOf(
@@ -503,6 +532,31 @@ class InventoryScreenInstrumentedTest {
                     LocalDataPoint("22", LocalDataPointKind.INTEGER, brightness.toString()),
                     LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
                     LocalDataPoint("24", LocalDataPointKind.STRING, "00d003e803e8"),
+                )
+            )
+        ),
+    )
+
+    private fun coverCatalog() = controlledCatalog().copy(
+        devices = listOf(
+            controlledCatalog().devices.single().copy(
+                category = "cl",
+                productName = "Curtain motor",
+                mappingJson = """
+                    {
+                      "7":{"code":"control_2","type":"Enum","values":{"range":["open","stop","close","continue"]}},
+                      "8":{"code":"percent_control_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
+                      "9":{"code":"percent_state_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
+                    }
+                """.trimIndent(),
+            )
+        ),
+        localStatus = listOf(
+            controlledCatalog().localStatus.single().copy(
+                dataPoints = listOf(
+                    LocalDataPoint("7", LocalDataPointKind.STRING, "stop"),
+                    LocalDataPoint("8", LocalDataPointKind.INTEGER, "62"),
+                    LocalDataPoint("9", LocalDataPointKind.INTEGER, "60"),
                 )
             )
         ),

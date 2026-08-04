@@ -222,7 +222,17 @@ A Boolean control exists only when all of these agree:
 
 Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; arbitrary JSON or other color encodings remain read-only.
 
-Switches/outlets and lights can currently reach `DIRECT_CONTROL`. Covers, sensors, and generic devices are `STATUS_ONLY`. Gateway children, gateways, cameras, and locks are explicitly protected and do not reach local polling or writes.
+Switches/outlets, lights, and covers can reach `DIRECT_CONTROL`; individual capabilities still become
+writable only after the complete schema/fresh-observation intersection. Sensors and generic devices
+are `STATUS_ONLY`. Gateway children, gateways, cameras, and locks are explicitly protected and do not
+reach local polling or writes.
+
+Cover actions deserve a close read in `BuiltinCapabilitySpecs.kt`. The profile accepts only an
+imported Enum which explicitly contains every value in one reviewed open/stop/close vocabulary.
+Alternate DPS IDs, `_2` codes, and several vocabularies documented by pinned TinyTuya 1.20.0 are
+supported declaratively; TinyTuya's heuristic cover type detection, default DPS 1, and fallback type
+never become write authority. Optional `percent_control[_2]` and `percent_state[_2]` mappings resolve
+to the ordinary range and measurement primitives.
 
 Then read the presentation pipeline:
 
@@ -230,8 +240,9 @@ Then read the presentation pipeline:
   bounded display-only models and render toggle, range, choice, action, color, measurement, binary,
   and safe-text primitives. This module sees no catalog, mapping JSON, network, key, or Python type.
 - `StandardDeviceLayoutIds.kt` in `:device-core`, followed by `DeviceLayoutRenderers.kt`,
-  `LightDeviceLayoutRenderer.kt`, and `SensorSummaryLayoutRenderer.kt` in `:device-ui`, define stable
-  arrangement hints, the explicit renderer/fallback contract, and the two reusable compound layouts.
+  `LightDeviceLayoutRenderer.kt`, `CoverDeviceLayoutRenderer.kt`, and
+  `SensorSummaryLayoutRenderer.kt` in `:device-ui`, define stable arrangement hints, the explicit
+  renderer/fallback contract, and the reusable compound layouts.
   A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
 - [LocalStatusPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentation.kt) turns safe mapped DPS primitives into readable rows and builds the capped inspector.
 - [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) assembles
@@ -255,7 +266,8 @@ Checkpoint: choose one displayed value, such as outlet power or temperature. Tra
 
 ## Pass 5: a confirmed local write
 
-A switch tap or light adjustment is deliberately non-optimistic. The UI retains the last confirmed state while the command is pending.
+A switch tap, light adjustment, or cover command is deliberately non-optimistic. The UI retains the
+last confirmed state while the command is pending.
 
 ```text
 DeviceLayoutHost
@@ -398,12 +410,18 @@ After each production flow, read its nearest test instead of immediately reading
 | Status eligibility | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt) |
 | Write authorization and rollback | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt) |
 | Profiles and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
+| Pure cover profile fixtures and public evidence | `CoverDeviceProfileTest.kt` and `BuiltinSupportDocumentationTest.kt` in `:device-profiles` |
+| Layout registry and cover/light/sensor fallback | `DeviceLayoutRenderersInstrumentedTest.kt` in `:device-ui` |
 | Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
 | DPS and sensor formatting | [LocalStatusPresentationInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentationInstrumentedTest.kt) and [LocalSensorPresentationInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/ui/inventory/LocalSensorPresentationInstrumentedTest.kt) |
 
 Most feature tests are instrumentation tests because Compose, Android Keystore, Android networking types, and Chaquopy need an Android runtime. The small tests under `app/src/test` are host JVM tests for code which has no Android dependency.
 
 The opt-in [LightCapabilityProbeInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/LightCapabilityProbeInstrumentedTest.kt) produces a sanitized mapping report from the encrypted on-device catalog. It is skipped by default. Read and follow its manual ADB workflow exactly; do not invoke it through `connectedDebugAndroidTest`, which may remove the installed debug app and its private data during teardown.
+
+For a device contribution, follow [DEVICE_CONTRIBUTING.md](DEVICE_CONTRIBUTING.md). Its profile and
+fixture templates are the shortest intended path. [SUPPORTED_DEVICES.md](SUPPORTED_DEVICES.md) is the
+public evidence boundary; a host test verifies its generated block against built-in profile metadata.
 
 ## Files to postpone
 

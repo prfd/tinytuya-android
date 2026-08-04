@@ -342,8 +342,8 @@ object LocalDeviceCapabilityRegistry {
         kind: LocalDeviceProfileKind,
     ): LocalDeviceAccessKind = restriction.toLegacyAccessKind() ?: when (kind) {
         LocalDeviceProfileKind.SWITCH_OR_OUTLET,
-        LocalDeviceProfileKind.LIGHT -> LocalDeviceAccessKind.DIRECT_CONTROL
-        LocalDeviceProfileKind.COVER,
+        LocalDeviceProfileKind.LIGHT,
+        LocalDeviceProfileKind.COVER -> LocalDeviceAccessKind.DIRECT_CONTROL
         LocalDeviceProfileKind.SENSOR,
         LocalDeviceProfileKind.GENERIC -> LocalDeviceAccessKind.STATUS_ONLY
     }

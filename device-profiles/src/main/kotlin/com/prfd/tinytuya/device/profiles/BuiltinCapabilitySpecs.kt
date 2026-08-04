@@ -16,13 +16,14 @@ import com.prfd.tinytuya.device.core.capability.RangeCapabilitySpec
 import com.prfd.tinytuya.device.core.capability.ToggleCapabilitySpec
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.schema.DpDeclaredType
+import com.prfd.tinytuya.device.core.schema.DpDefinition
 import com.prfd.tinytuya.device.core.schema.DpSchema
 
 internal object BuiltinCapabilitySpecs {
     fun forFamily(familyId: DeviceFamilyId, schema: DpSchema): List<CapabilitySpec> = when (familyId) {
         BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> switchSpecs(schema)
         BuiltinDeviceFamilyIds.LIGHT -> lightSpecs()
-        BuiltinDeviceFamilyIds.COVER -> coverSpecs()
+        BuiltinDeviceFamilyIds.COVER -> coverSpecs(schema)
         BuiltinDeviceFamilyIds.CLIMATE_SENSOR -> climateSpecs()
         BuiltinDeviceFamilyIds.CONTACT_SENSOR -> contactSpecs()
         BuiltinDeviceFamilyIds.MOTION_SENSOR -> motionSpecs()
@@ -126,24 +127,59 @@ internal object BuiltinCapabilitySpecs {
         ),
     ) + electricalMeasurements()
 
-    private fun coverSpecs(): List<CapabilitySpec> = listOf(
-        ActionGroupCapabilitySpec(
-            id = CapabilityId("cover.actions"),
-            label = "Cover",
-            codeCandidates = listOf("control_2", "control"),
-            writable = false,
-            actions = listOf(
-                CapabilityChoice("open", "Open"),
-                CapabilityChoice("stop", "Stop"),
-                CapabilityChoice("close", "Close"),
-            ),
-        ),
-        percentageMeasurement(
-            id = "cover.position",
-            label = "Position",
-            codes = listOf("percent_state_2", "percent_state"),
-        ),
-    )
+    private fun coverSpecs(schema: DpSchema): List<CapabilitySpec> = buildList {
+        val controlDefinition = schema.selectUniqueDefinition(COVER_CONTROL_CODES)
+        controlDefinition?.coverActions()?.let { actions ->
+            add(
+                ActionGroupCapabilitySpec(
+                    id = CapabilityId("cover.actions"),
+                    label = "Cover",
+                    codeCandidates = listOf(requireNotNull(controlDefinition.code)),
+                    writable = true,
+                    actions = actions,
+                )
+            )
+        }
+        add(
+            RangeCapabilitySpec(
+                id = CapabilityId("cover.position"),
+                label = "Target position",
+                codeCandidates = COVER_POSITION_CONTROL_CODES,
+                writable = true,
+                display = MeasurementDisplay.PERCENTAGE,
+            )
+        )
+        add(
+            percentageMeasurement(
+                id = "cover.position.reading",
+                label = "Current position",
+                codes = COVER_POSITION_STATE_CODES,
+            )
+        )
+    }
+
+    /**
+     * TinyTuya 1.20.0's CoverDevice documents these command vocabularies. Unlike its runtime
+     * detector, profiles accept one only when the imported Enum schema explicitly declares every
+     * open/stop/close value; there is no default vocabulary or DPS ID.
+     */
+    private fun DpDefinition.coverActions(): List<CapabilityChoice>? {
+        if (declaredType != DpDeclaredType.ENUM) return null
+        val declared = constraints.enumValues.toSet()
+        val vocabulary = COVER_ACTION_VOCABULARIES.firstOrNull { candidate ->
+            candidate.all { action -> action.wireValue in declared }
+        } ?: return null
+        return vocabulary
+    }
+
+    private fun DpSchema.selectUniqueDefinition(codes: List<String>): DpDefinition? {
+        codes.forEach { code ->
+            val matches = definitions.filter { definition -> definition.code == code }
+            if (matches.size > 1) return null
+            if (matches.size == 1) return matches.single()
+        }
+        return null
+    }
 
     private fun climateSpecs(): List<CapabilitySpec> = listOf(
         measurement(
@@ -310,3 +346,39 @@ internal object BuiltinCapabilitySpecs {
     private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")
     private const val MAX_NUMBERED_SWITCHES = 16
 }
+
+private val COVER_CONTROL_CODES = listOf("control_2", "control")
+private val COVER_POSITION_CONTROL_CODES = listOf("percent_control_2", "percent_control")
+private val COVER_POSITION_STATE_CODES = listOf("percent_state_2", "percent_state")
+private val COVER_ACTION_VOCABULARIES = listOf(
+    listOf(
+        CapabilityChoice("open", "Open"),
+        CapabilityChoice("stop", "Stop"),
+        CapabilityChoice("close", "Close"),
+    ),
+    listOf(
+        CapabilityChoice("1", "Open"),
+        CapabilityChoice("0", "Stop"),
+        CapabilityChoice("2", "Close"),
+    ),
+    listOf(
+        CapabilityChoice("01", "Open"),
+        CapabilityChoice("00", "Stop"),
+        CapabilityChoice("02", "Close"),
+    ),
+    listOf(
+        CapabilityChoice("on", "Open"),
+        CapabilityChoice("stop", "Stop"),
+        CapabilityChoice("off", "Close"),
+    ),
+    listOf(
+        CapabilityChoice("up", "Open"),
+        CapabilityChoice("stop", "Stop"),
+        CapabilityChoice("down", "Close"),
+    ),
+    listOf(
+        CapabilityChoice("ZZ", "Open"),
+        CapabilityChoice("STOP", "Stop"),
+        CapabilityChoice("FZ", "Close"),
+    ),
+)

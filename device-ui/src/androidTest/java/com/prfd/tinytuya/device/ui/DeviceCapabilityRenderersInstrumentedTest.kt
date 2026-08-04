@@ -154,6 +154,13 @@ class DeviceCapabilityRenderersInstrumentedTest {
     }
 
     @Test
+    fun rangeRendererShowsTicksOnlyForCoarseRanges() {
+        assertEquals(9, rangeSliderVisualSteps(intervals = 10))
+        assertEquals(0, rangeSliderVisualSteps(intervals = 100))
+        assertEquals(0, rangeSliderVisualSteps(intervals = 2_000_000_000))
+    }
+
+    @Test
     fun rangeRendererNormalizesLargeIntegerBoundsWithoutFloatRangeCollapse() {
         val capability = RangeUiModel(
             CapabilityId("wide.level"),

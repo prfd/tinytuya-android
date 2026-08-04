@@ -108,13 +108,15 @@ private fun CoverCardPreview() = PreviewDeviceCard(
         mappingJson = """
             {
               "1":{"code":"control","type":"Enum","values":{"range":["open","stop","close"]}},
-              "2":{"code":"percent_state","type":"Integer","values":{"min":0,"max":100,"scale":0}}
+              "2":{"code":"percent_control","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
+              "3":{"code":"percent_state","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
             }
         """.trimIndent(),
     ),
     dataPoints = listOf(
         LocalDataPoint("1", LocalDataPointKind.STRING, "stop"),
         LocalDataPoint("2", LocalDataPointKind.INTEGER, "62"),
+        LocalDataPoint("3", LocalDataPointKind.INTEGER, "60"),
     ),
 )
 

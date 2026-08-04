@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "tinytuya"
 include(":app")
+include(":device-core")

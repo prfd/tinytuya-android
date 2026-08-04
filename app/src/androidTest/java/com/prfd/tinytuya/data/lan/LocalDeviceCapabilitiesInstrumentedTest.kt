@@ -111,6 +111,30 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
+    fun decimalEncodedIntegerConstraintsRemainReadOnly() {
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = sampleDevice(
+                category = "dj",
+                mappingJson = """
+                    {
+                      "22":{
+                        "code":"bright_value_v2",
+                        "type":"Integer",
+                        "values":{"min":10.0,"max":1000,"step":1,"scale":0}
+                      }
+                    }
+                """.trimIndent(),
+            ),
+            status = respondedStatus(
+                LocalDataPoint("22", LocalDataPointKind.INTEGER, "500")
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(null, profile.lightControls)
+    }
+
+    @Test
     fun staleStatusAndSubdevicesNeverExposeLocalControls() {
         val device = sampleDevice(
             category = "kg",

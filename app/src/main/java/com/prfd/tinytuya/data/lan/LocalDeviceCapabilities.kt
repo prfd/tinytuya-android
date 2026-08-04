@@ -2,7 +2,10 @@ package com.prfd.tinytuya.data.lan
 
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
-import org.json.JSONObject
+import com.prfd.tinytuya.device.core.schema.DpDeclaredType
+import com.prfd.tinytuya.device.core.schema.DpDefinition
+import com.prfd.tinytuya.device.core.schema.DpSchema
+import java.math.BigDecimal
 
 data class LocalBooleanControl(
     val dataPointId: String,
@@ -132,11 +135,11 @@ object LocalDeviceCapabilityRegistry {
         status: LocalStatusRecord?,
         lastDiscoveryAtEpochMillis: Long?,
     ): LocalDeviceProfile {
-        val mapping = parseMapping(device.mappingJson)
-        val definitions = mappingDefinitions(mapping)
+        val schema = parseTuyaDpSchema(device.mappingJson)
+        val definitions = schema.definitions
         val mappedSwitchCount = definitions.count { definition ->
-            definition.type.equals("Boolean", ignoreCase = true) &&
-                isSwitchCode(definition.code)
+            definition.declaredType == DpDeclaredType.BOOLEAN &&
+                isSwitchCode(definition.code.orEmpty())
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
         val sensorKind = sensorKind(device, definitions)
         val kind = profileKind(
@@ -156,7 +159,7 @@ object LocalDeviceCapabilityRegistry {
                     device = device,
                     status = status,
                     lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-                    mapping = mapping,
+                    schema = schema,
                 )
             } else {
                 emptyList()
@@ -169,7 +172,7 @@ object LocalDeviceCapabilityRegistry {
                     device = device,
                     status = status,
                     lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-                    mapping = mapping,
+                    schema = schema,
                 )
             } else {
                 null
@@ -185,11 +188,11 @@ object LocalDeviceCapabilityRegistry {
         status: LocalStatusRecord?,
         lastDiscoveryAtEpochMillis: Long?,
     ): List<LocalBooleanControl> {
-        val mapping = parseMapping(device.mappingJson)
-        val definitions = mappingDefinitions(mapping)
+        val schema = parseTuyaDpSchema(device.mappingJson)
+        val definitions = schema.definitions
         val mappedSwitchCount = definitions.count { definition ->
-            definition.type.equals("Boolean", ignoreCase = true) &&
-                isSwitchCode(definition.code)
+            definition.declaredType == DpDeclaredType.BOOLEAN &&
+                isSwitchCode(definition.code.orEmpty())
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
         val sensorKind = sensorKind(device, definitions)
         val kind = profileKind(
@@ -205,7 +208,7 @@ object LocalDeviceCapabilityRegistry {
             device = device,
             status = status,
             lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
-            mapping = mapping,
+            schema = schema,
         )
     }
 
@@ -213,7 +216,7 @@ object LocalDeviceCapabilityRegistry {
         device: CloudImportedDevice,
         status: LocalStatusRecord?,
         lastDiscoveryAtEpochMillis: Long?,
-        mapping: JSONObject?,
+        schema: DpSchema,
     ): List<LocalBooleanControl> {
         if (
             device.isSubDevice ||
@@ -221,7 +224,7 @@ object LocalDeviceCapabilityRegistry {
             status.state != LocalPollDeviceState.RESPONDED ||
             lastDiscoveryAtEpochMillis == null ||
             status.polledAtEpochMillis < lastDiscoveryAtEpochMillis ||
-            mapping == null
+            schema.isEmpty
         ) {
             return emptyList()
         }
@@ -233,10 +236,9 @@ object LocalDeviceCapabilityRegistry {
             ) {
                 return@mapNotNull null
             }
-            val definition = mapping.optJSONObject(dataPoint.id) ?: return@mapNotNull null
-            val code = definition.optString("code").trim().lowercase()
-            val type = definition.optString("type").trim()
-            if (!type.equals("Boolean", ignoreCase = true) || !isSwitchCode(code)) {
+            val definition = schema[dataPoint.id] ?: return@mapNotNull null
+            val code = definition.code.orEmpty()
+            if (definition.declaredType != DpDeclaredType.BOOLEAN || !isSwitchCode(code)) {
                 return@mapNotNull null
             }
             Candidate(
@@ -262,7 +264,7 @@ object LocalDeviceCapabilityRegistry {
         device: CloudImportedDevice,
         status: LocalStatusRecord?,
         lastDiscoveryAtEpochMillis: Long?,
-        mapping: JSONObject?,
+        schema: DpSchema,
     ): LocalLightControls? {
         if (
             device.isSubDevice ||
@@ -270,26 +272,22 @@ object LocalDeviceCapabilityRegistry {
             status.state != LocalPollDeviceState.RESPONDED ||
             lastDiscoveryAtEpochMillis == null ||
             status.polledAtEpochMillis < lastDiscoveryAtEpochMillis ||
-            mapping == null
+            schema.isEmpty
         ) {
             return null
         }
         val mode = status.dataPoints.firstNotNullOfOrNull { dataPoint ->
-            val definition = mapping.optJSONObject(dataPoint.id) ?: return@firstNotNullOfOrNull null
+            val definition = schema[dataPoint.id] ?: return@firstNotNullOfOrNull null
             if (
-                definition.optString("code").trim().lowercase() != "work_mode" ||
-                !definition.optString("type").equals("Enum", ignoreCase = true) ||
+                definition.code != "work_mode" ||
+                definition.declaredType != DpDeclaredType.ENUM ||
                 dataPoint.kind != LocalDataPointKind.STRING ||
                 dataPoint.value.length > MAX_LIGHT_ENUM_LENGTH ||
                 dataPoint.value.any(Char::isISOControl)
             ) {
                 return@firstNotNullOfOrNull null
             }
-            val range = definition.mappingValues()?.optJSONArray("range")
-                ?: return@firstNotNullOfOrNull null
-            val declaredValues = (0 until range.length()).mapTo(mutableSetOf()) { index ->
-                range.optString(index)
-            }
+            val declaredValues = definition.constraints.enumValues
             if (
                 LocalLightMode.WHITE.wireValue !in declaredValues ||
                 LocalLightMode.COLOR.wireValue !in declaredValues ||
@@ -306,19 +304,19 @@ object LocalDeviceCapabilityRegistry {
         }
         val whiteBrightness = lightIntegerControl(
             status = status,
-            mapping = mapping,
+            schema = schema,
             codes = listOf("bright_value_v2", "bright_value"),
         )
         val colorTemperature = lightIntegerControl(
             status = status,
-            mapping = mapping,
+            schema = schema,
             codes = listOf("temp_value_v2", "temp_value"),
         )
         val color = status.dataPoints.firstNotNullOfOrNull { dataPoint ->
-            val definition = mapping.optJSONObject(dataPoint.id) ?: return@firstNotNullOfOrNull null
+            val definition = schema[dataPoint.id] ?: return@firstNotNullOfOrNull null
             if (
-                definition.optString("code").trim().lowercase() != "colour_data_v2" ||
-                !definition.optString("type").equals("Json", ignoreCase = true) ||
+                definition.code != "colour_data_v2" ||
+                definition.declaredType != DpDeclaredType.JSON ||
                 dataPoint.kind != LocalDataPointKind.STRING
             ) {
                 return@firstNotNullOfOrNull null
@@ -345,24 +343,24 @@ object LocalDeviceCapabilityRegistry {
 
     private fun lightIntegerControl(
         status: LocalStatusRecord,
-        mapping: JSONObject,
+        schema: DpSchema,
         codes: List<String>,
     ): LocalLightIntegerControl? = codes.firstNotNullOfOrNull codeLoop@ { requestedCode ->
         status.dataPoints.firstNotNullOfOrNull dataPointLoop@ { dataPoint ->
-            val definition = mapping.optJSONObject(dataPoint.id) ?: return@dataPointLoop null
-            val code = definition.optString("code").trim().lowercase()
+            val definition = schema[dataPoint.id] ?: return@dataPointLoop null
+            val code = definition.code.orEmpty()
             if (
                 code != requestedCode ||
-                !definition.optString("type").equals("Integer", ignoreCase = true) ||
+                definition.declaredType != DpDeclaredType.INTEGER ||
                 dataPoint.kind != LocalDataPointKind.INTEGER
             ) {
                 return@dataPointLoop null
             }
-            val values = definition.mappingValues() ?: return@dataPointLoop null
-            val minimum = values.strictInt("min") ?: return@dataPointLoop null
-            val maximum = values.strictInt("max") ?: return@dataPointLoop null
-            val step = values.strictInt("step") ?: return@dataPointLoop null
-            val scale = values.strictInt("scale") ?: return@dataPointLoop null
+            val constraints = definition.constraints
+            val minimum = constraints.minimum.exactIntOrNull() ?: return@dataPointLoop null
+            val maximum = constraints.maximum.exactIntOrNull() ?: return@dataPointLoop null
+            val step = constraints.step.exactIntOrNull() ?: return@dataPointLoop null
+            val scale = constraints.scale ?: return@dataPointLoop null
             val currentValue = dataPoint.value.toIntOrNull() ?: return@dataPointLoop null
             if (
                 scale != 0 ||
@@ -402,29 +400,14 @@ object LocalDeviceCapabilityRegistry {
         }
     }
 
-    private fun JSONObject.mappingValues(): JSONObject? = when (val values = opt("values")) {
-        is JSONObject -> values
-        is String -> runCatching { JSONObject(values) }.getOrNull()
-        else -> null
-    }
-
-    private fun JSONObject.strictInt(name: String): Int? {
-        val value = opt(name) ?: return null
-        if (value == JSONObject.NULL) return null
-        return value.toString().toIntOrNull()
-    }
-
-    private fun parseMapping(mappingJson: String): JSONObject? =
-        runCatching { JSONObject(mappingJson) }.getOrNull()
-
     private fun profileKind(
         device: CloudImportedDevice,
-        definitions: List<MappingDefinition>,
+        definitions: List<DpDefinition>,
         mappedSwitchCount: Int,
         sensorKind: LocalSensorKind?,
     ): LocalDeviceProfileKind {
         val category = device.category.trim().lowercase()
-        val codes = definitions.mapTo(mutableSetOf()) { it.code }
+        val codes = definitions.mapNotNullTo(mutableSetOf()) { it.code }
         return when {
             category in LIGHT_CATEGORIES ->
                 LocalDeviceProfileKind.LIGHT
@@ -442,7 +425,7 @@ object LocalDeviceCapabilityRegistry {
 
     private fun sensorKind(
         device: CloudImportedDevice,
-        definitions: List<MappingDefinition>,
+        definitions: List<DpDefinition>,
     ): LocalSensorKind? {
         when (device.category.trim().lowercase()) {
             "wsdcg" -> return LocalSensorKind.CLIMATE
@@ -453,7 +436,7 @@ object LocalDeviceCapabilityRegistry {
             "ywbj" -> return LocalSensorKind.SMOKE
             "rqbj" -> return LocalSensorKind.GAS
         }
-        val codes = definitions.mapTo(mutableSetOf()) { definition -> definition.code }
+        val codes = definitions.mapNotNullTo(mutableSetOf()) { definition -> definition.code }
         return when {
             codes.any { code -> code in WATER_SENSOR_CODES } -> LocalSensorKind.WATER_LEAK
             codes.any { code -> code in SMOKE_SENSOR_CODES } -> LocalSensorKind.SMOKE
@@ -488,23 +471,6 @@ object LocalDeviceCapabilityRegistry {
         }
     }
 
-    private fun mappingDefinitions(mapping: JSONObject?): List<MappingDefinition> {
-        if (mapping == null) return emptyList()
-        return buildList {
-            val keys = mapping.keys()
-            while (keys.hasNext()) {
-                val id = keys.next()
-                val definition = mapping.optJSONObject(id) ?: continue
-                add(
-                    MappingDefinition(
-                        code = definition.optString("code").trim().lowercase(),
-                        type = definition.optString("type").trim(),
-                    )
-                )
-            }
-        }
-    }
-
     private fun isSwitchCode(code: String): Boolean =
         code == "switch" ||
             code == "switch_led" ||
@@ -520,11 +486,6 @@ object LocalDeviceCapabilityRegistry {
         val dataPointId: String,
         val code: String,
         val currentValue: Boolean,
-    )
-
-    private data class MappingDefinition(
-        val code: String,
-        val type: String,
     )
 
     private val BOOLEAN_WIRE_VALUES = setOf("true", "false")
@@ -601,3 +562,8 @@ object LocalDeviceCapabilityRegistry {
     private const val LIGHT_COLOR_HEX_LENGTH = 12
     private val LIGHT_COLOR_HEX = Regex("[0-9a-fA-F]{12}")
 }
+
+private fun BigDecimal?.exactIntOrNull(): Int? =
+    this
+        ?.takeIf { value -> value.scale() == 0 }
+        ?.let { value -> runCatching(value::intValueExact).getOrNull() }

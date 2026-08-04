@@ -1,20 +1,20 @@
 # TinyTuya Android source guide
 
-This is a guided route through the codebase, not a list of every file. Read it in short passes and stop at the checkpoints. The goal is to understand one complete feature at a time before reading visual details or protocol hardening.
+This is a guided route through the codebase, not a list of every file.
 
 The most important fact to keep in mind is that the app has three layers:
 
 ```text
-Compose screens
+[Compose screens]
     events down, immutable UI state up
-ViewModels and Kotlin coordinators
+[ViewModels and Kotlin coordinators]
     typed requests and results
-Chaquopy gateway <-> versioned JSON <-> tuya_bridge.py <-> TinyTuya
+[Chaquopy gateway] <-> versioned JSON <-> tuya_bridge.py <-> TinyTuya
+                                ^                 |
                                 |                 |
-                          Tuya Cloud HTTPS   local UDP/TCP
+                                |                 v    
+                          Tuya Cloud         local UDP/TCP
 ```
-
-Kotlin owns Android lifecycle, UI state, Wi-Fi selection, policy, and encrypted persistence. Python owns the calls into TinyTuya. Neither side is trusted blindly: both validate inputs and results at their boundary.
 
 Device extensibility follows a smaller enforced dependency graph alongside that runtime flow:
 
@@ -22,7 +22,7 @@ Device extensibility follows a smaller enforced dependency graph alongside that 
 :device-profiles ---> :device-core <--- :device-ui
           ^                 ^                 ^
           |                 |                 |
-          +--------------- :app -------------+
+          +--------------- :app --------------+
 ```
 
 `:app` is the only composition root. `:device-profiles` and `:device-ui` depend only on
@@ -31,7 +31,7 @@ project dependencies and any import from an app-owned first-party package.
 
 ## Start here: the eight-file tour
 
-Do not begin with either of the 1,000-line Compose files. Read these files in order:
+Read these files in order:
 
 1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the composition root. It constructs the real stores, gateway, network resolver, coordinators, and ViewModels, then reports foreground entry from `onStart`.
 2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, recovery, or the local settings UI.
@@ -41,8 +41,6 @@ Do not begin with either of the 1,000-line Compose files. Read these files in or
 6. [LanDiscoveryModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryModels.kt), [LocalStatusModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalStatusModels.kt), and [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt) — the small typed vocabulary used by the coordinators and bridge.
 7. [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt) — the Kotlin side of Chaquopy. Read its interface, the five public methods, and `parseResponse`; skip the detailed JSON fields on the first pass.
 8. [tuya_bridge.py](app/src/main/python/tuya_bridge.py) — the Python boundary. Read the module comment, `_success`, `_failure`, then only the five public functions: `health`, `import_cloud`, `discover_lan`, `poll_local`, and `set_values`.
-
-Checkpoint: after this tour, you should be able to explain why the ViewModels and coordinators can receive a fake gateway or store in a test, and why Compose never calls TinyTuya directly.
 
 ## The four kinds of device state
 

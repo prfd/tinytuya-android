@@ -1,12 +1,14 @@
 # TinyTuya Android source guide
 
 This is a guided route through the codebase, not a list of every file.
+It describes the current post-migration architecture and retains the
+historical rationale and phase log.
 
-The most important fact to keep in mind is that the app has three layers:
+The main runtime path has three layers:
 
 ```text
 [Compose screens]
-    events down, immutable UI state up
+    events to ViewModels, immutable UI state to Compose
 [ViewModels and Kotlin coordinators]
     typed requests and results
 [Chaquopy gateway] <-> versioned JSON <-> tuya_bridge.py <-> TinyTuya
@@ -16,25 +18,40 @@ The most important fact to keep in mind is that the app has three layers:
                           Tuya Cloud         local UDP/TCP
 ```
 
-Device extensibility follows a smaller enforced dependency graph alongside that runtime flow:
+Device extensibility crosses that runtime flow through a separate, enforced dependency graph. Arrows
+mean “depends on”:
 
 ```text
-:device-profiles ---> :device-core <--- :device-ui
-          ^                 ^                 ^
-          |                 |                 |
-          +--------------- :app --------------+
+:app --> :device-core
+:app --> :device-profiles --> :device-core
+:app --> :device-ui --------> :device-core
 ```
 
-`:app` is the only composition root. `:device-profiles` and `:device-ui` depend only on
-`:device-core`; every device-module compile runs `verifyDeviceModuleBoundaries`, which rejects other
-project dependencies and any import from an app-owned first-party package.
+The ownership boundary is:
 
-## Start here: the eight-file tour
+| Module | Owns | Must not own |
+| --- | --- | --- |
+| `:device-core` | Normalized DP schemas, family contracts, protected-device policy, semantic capability specs and intents, resolution, codecs, and command authorization | Android, Compose, app models, transport, persistence, Python, or secrets |
+| `:device-profiles` | Built-in family matching, presentation metadata, support evidence, and capability-spec assembly | Fresh observations, DPS writes, app models, UI, transport, persistence, Python, or secrets |
+| `:device-ui` | Safe UI models, atomic controls, compound layout contracts, and reusable layouts | Catalog models, raw mapping JSON, DPS bindings, network state, local keys, persistence, or Python |
+| `:app` | Raw Tuya mapping adaptation, fresh observations, runtime policy application, explicit profile/layout composition, ViewModels, persistence, and transport | Device-specific copies of generic authorization or transport behavior |
+
+`:app` is the only module allowed to join these domains. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt)
+is the runtime dependency-composition root; `inventoryDeviceLayoutRegistry` in
+[InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) is the
+explicit UI-layout composition point. Registries are compile-time lists—there is no reflection,
+classpath scanning, or runtime device plugin loading.
+
+`:device-profiles` and `:device-ui` depend only on `:device-core`. Every device-module Kotlin compile
+and `check` runs `verifyDeviceModuleBoundaries`, which rejects other project dependencies and any
+import from an app-owned first-party package.
+
+## Start here: the eight-stop tour
 
 Read these files in order:
 
-1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the composition root. It constructs the real stores, gateway, network resolver, coordinators, and ViewModels, then reports foreground entry from `onStart`.
-2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, recovery, or the local settings UI.
+1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the runtime composition root. It wires the real stores, app gateway, network resolver, coordinators, and ViewModel factories, then reports foreground entry from `onStart`.
+2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, or recovery and layers the local Settings subdestination over a valid inventory.
 3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, and `submitControl`.
 4. [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt) — cloud credentials, imported devices, and the deliberately redacted `SensitiveString`.
 5. [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) and [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — the separate encrypted security domains for Tuya Cloud credentials and locally usable device data. Initially read only their models and interfaces.
@@ -50,10 +67,14 @@ Several lists coexist in `DeviceCatalog`. They are not duplicates:
 | --- | --- | --- | --- |
 | Imported identity | `CloudImportedDevice` in `DeviceCatalog.devices` | Tuya ID, local key, mapping, category, and product metadata imported from the user's cloud project | Replaced by an explicit cloud import |
 | LAN observation | `LanDeviceRecord` plus `lastDiscoveryNetwork` in `DeviceCatalog` | An ID was heard at an IP and protocol version on one exact Android network | Current only when its timestamp belongs to the latest generation and the observed Android network handle still matches |
-| Local status | `LocalStatusRecord` in `DeviceCatalog.localStatus` | The latest normalized DPS values or offline/error result | Safe for current controls only when it was polled after the current discovery |
-| Control session | `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel` | The exact Wi-Fi network and discovery generation authorized for writes | Process-only; cleared on reload, navigation, a new scan, deletion, or a default-network change |
+| Local status | `LocalStatusRecord` in `DeviceCatalog.localStatus` | The latest normalized DPS values or offline/error result | Safe for current controls only when it is a successful response polled at or after the current discovery generation |
+| Control session | `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel` | The exact Wi-Fi network and discovery generation authorized for writes | Process-only; cleared on catalog reload, leaving inventory for onboarding, a new refresh/scan, deletion, or a default-network change |
 
-This split explains an important UI behavior: an old address can remain encrypted as history without being treated as a device found by the latest scan. A control is available only after a fresh discovery and status read in the current app process.
+This split explains an important UI behavior: an old address can remain encrypted as history without
+being treated as a device found by the latest scan. A control is available only when the saved
+discovery generation still belongs to the exact active Android network and a fresh status read has
+opened a matching control session in the current app process. A trustworthy saved address may reach
+that state through quick refresh without repeating UDP discovery.
 
 ## Pass 1: startup and routing
 
@@ -100,12 +121,17 @@ CredentialsScreen
   -> tinytuya.Cloud.getdevices(include_map=True)
   -> normalized JSON envelope
   -> Kotlin validation and CloudImportResult
-  -> EncryptedCloudCredentialStore.save after accepted new credentials
+  -> EncryptedCloudCredentialStore.save after accepted newly entered credentials
   -> EncryptedDeviceCatalogStore.replaceFromCloud
   -> AppRoute asks AppViewModel to reload the catalog
 ```
 
-The actual order around the network call is `gateway.importCloud`, credential-vault save, then non-empty catalog replacement. This means an unvalidated form can never replace the last known-good vault record. The saved-account route starts at an explicit inventory or Settings action, calls `prepareForCloudSync`, loads the vault directly inside the coroutine, and sends those values to the gateway without placing them in Compose state.
+For newly entered or replacement credentials, the actual order around the network call is
+`gateway.importCloud`, credential-vault save, then non-empty catalog replacement. This means an
+unvalidated form can never replace the last known-good vault record. The saved-account route starts
+at an explicit inventory or Settings action, calls `prepareForCloudSync`, loads the vault directly
+inside the coroutine, and sends those values to the gateway without placing them in Compose state or
+rewriting an already accepted vault record.
 
 Read in this order:
 
@@ -204,7 +230,9 @@ Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel
 
 `LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`.
 
-Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons are that the record belongs to an older discovery generation, the device has no key, its protocol version is unsupported, or its access kind blocks direct local access.
+Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons
+are that the record belongs to an older discovery generation, the device has no key, its protocol
+version is unsupported, or `ProtectedDevicePolicy` denies direct local access.
 
 ## Pass 4: capability policy and device cards
 
@@ -216,28 +244,38 @@ Cloud categories and DPS mappings are inconsistent across Tuya products, so the 
 - `CapabilityAccess` intersects that policy with the matched specs before any observed capability can
   become writable.
 
-Read the capability path in three pieces:
+Read the capability path in four pieces:
 
-1. `DeviceFamily.kt` in `:device-core` and `BuiltinDeviceFamilies.kt` in `:device-profiles`
-   classify secret-free identity plus normalized mapping metadata.
-2. `CapabilitySpecs.kt`, `DeviceObservation.kt`, and `CapabilityResolver.kt` in `:device-core`
-   define the reusable primitives and fail-closed schema/freshness/access intersection.
-3. [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilities.kt)
+1. [TuyaDpSchemaAdapter.kt](app/src/main/java/com/prfd/tinytuya/data/lan/TuyaDpSchemaAdapter.kt)
+   is the only app adapter which parses imported raw mapping JSON into the bounded core `DpSchema`.
+2. [DeviceFamily.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/profile/DeviceFamily.kt)
+   in `:device-core` and
+   [BuiltinDeviceFamilies.kt](device-profiles/src/main/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamilies.kt)
+   in `:device-profiles` classify secret-free identity plus normalized mapping metadata.
+3. [CapabilitySpecs.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/capability/CapabilitySpecs.kt),
+   [DeviceObservation.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/capability/DeviceObservation.kt),
+   and [CapabilityResolver.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityResolver.kt)
+   in `:device-core` define the reusable primitives and fail-closed
+   schema/freshness/access intersection.
+4. [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilities.kt)
    adapts imported Android models into normalized identity/schema/observation inputs, then exposes
    only family presentation metadata, core restriction/access values, and a redacted
    `ResolvedDevice`.
 
 A Boolean control exists only when all of these agree:
 
-1. The device class is allowed direct control.
-2. The cached cloud mapping declares the DP as Boolean with a recognized switch code.
-3. A status response from the current discovery generation independently reports that DP as Boolean.
+1. `ProtectedDevicePolicy` returns no restriction, and exactly one matched family declares the
+   semantic toggle writable.
+2. The cached cloud mapping uniquely declares a DP as Boolean with a recognized switch code.
+3. A successful status response at or after the current discovery generation independently reports
+   that DP as Boolean.
 
 Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; arbitrary JSON or other color encodings remain read-only.
 
 Profiles declaring writable semantics can receive `CapabilityAccess.READ_WRITE`; individual
 capabilities still become writable only after the complete schema/fresh-observation intersection.
-Read-only sensor specs and unmatched devices receive `READ_ONLY`. Gateway children, gateways,
+Families with only read-only specs and unmatched or ambiguous devices receive `READ_ONLY`; the latter
+resolve no semantic capabilities and use the generic presentation. Gateway children, gateways,
 cameras, and locks receive `DENIED` and do not reach local polling or writes.
 
 Cover actions deserve a close read in `BuiltinCapabilitySpecs.kt`. The profile accepts only an
@@ -249,19 +287,31 @@ to the ordinary range and measurement primitives.
 
 Then read the presentation pipeline:
 
-- `DeviceUiModels.kt` and `DeviceCapabilityRenderers.kt` in `:device-ui` map `ResolvedDevice` into
-  bounded display-only models and render toggle, range, choice, action, color, measurement, binary,
-  and safe-text primitives. This module sees no catalog, mapping JSON, network, key, or Python type.
-- `StandardDeviceLayoutIds.kt` in `:device-core`, followed by `DeviceLayoutRenderers.kt`,
-  `LightDeviceLayoutRenderer.kt`, `CoverDeviceLayoutRenderer.kt`, and
-  `SensorSummaryLayoutRenderer.kt` in `:device-ui`, define stable arrangement hints, the explicit
-  renderer/fallback contract, and the reusable compound layouts.
+- [DeviceUiModels.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceUiModels.kt) and
+  [DeviceCapabilityRenderers.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderers.kt)
+  in `:device-ui` map `ResolvedDevice` into bounded display-only models and render toggle, range,
+  choice, action, color, measurement, binary, and safe-text primitives. This module sees no catalog,
+  mapping JSON, network, key, or Python type.
+- [StandardDeviceLayoutIds.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/profile/StandardDeviceLayoutIds.kt)
+  in `:device-core`, followed by
+  [DeviceLayoutRenderers.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderers.kt),
+  [LightDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/LightDeviceLayoutRenderer.kt),
+  [CoverDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/CoverDeviceLayoutRenderer.kt),
+  and [SensorSummaryLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/SensorSummaryLayoutRenderer.kt)
+  in `:device-ui` define stable arrangement hints, the explicit renderer/fallback contract, and the
+  reusable compound layouts.
   A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
 - [LocalDataPointInspection.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDataPointInspection.kt)
-  builds the capped safe inspector from the same normalized schema boundary; Compose never parses raw
-  mapping JSON.
+  builds the safe inspector from already bounded local-status data and the same normalized schema
+  boundary; Compose never parses raw mapping JSON.
 - [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) assembles
   the renderer registry and hosts the selected compound or complete generic atomic fallback.
+
+That is the complete ordinary extension seam. A product covered by existing primitives changes
+`:device-profiles`, sanitized host fixtures, support evidence, and one explicit family registry entry;
+it does not add an app callback or transport operation. A genuinely different arrangement may add a
+safe `:device-ui` layout plus one explicit app registry entry, while the atomic fallback remains
+complete. Follow [DEVICE_CONTRIBUTING.md](DEVICE_CONTRIBUTING.md) for the contribution checklist.
 
 For `InventoryScreen.kt`, search for and read only these functions at first:
 
@@ -428,13 +478,18 @@ After each production flow, read its nearest test instead of immediately reading
 | Discovery selection and merge | [LanDiscoveryCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinatorInstrumentedTest.kt) |
 | Status eligibility | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt) |
 | Write authorization and rollback | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt) |
-| Profiles and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
-| Pure cover profile fixtures and public evidence | `CoverDeviceProfileTest.kt` and `BuiltinSupportDocumentationTest.kt` in `:device-profiles` |
-| Layout registry and cover/light/sensor fallback | `DeviceLayoutRenderersInstrumentedTest.kt` in `:device-ui` |
+| Core schema, resolution, authorization, and protected policy | [DpSchemaTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/schema/DpSchemaTest.kt), [CapabilityResolverTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityResolverTest.kt), [CapabilityCommandAuthorizerTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityCommandAuthorizerTest.kt), and [ProtectedDevicePolicyTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/profile/ProtectedDevicePolicyTest.kt) |
+| Android profile adapter and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
+| Built-in profiles, cover fixtures, and public evidence | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt), [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt), and [BuiltinSupportDocumentationTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinSupportDocumentationTest.kt) |
+| Atomic controls | [DeviceCapabilityRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderersInstrumentedTest.kt) |
+| Layout registry and cover/light/sensor fallback | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt) |
 | Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
 | Safe DPS inspection | [LocalDataPointInspectionInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDataPointInspectionInstrumentedTest.kt) |
 
-Most feature tests are instrumentation tests because Compose, Android Keystore, Android networking types, and Chaquopy need an Android runtime. The small tests under `app/src/test` are host JVM tests for code which has no Android dependency.
+The device architecture keeps schema normalization, family selection, capability resolution, codecs,
+and authorization under fast host JVM tests in `:device-core` and `:device-profiles`. Compose, Android
+Keystore, Android networking types, lifecycle, app integration, and Chaquopy remain instrumentation
+tests. The small tests under `app/src/test` cover app code which has no Android dependency.
 
 The opt-in [LightCapabilityProbeInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/LightCapabilityProbeInstrumentedTest.kt) produces a sanitized mapping report from the encrypted on-device catalog. It is skipped by default. Read and follow its manual ADB workflow exactly; do not invoke it through `connectedDebugAndroidTest`, which may remove the installed debug app and its private data during teardown.
 
@@ -478,18 +533,22 @@ From WSL, `rg` is the quickest way to jump to a symbol:
 ```bash
 rg -n 'fun (refreshCatalog|refreshKnownDevices|discoverLan|submitControl)' app/src/main/java
 rg -n '^def (import_cloud|discover_lan|poll_local|set_values)' app/src/main/python/tuya_bridge.py
+rg -n 'DeviceFamilyDefinition|CapabilitySpec|DeviceLayoutRenderer' device-{core,profiles,ui}/src
 rg -n 'LOCAL_CONTROL_UNCONFIRMED' app/src
 ```
 
 Because this checkout and Android toolchain live on Windows, run Gradle through Windows when verifying changes:
 
 ```bash
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat testDebugUnitTest
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat assembleDebugAndroidTest
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat verifyDeviceModuleBoundaries
+/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat :device-core:test :device-profiles:test testDebugUnitTest verifyDeviceModuleBoundaries -q --warning-mode=none --console=plain
+/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat lint assembleDebug :app:assembleDebugAndroidTest :device-ui:assembleDebugAndroidTest installDebug -q --warning-mode=none --console=plain
 ```
 
-For device tests, upgrade the target app with `installDebug`, install the assembled test APK with `adb install -r -t`, and invoke the runner directly. Do not use `connectedDebugAndroidTest` against an installed catalog which must be preserved: Gradle's deployment teardown may uninstall the target app and erase its private data.
+For device tests which must preserve the encrypted catalog, upgrade the target app with `installDebug`,
+install the relevant assembled test APK with `adb install -r -t`, and invoke its runner directly. The
+app and `:device-ui` have separate test APKs. Do not use `connectedDebugAndroidTest` against an
+installed catalog which must be preserved: Gradle's deployment teardown may uninstall the target app
+and erase its private data.
 
 ## A practical learning loop
 

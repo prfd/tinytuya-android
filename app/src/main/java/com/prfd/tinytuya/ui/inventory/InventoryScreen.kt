@@ -612,7 +612,7 @@ internal fun InventoryDeviceCard(
     ) {
         if (isCurrentStatus && localStatus?.state == LocalPollDeviceState.RESPONDED) {
             profile.sensorKind?.let { sensorKind ->
-                presentLocalSensor(device, sensorKind, localStatus.dataPoints)
+                presentLocalSensor(sensorKind, profile.capabilities)
             }
         } else {
             null
@@ -742,14 +742,14 @@ private fun LocalStatusPanel(
             lightControls.colorTemperature?.dataPointId?.let(featuredIds::add)
             lightControls.color?.dataPointId?.let(featuredIds::add)
         }
-        status?.let { currentStatus ->
+        if (status != null) {
             presentLocalDataPoints(
-                device = device,
-                dataPoints = currentStatus.dataPoints.filterNot { dataPoint ->
-                    dataPoint.id in featuredIds
-                },
+                capabilities = profile.capabilities,
+                excludedDataPointIds = featuredIds,
             )
-        }.orEmpty()
+        } else {
+            emptyList()
+        }
     }
     val inspection = remember(device.mappingJson, status?.dataPoints, status?.state) {
         status

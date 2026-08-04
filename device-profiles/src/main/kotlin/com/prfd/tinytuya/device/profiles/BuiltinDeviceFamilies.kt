@@ -1,5 +1,6 @@
 package com.prfd.tinytuya.device.profiles
 
+import com.prfd.tinytuya.device.core.capability.CapabilitySpec
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyDefinition
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyRegistry
@@ -162,6 +163,11 @@ private class DeclarativeDeviceFamily(
         schema.definitions.any(schemaMatcher) -> DeviceMatch(schemaStrength)
         else -> DeviceMatch.NONE
     }
+
+    override fun capabilitySpecs(
+        identity: DeviceIdentity,
+        schema: DpSchema,
+    ): List<CapabilitySpec> = BuiltinCapabilitySpecs.forFamily(id, schema)
 }
 
 private fun sensorFamily(

@@ -7,6 +7,9 @@ import com.prfd.tinytuya.device.core.profile.DeviceMatchStrength
 import com.prfd.tinytuya.device.core.profile.DeviceSupportLevel
 import com.prfd.tinytuya.device.core.schema.DpDefinitionInput
 import com.prfd.tinytuya.device.core.schema.DpSchema
+import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.RangeCapabilitySpec
+import com.prfd.tinytuya.device.core.capability.ToggleCapabilitySpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -120,18 +123,62 @@ class BuiltinDeviceFamiliesTest {
         )
     }
 
+    @Test
+    fun `profile capabilities use semantic ids independent of DPS numbers`() {
+        fun idsFor(powerDp: String, brightnessDp: String): List<CapabilityId> {
+            val schema = DpSchema.normalize(
+                listOf(
+                    definition(powerDp, "switch_led", "Boolean"),
+                    DpDefinitionInput(
+                        id = brightnessDp,
+                        code = "bright_value_v2",
+                        declaredType = "Integer",
+                        minimum = "10",
+                        maximum = "1000",
+                        step = "1",
+                        scale = "0",
+                    ),
+                )
+            )
+            val family = resolve(category = "dj", schema = schema)
+                .let { it as DeviceFamilyResolution.Matched }
+                .definition
+            return family.capabilitySpecs(identity("dj"), schema).map { it.id }
+        }
+
+        assertEquals(idsFor("1", "2"), idsFor("20", "101"))
+        assertTrue(CapabilityId("power") in idsFor("1", "2"))
+        assertTrue(CapabilityId("light.brightness") in idsFor("1", "2"))
+    }
+
+    @Test
+    fun `switch and light profiles declare writable intent without observations`() {
+        val switchSchema = DpSchema.normalize(listOf(definition("8", "switch_2", "Boolean")))
+        val switchDefinition = (resolve(category = "kg", schema = switchSchema)
+            as DeviceFamilyResolution.Matched).definition
+        val switchSpecs = switchDefinition.capabilitySpecs(identity("kg"), switchSchema)
+        val lightDefinition = (resolve(category = "dj", schema = DpSchema.empty())
+            as DeviceFamilyResolution.Matched).definition
+        val lightSpecs = lightDefinition.capabilitySpecs(identity("dj"), DpSchema.empty())
+
+        assertEquals("switch.2", switchSpecs.filterIsInstance<ToggleCapabilitySpec>().single().id.value)
+        assertTrue(lightSpecs.filterIsInstance<RangeCapabilitySpec>().all { it.writable })
+    }
+
     private fun resolve(
         category: String = "custom",
         schema: DpSchema,
     ): DeviceFamilyResolution = BuiltinDeviceFamilies.registry.resolve(
-        identity = DeviceIdentity.normalize(
+        identity = identity(category),
+        schema = schema,
+    )
+
+    private fun identity(category: String): DeviceIdentity = DeviceIdentity.normalize(
             category = category,
             productId = "fixture-product",
             productName = "Fixture",
             model = "Model",
             isSubDevice = false,
-        ),
-        schema = schema,
     )
 
     private fun definition(

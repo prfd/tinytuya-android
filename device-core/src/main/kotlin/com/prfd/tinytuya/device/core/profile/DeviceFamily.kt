@@ -1,5 +1,6 @@
 package com.prfd.tinytuya.device.core.profile
 
+import com.prfd.tinytuya.device.core.capability.CapabilitySpec
 import com.prfd.tinytuya.device.core.schema.DpSchema
 
 @JvmInline
@@ -137,6 +138,10 @@ interface DeviceFamilyDefinition {
     val presentation: DevicePresentation
 
     fun match(identity: DeviceIdentity, schema: DpSchema): DeviceMatch
+
+    /** Declares intent from normalized metadata only; fresh observed DPS is never exposed here. */
+    fun capabilitySpecs(identity: DeviceIdentity, schema: DpSchema): List<CapabilitySpec> =
+        emptyList()
 }
 
 sealed interface DeviceFamilyResolution {

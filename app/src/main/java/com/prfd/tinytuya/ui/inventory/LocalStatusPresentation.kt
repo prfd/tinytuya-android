@@ -2,8 +2,11 @@ package com.prfd.tinytuya.ui.inventory
 
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
+import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.python.CloudImportedDevice
-import java.math.BigDecimal
+import com.prfd.tinytuya.device.core.capability.ResolvedChoice
+import com.prfd.tinytuya.device.core.capability.ResolvedDeviceCapabilities
+import com.prfd.tinytuya.device.core.capability.ResolvedMeasurement
 import org.json.JSONObject
 
 internal data class PresentedDataPoint(
@@ -27,49 +30,39 @@ internal data class LocalDataPointInspection(
 internal fun presentLocalDataPoints(
     device: CloudImportedDevice,
     dataPoints: List<LocalDataPoint>,
-): List<PresentedDataPoint> {
-    val mapping = runCatching { JSONObject(device.mappingJson) }.getOrNull()
-    val candidates = dataPoints.map { dataPoint ->
-        val definition = mapping?.optJSONObject(dataPoint.id)
-        PresentationCandidate(
-            dataPoint = dataPoint,
-            definition = definition,
-            code = definition.safeMappingCode().orEmpty(),
-        )
-    }
-    val mappedSwitchCount = candidates.count { candidate ->
-        val code = candidate.code
-        code == "switch" || code == "switch_led" || code.startsWith("switch_")
-    }
-    return candidates
-        .filter { candidate -> isCardHighlight(candidate.code) }
+): List<PresentedDataPoint> = presentLocalDataPoints(
+    capabilities = LocalDeviceCapabilityRegistry.resolveFreshReadOnly(device, dataPoints),
+)
+
+/** Bridges resolved read-only primitives into the compact main-card highlight model. */
+internal fun presentLocalDataPoints(
+    capabilities: ResolvedDeviceCapabilities,
+    excludedDataPointIds: Set<String> = emptySet(),
+): List<PresentedDataPoint> = capabilities.capabilities
+        .filter { capability -> capability.dataPointId !in excludedDataPointIds }
+        .mapNotNull { capability ->
+            when (capability) {
+                is ResolvedMeasurement -> PresentedDataPoint(
+                    id = capability.dataPointId,
+                    label = capability.label,
+                    value = capability.displayValue,
+                ) to capability.code
+                is ResolvedChoice -> PresentedDataPoint(
+                    id = capability.dataPointId,
+                    label = capability.label,
+                    value = capability.currentLabel ?: "Unknown mode",
+                ) to capability.code
+                else -> null
+            }
+        }
+        .filter { (_, code) -> isCardHighlight(code) }
         .sortedWith(
-            compareBy<PresentationCandidate> { dataPointPriority(it.code) }
-                .thenBy { it.dataPoint.id.toIntOrNull() ?: Int.MAX_VALUE }
-                .thenBy { it.dataPoint.id }
+            compareBy<Pair<PresentedDataPoint, String>> { (_, code) -> dataPointPriority(code) }
+                .thenBy { (dataPoint) -> dataPoint.id.toIntOrNull() ?: Int.MAX_VALUE }
+                .thenBy { (dataPoint) -> dataPoint.id }
         )
         .take(MAX_PRESENTED_DATA_POINTS)
-        .map { candidate ->
-            val dataPoint = candidate.dataPoint
-            val code = candidate.code
-            val label = dataPointLabel(
-                device = device,
-                id = dataPoint.id,
-                code = code,
-                isOnlyMappedSwitch = mappedSwitchCount == 1,
-            )
-            PresentedDataPoint(
-                id = dataPoint.id,
-                label = label,
-                value = dataPointValue(
-                    dataPoint = dataPoint,
-                    code = code,
-                    definition = candidate.definition,
-                    isPower = label == "Power",
-                ),
-            )
-        }
-}
+        .map(Pair<PresentedDataPoint, String>::first)
 
 internal fun inspectLocalDataPoints(
     device: CloudImportedDevice,
@@ -94,71 +87,6 @@ internal fun inspectLocalDataPoints(
         totalCount = dataPoints.size,
         dataPoints = inspected,
     )
-}
-
-private fun dataPointLabel(
-    device: CloudImportedDevice,
-    id: String,
-    code: String,
-    isOnlyMappedSwitch: Boolean,
-): String {
-    if (code == "switch" || code == "switch_led") return "Power"
-    if (code.startsWith("switch_")) {
-        if (isOnlyMappedSwitch) return "Power"
-        val suffix = code.removePrefix("switch_")
-        return suffix.toIntOrNull()?.let { "Switch $it" } ?: "Power"
-    }
-    standardDataPointLabel(code)?.let { return it }
-    if (code.isNotBlank()) return code.toReadableLabel()
-    if (id == "1" && device.category.trim().lowercase() in SWITCH_CATEGORIES) return "Power"
-    return "DP $id"
-}
-
-private fun dataPointValue(
-    dataPoint: LocalDataPoint,
-    code: String,
-    definition: JSONObject?,
-    isPower: Boolean,
-): String {
-    if (code in PERCENTAGE_CODES) {
-        formatMappedPercentage(dataPoint.value, definition)?.let { return it }
-    }
-    return when (dataPoint.kind) {
-        LocalDataPointKind.BOOLEAN -> when {
-            isPower || code == "switch" || code == "switch_led" || code.startsWith("switch_") ->
-                if (dataPoint.value == "true") "On" else "Off"
-            dataPoint.value == "true" -> "Yes"
-            else -> "No"
-        }
-        LocalDataPointKind.INTEGER, LocalDataPointKind.DECIMAL -> {
-            val values = definition.mappingValues()
-            val scale = values?.optInt("scale", 0)?.coerceIn(0, 9) ?: 0
-            val unit = values?.optString("unit").orEmpty()
-            runCatching {
-                BigDecimal(dataPoint.value)
-                    .movePointLeft(scale)
-                    .stripTrailingZeros()
-                    .toPlainString()
-            }.getOrDefault(dataPoint.value).let { number ->
-                if (unit.isBlank()) number else "$number $unit"
-            }
-        }
-        LocalDataPointKind.STRING -> when {
-            dataPoint.value.isBlank() -> "Empty"
-            code == "work_mode" -> mappedEnumValue(
-                definition = definition,
-                value = dataPoint.value,
-                maximumLength = MAX_PRESENTED_VALUE_LENGTH,
-            )?.toReadableLabel() ?: "Unknown mode"
-            else -> mappedEnumValue(
-                definition = definition,
-                value = dataPoint.value,
-                maximumLength = MAX_PRESENTED_VALUE_LENGTH,
-            ) ?: "Text value hidden"
-        }
-        LocalDataPointKind.JSON -> "Structured value hidden"
-        LocalDataPointKind.NULL -> "No value"
-    }
 }
 
 private fun inspectionKindLabel(
@@ -190,24 +118,6 @@ private fun inspectionValue(
     LocalDataPointKind.NULL -> "No value"
 }
 
-private fun mappedEnumValue(
-    definition: JSONObject?,
-    value: String,
-    maximumLength: Int,
-): String? {
-    if (
-        definition?.optString("type")?.equals("Enum", ignoreCase = true) != true ||
-        value.length > maximumLength ||
-        value.any { character -> character.isISOControl() }
-    ) {
-        return null
-    }
-    val range = definition.mappingValues()?.optJSONArray("range") ?: return null
-    return value.takeIf { candidate ->
-        (0 until range.length()).any { index -> range.optString(index) == candidate }
-    }
-}
-
 private fun inspectedTextValue(value: String, definition: JSONObject?): String {
     if (value.isBlank()) return "Empty"
     val code = definition.safeMappingCode() ?: return "Unmapped text hidden"
@@ -229,36 +139,6 @@ private fun String.containsSensitiveTerm(): Boolean =
 private fun isCardHighlight(code: String): Boolean =
     code in CARD_HIGHLIGHT_CODES
 
-private fun formatMappedPercentage(rawValue: String, definition: JSONObject?): String? {
-    val value = rawValue.toBigDecimalOrNull() ?: return null
-    val values = definition.mappingValues()
-    val minimum = values?.optString("min")?.toBigDecimalOrNull()
-    val maximum = values?.optString("max")?.toBigDecimalOrNull()
-    val normalized = if (minimum != null && maximum != null && maximum > minimum) {
-        value.subtract(minimum)
-            .multiply(BigDecimal(100))
-            .divide(maximum.subtract(minimum), 0, java.math.RoundingMode.HALF_UP)
-    } else {
-        value
-    }
-    return normalized
-        .coerceIn(BigDecimal.ZERO, BigDecimal(100))
-        .stripTrailingZeros()
-        .toPlainString() + "%"
-}
-
-private fun standardDataPointLabel(code: String): String? = when {
-    code == "cur_power" -> "Power draw"
-    code == "cur_voltage" -> "Voltage"
-    code == "cur_current" -> "Current"
-    code == "add_ele" -> "Energy"
-    code == "bright_value" || code == "bright_value_v2" -> "Brightness"
-    code == "temp_value" || code == "temp_value_v2" -> "Color temperature"
-    code == "work_mode" -> "Mode"
-    code == "percent_state" || code == "percent_state_2" -> "Position"
-    else -> null
-}
-
 private fun dataPointPriority(code: String): Int = when {
     code == "cur_power" -> 0
     code == "cur_voltage" -> 1
@@ -271,15 +151,6 @@ private fun dataPointPriority(code: String): Int = when {
     else -> 10
 }
 
-private fun JSONObject?.mappingValues(): JSONObject? {
-    if (this == null) return null
-    return when (val values = opt("values")) {
-        is JSONObject -> values
-        is String -> runCatching { JSONObject(values) }.getOrNull()
-        else -> null
-    }
-}
-
 private fun JSONObject?.safeMappingCode(): String? {
     if (this == null) return null
     return optString("code")
@@ -290,15 +161,6 @@ private fun JSONObject?.safeMappingCode(): String? {
         }
 }
 
-private fun String.toReadableLabel(): String =
-    split('_')
-        .filter { it.isNotBlank() }
-        .joinToString(" ") { word ->
-            word.replaceFirstChar { character -> character.uppercase() }
-        }
-        .ifBlank { "Unknown value" }
-
-private val SWITCH_CATEGORIES = setOf("kg", "cz", "pc")
 private val MAPPING_CODE = Regex("[a-z0-9_]+")
 private val NUMERIC_WIRE_VALUE = Regex("-?[0-9]+(?:\\.[0-9]+)?")
 private val CARD_HIGHLIGHT_CODES = setOf(
@@ -314,14 +176,6 @@ private val CARD_HIGHLIGHT_CODES = setOf(
     "percent_state",
     "percent_state_2",
 )
-private val PERCENTAGE_CODES = setOf(
-    "bright_value",
-    "bright_value_v2",
-    "temp_value",
-    "temp_value_v2",
-    "percent_state",
-    "percent_state_2",
-)
 private val SENSITIVE_CODE_SEGMENTS = setOf(
     "auth",
     "credential",
@@ -331,13 +185,6 @@ private val SENSITIVE_CODE_SEGMENTS = setOf(
     "token",
 )
 private const val MAX_PRESENTED_DATA_POINTS = 6
-private const val MAX_PRESENTED_VALUE_LENGTH = 80
 private const val MAX_INSPECTED_VALUE_LENGTH = 40
 private const val MAX_INSPECTED_TEXT_LENGTH = 120
 private const val MAX_MAPPING_CODE_LENGTH = 64
-
-private data class PresentationCandidate(
-    val dataPoint: LocalDataPoint,
-    val definition: JSONObject?,
-    val code: String,
-)

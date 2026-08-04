@@ -16,6 +16,19 @@ Chaquopy gateway <-> versioned JSON <-> tuya_bridge.py <-> TinyTuya
 
 Kotlin owns Android lifecycle, UI state, Wi-Fi selection, policy, and encrypted persistence. Python owns the calls into TinyTuya. Neither side is trusted blindly: both validate inputs and results at their boundary.
 
+Device extensibility follows a smaller enforced dependency graph alongside that runtime flow:
+
+```text
+:device-profiles ---> :device-core <--- :device-ui
+          ^                 ^                 ^
+          |                 |                 |
+          +--------------- :app -------------+
+```
+
+`:app` is the only composition root. `:device-profiles` and `:device-ui` depend only on
+`:device-core`; every device-module compile runs `verifyDeviceModuleBoundaries`, which rejects other
+project dependencies and any import from an app-owned first-party package.
+
 ## Start here: the eight-file tour
 
 Do not begin with either of the 1,000-line Compose files. Read these files in order:
@@ -199,9 +212,11 @@ Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be p
 
 Cloud categories and DPS mappings are inconsistent across Tuya products, so the app separates presentation from permission:
 
-- `LocalDeviceProfileKind` answers: “What kind of card should this look like?”
-- `LocalDeviceAccessKind` answers: “What local operation may the app attempt?”
-- `LocalSensorKind` selects one of the small read-only sensor summaries.
+- The matched `DeviceFamilyDefinition.presentation` supplies the stable layout, type label, and
+  symbol.
+- `DeviceAccessRestriction` is the final protected-device deny policy.
+- `CapabilityAccess` intersects that policy with the matched specs before any observed capability can
+  become writable.
 
 Read the capability path in three pieces:
 
@@ -210,9 +225,9 @@ Read the capability path in three pieces:
 2. `CapabilitySpecs.kt`, `DeviceObservation.kt`, and `CapabilityResolver.kt` in `:device-core`
    define the reusable primitives and fail-closed schema/freshness/access intersection.
 3. [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilities.kt)
-   packages the canonical capabilities and selected layout as a redacted `ResolvedDevice`. Its
-   Boolean/light compatibility fields remain only for legacy tests and Phase 8 removal; the runtime
-   renderer path does not consume them.
+   adapts imported Android models into normalized identity/schema/observation inputs, then exposes
+   only family presentation metadata, core restriction/access values, and a redacted
+   `ResolvedDevice`.
 
 A Boolean control exists only when all of these agree:
 
@@ -222,10 +237,10 @@ A Boolean control exists only when all of these agree:
 
 Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; arbitrary JSON or other color encodings remain read-only.
 
-Switches/outlets, lights, and covers can reach `DIRECT_CONTROL`; individual capabilities still become
-writable only after the complete schema/fresh-observation intersection. Sensors and generic devices
-are `STATUS_ONLY`. Gateway children, gateways, cameras, and locks are explicitly protected and do not
-reach local polling or writes.
+Profiles declaring writable semantics can receive `CapabilityAccess.READ_WRITE`; individual
+capabilities still become writable only after the complete schema/fresh-observation intersection.
+Read-only sensor specs and unmatched devices receive `READ_ONLY`. Gateway children, gateways,
+cameras, and locks receive `DENIED` and do not reach local polling or writes.
 
 Cover actions deserve a close read in `BuiltinCapabilitySpecs.kt`. The profile accepts only an
 imported Enum which explicitly contains every value in one reviewed open/stop/close vocabulary.
@@ -244,7 +259,9 @@ Then read the presentation pipeline:
   `SensorSummaryLayoutRenderer.kt` in `:device-ui`, define stable arrangement hints, the explicit
   renderer/fallback contract, and the reusable compound layouts.
   A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
-- [LocalStatusPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentation.kt) turns safe mapped DPS primitives into readable rows and builds the capped inspector.
+- [LocalDataPointInspection.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDataPointInspection.kt)
+  builds the capped safe inspector from the same normalized schema boundary; Compose never parses raw
+  mapping JSON.
 - [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) assembles
   the renderer registry and hosts the selected compound or complete generic atomic fallback.
 
@@ -258,11 +275,12 @@ For `InventoryScreen.kt`, search for and read only these functions at first:
 6. `LocalAccessNotice`
 7. `LocalDpsInspector`
 
-The remaining functions are mostly reusable rows, labels, badges, previews, and styling. Legacy
-sensor/light composables are currently unreachable compatibility code scheduled for Phase 8 removal;
-they are not part of the renderer extension path.
+The remaining functions are reusable rows, labels, badges, previews, and styling. There is no
+app-owned device-family renderer branch.
 
-Checkpoint: choose one displayed value, such as outlet power or temperature. Trace it backward from a composable, through a presentation function, to `LocalStatusRecord.dataPoints`, and finally to `_normalize_local_data_points` in Python.
+Checkpoint: choose one displayed value, such as outlet power or temperature. Trace it backward from
+an atomic/compound renderer through `ResolvedDevice`, `CapabilityResolver`,
+`LocalStatusRecord.dataPoints`, and finally `_normalize_local_data_points` in Python.
 
 ## Pass 5: a confirmed local write
 
@@ -387,7 +405,10 @@ The code-native app identity lives in [BrandMark.kt](app/src/main/java/com/prfd/
 
 ### `InventoryScreen.kt`
 
-Start with `InventoryScreen` and `InventoryDeviceCard`, then jump to the one panel you are changing. Presentation and policy should remain outside composables where possible, so inspect `LocalStatusPresentation.kt`, `LocalSensorPresentation.kt`, or `LocalDeviceCapabilities.kt` before adding logic directly to the screen.
+Start with `InventoryScreen` and `InventoryDeviceCard`, then jump to the one panel you are changing.
+Presentation and policy should remain outside composables where possible, so inspect the matching
+`:device-ui` renderer, `LocalDataPointInspection.kt`, or `LocalDeviceCapabilities.kt` before adding
+logic directly to the screen.
 
 ### `tuya_bridge.py`
 
@@ -413,7 +434,7 @@ After each production flow, read its nearest test instead of immediately reading
 | Pure cover profile fixtures and public evidence | `CoverDeviceProfileTest.kt` and `BuiltinSupportDocumentationTest.kt` in `:device-profiles` |
 | Layout registry and cover/light/sensor fallback | `DeviceLayoutRenderersInstrumentedTest.kt` in `:device-ui` |
 | Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
-| DPS and sensor formatting | [LocalStatusPresentationInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentationInstrumentedTest.kt) and [LocalSensorPresentationInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/ui/inventory/LocalSensorPresentationInstrumentedTest.kt) |
+| Safe DPS inspection | [LocalDataPointInspectionInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDataPointInspectionInstrumentedTest.kt) |
 
 Most feature tests are instrumentation tests because Compose, Android Keystore, Android networking types, and Chaquopy need an Android runtime. The small tests under `app/src/test` are host JVM tests for code which has no Android dependency.
 
@@ -442,8 +463,10 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 - **Mapping** — cloud metadata which associates a numeric DP ID with a code, type, range, scale, unit, or allowed enum values.
 - **Local key** — the per-device secret TinyTuya needs to encrypt and authenticate local protocol traffic.
 - **Protocol version** — the Tuya local protocol generation, currently accepted from 3.1 through 3.5.
-- **Profile kind** — the card/presentation family inferred from category and mapping.
-- **Access kind** — the independent fail-closed policy for polling or writing locally.
+- **Device family** — the matched profile definition whose metadata supplies capabilities and a
+  presentation layout; unmatched or ambiguous evidence stays generic.
+- **Capability access** — the fail-closed `READ_WRITE`, `READ_ONLY`, or `DENIED` intersection applied
+  before resolving observed capabilities.
 - **Gateway child** — a Zigbee/BLE-style child reached through a Tuya gateway, not a direct TCP 6668 device.
 - **Discovery generation** — the latest `lastDiscoveryAtEpochMillis` marker used to distinguish current addresses from history.
 - **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and encrypted storage and is never sent to Python or displayed.
@@ -465,6 +488,7 @@ Because this checkout and Android toolchain live on Windows, run Gradle through 
 ```bash
 /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat testDebugUnitTest
 /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat assembleDebugAndroidTest
+/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat verifyDeviceModuleBoundaries
 ```
 
 For device tests, upgrade the target app with `installDebug`, install the assembled test APK with `adb install -r -t`, and invoke the runner directly. Do not use `connectedDebugAndroidTest` against an installed catalog which must be preserved: Gradle's deployment teardown may uninstall the target app and erase its private data.

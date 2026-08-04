@@ -66,7 +66,7 @@ class DefaultLocalControlCoordinator(
             device = device,
             status = localStatus,
             lastDiscoveryAtEpochMillis = lastDiscoveryAt,
-        ).capabilities
+        ).resolvedDevice.capabilities
         val command = CapabilityCommandAuthorizer.authorize(capabilities, intent)
             ?: throw unsupportedControl()
         val changes = command.writes.map { write ->

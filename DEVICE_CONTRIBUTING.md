@@ -5,6 +5,11 @@ Most products should require profile metadata, sanitized fixtures, and one expli
 they must not add a ViewModel callback, Python operation, socket path, or vendor-specific copy of a
 standard control.
 
+The build enforces that trust boundary. `:device-profiles` and `:device-ui` may depend only on
+`:device-core`, and device modules may import only first-party packages below
+`com.prfd.tinytuya.device.*`. Do not work around `verifyDeviceModuleBoundaries`; a contribution which
+needs app transport, persistence, Python, or secret models is proposing a new architecture boundary.
+
 Read [SUPPORTED_DEVICES.md](SUPPORTED_DEVICES.md)
 for the evidence language used publicly.
 
@@ -127,6 +132,8 @@ rollback at the generic coordinator boundary without adding a device-specific ga
       fallback, and include accessibility and fault/absence coverage.
 - [ ] Host tests cover matching/resolution/authorization; Android tests are added only for Android,
       Compose, persistence, lifecycle, Python, or network behavior.
+- [ ] `verifyDeviceModuleBoundaries` passes, with no new app dependency or app-owned first-party
+      import in a device module.
 - [ ] `SUPPORTED_DEVICES.md` matches profile metadata and distinguishes real hardware, synthetic-only,
       experimental, and unsupported evidence.
 - [ ] A real-hardware claim names only behavior actually exercised on representative hardware. A

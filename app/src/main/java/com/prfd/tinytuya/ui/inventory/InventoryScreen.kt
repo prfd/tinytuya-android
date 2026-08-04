@@ -3,7 +3,6 @@ package com.prfd.tinytuya.ui.inventory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,14 +10,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -34,11 +31,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,48 +43,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
-import com.prfd.tinytuya.data.lan.LocalBooleanControl
-import com.prfd.tinytuya.data.lan.LocalDeviceAccessKind
+import com.prfd.tinytuya.data.lan.LocalDataPointInspection
 import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalDeviceProfile
-import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
-import com.prfd.tinytuya.data.lan.LocalLightColorControl
-import com.prfd.tinytuya.data.lan.LocalLightControls
-import com.prfd.tinytuya.data.lan.LocalLightHsv
-import com.prfd.tinytuya.data.lan.LocalLightIntegerControl
-import com.prfd.tinytuya.data.lan.LocalLightMode
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
-import com.prfd.tinytuya.data.lan.LocalSensorKind
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
+import com.prfd.tinytuya.data.lan.inspectLocalDataPoints
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
-import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.CapabilityAccess
 import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
-import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
+import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
+import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
+import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 import com.prfd.tinytuya.device.ui.BinaryStateUiModel
 import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
-import com.prfd.tinytuya.device.ui.DeviceCapabilityList
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
 import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
@@ -104,12 +86,6 @@ import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
-import kotlin.math.PI
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.hypot
-import kotlin.math.roundToInt
-import kotlin.math.sin
 
 private val inventoryDeviceLayoutRegistry = DeviceLayoutRendererRegistry(
     listOf(
@@ -674,20 +650,20 @@ internal fun InventoryDeviceCard(
                 Column(horizontalAlignment = Alignment.End) {
                     LocalAvailabilityLabel(localAvailability)
                     when {
-                        profile.access == LocalDeviceAccessKind.STATUS_ONLY -> Text(
+                        profile.capabilityAccess == CapabilityAccess.READ_ONLY -> Text(
                             text = "Read only",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 5.dp),
                         )
-                        profile.access == LocalDeviceAccessKind.DIRECT_CONTROL &&
+                        profile.capabilityAccess == CapabilityAccess.READ_WRITE &&
                             device.localKey.isBlank -> Text(
                             text = "Key missing",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 5.dp),
                         )
-                        profile.access != LocalDeviceAccessKind.DIRECT_CONTROL -> Text(
+                        profile.capabilityAccess == CapabilityAccess.DENIED -> Text(
                             text = "Unsupported",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -697,9 +673,8 @@ internal fun InventoryDeviceCard(
                 }
             }
             if (
-                profile.access != LocalDeviceAccessKind.DIRECT_CONTROL &&
-                !(profile.access == LocalDeviceAccessKind.STATUS_ONLY &&
-                    profile.kind == LocalDeviceProfileKind.SENSOR)
+                profile.capabilityAccess != CapabilityAccess.READ_WRITE &&
+                !(profile.capabilityAccess == CapabilityAccess.READ_ONLY && profile.isSensor)
             ) {
                 LocalAccessNotice(profile)
             }
@@ -730,7 +705,7 @@ private fun LocalStatusPanel(
     control: LocalControlUiState,
     onIntent: (DeviceIntent) -> Unit,
 ) {
-    if (!isOnCurrentLan || !profile.access.canReadLocalStatus) return
+    if (!isOnCurrentLan || !profile.canReadLocalStatus) return
     val updatedAt = remember(status?.polledAtEpochMillis) {
         status?.polledAtEpochMillis?.let { timestamp ->
             DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
@@ -811,183 +786,34 @@ private fun LocalStatusPanel(
 }
 
 @Composable
-private fun DeviceHighlights(
-    title: String,
-    dataPoints: List<PresentedDataPoint>,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 14.dp)
-            .testTag("device_highlights"),
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-        )
-        dataPoints.chunked(2).forEach { rowDataPoints ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                rowDataPoints.forEach { dataPoint ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = MaterialTheme.shapes.small,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                            Text(
-                                text = dataPoint.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = dataPoint.value,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-                }
-                if (rowDataPoints.size == 1) {
-                    Spacer(Modifier.weight(1f))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LocalSensorSummary(presentation: LocalSensorPresentation) {
-    val primaryContainerColor = when (presentation.tone) {
-        LocalSensorTone.NEUTRAL -> MaterialTheme.colorScheme.surface
-        LocalSensorTone.NORMAL -> MaterialTheme.colorScheme.primaryContainer
-        LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
-        LocalSensorTone.ALERT -> MaterialTheme.colorScheme.errorContainer
-    }
-    val primaryContentColor = when (presentation.tone) {
-        LocalSensorTone.NEUTRAL -> MaterialTheme.colorScheme.onSurface
-        LocalSensorTone.NORMAL -> MaterialTheme.colorScheme.onPrimaryContainer
-        LocalSensorTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
-        LocalSensorTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp)
-            .testTag("local_sensor_summary"),
-    ) {
-        Surface(
-            color = primaryContainerColor,
-            contentColor = primaryContentColor,
-            shape = MaterialTheme.shapes.small,
-            border = if (presentation.tone == LocalSensorTone.NEUTRAL) {
-                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            } else {
-                null
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                Text(
-                    text = "Current reading",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Text(
-                    text = presentation.primary.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 5.dp),
-                )
-                Text(
-                    text = presentation.primary.value,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 1.dp),
-                )
-            }
-        }
-        if (presentation.secondary.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                presentation.secondary.forEach { reading ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = MaterialTheme.shapes.small,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
-                            Text(
-                                text = reading.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = reading.value,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun LocalAccessNotice(profile: LocalDeviceProfile) {
-    val isStatusOnly = profile.access == LocalDeviceAccessKind.STATUS_ONLY
-    val title = when (profile.access) {
-        LocalDeviceAccessKind.STATUS_ONLY -> if (profile.kind == LocalDeviceProfileKind.SENSOR) {
+    val isStatusOnly = profile.capabilityAccess == CapabilityAccess.READ_ONLY
+    val title = when (profile.restriction) {
+        DeviceAccessRestriction.NONE -> if (isStatusOnly && profile.isSensor) {
             "Read-only sensor"
-        } else {
+        } else if (isStatusOnly) {
             "Status-only profile"
-        }
-        LocalDeviceAccessKind.GATEWAY_CHILD -> "Gateway child"
-        LocalDeviceAccessKind.GATEWAY -> "Gateway controls unavailable"
-        LocalDeviceAccessKind.CAMERA -> "Camera controls disabled"
-        LocalDeviceAccessKind.LOCK -> "Lock controls disabled"
-        LocalDeviceAccessKind.DIRECT_CONTROL -> return
+        } else return
+        DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
+        DeviceAccessRestriction.GATEWAY -> "Gateway controls unavailable"
+        DeviceAccessRestriction.CAMERA -> "Camera controls disabled"
+        DeviceAccessRestriction.LOCK -> "Lock controls disabled"
     }
-    val message = when (profile.access) {
-        LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
-            LocalDeviceProfileKind.COVER ->
-                "Cover commands are not enabled yet. Current local DPS stays read-only."
-            LocalDeviceProfileKind.SENSOR ->
+    val message = when (profile.restriction) {
+        DeviceAccessRestriction.NONE -> when {
+            profile.isSensor ->
                 "Fresh readings come directly from the device. This profile never sends commands."
             else ->
                 "No verified control profile matches this device. Local DPS stays read-only."
         }
-        LocalDeviceAccessKind.GATEWAY_CHILD ->
+        DeviceAccessRestriction.GATEWAY_CHILD ->
             "This device communicates through a Tuya gateway, not directly over Wi-Fi."
-        LocalDeviceAccessKind.GATEWAY ->
+        DeviceAccessRestriction.GATEWAY ->
             "Gateway management and child-device routing are not supported yet."
-        LocalDeviceAccessKind.CAMERA ->
+        DeviceAccessRestriction.CAMERA ->
             "Camera streams and camera commands are intentionally unavailable."
-        LocalDeviceAccessKind.LOCK ->
+        DeviceAccessRestriction.LOCK ->
             "Lock and access-control commands are intentionally unavailable for safety."
-        LocalDeviceAccessKind.DIRECT_CONTROL -> return
     }
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -1124,548 +950,6 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
 }
 
 @Composable
-private fun LocalDeviceControls(
-    profile: LocalDeviceProfile,
-    atomicCapabilityIds: Set<CapabilityId>,
-    controlState: LocalControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-) {
-    val device = remember(profile.resolvedDevice) {
-        DeviceUiMapper.map(profile.resolvedDevice)
-    }
-    when (profile.kind) {
-        LocalDeviceProfileKind.LIGHT -> LocalLightControls(
-            device = device,
-            powerControls = profile.booleanControls,
-            powerCapabilityIds = atomicCapabilityIds,
-            lightControls = profile.lightControls,
-            controlState = controlState,
-            onIntent = onIntent,
-        )
-        else -> DeviceCapabilityList(
-            device = device,
-            controlState = controlState,
-            onIntent = onIntent,
-            modifier = Modifier.padding(top = 16.dp),
-            capabilityIds = atomicCapabilityIds,
-            sectionTitle = when {
-                atomicCapabilityIds.isEmpty() -> null
-                profile.kind == LocalDeviceProfileKind.COVER -> "Cover"
-                profile.booleanControls.size == 1 -> "Control"
-                profile.kind == LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "Controls"
-                else -> "Controls and readings"
-            },
-            showEmptyFallback = true,
-        )
-    }
-}
-
-private fun LocalDeviceProfile.atomicCapabilityIds(): Set<CapabilityId> = when (kind) {
-    LocalDeviceProfileKind.LIGHT -> booleanControls.mapTo(mutableSetOf()) { control ->
-        control.capabilityId
-    }
-    LocalDeviceProfileKind.SENSOR -> emptySet()
-    LocalDeviceProfileKind.SWITCH_OR_OUTLET,
-    LocalDeviceProfileKind.COVER,
-    LocalDeviceProfileKind.GENERIC -> capabilities.capabilities.mapTo(mutableSetOf()) { capability ->
-        capability.id
-    }
-}
-
-@Composable
-private fun LocalLightControls(
-    device: DeviceUiModel,
-    powerControls: List<LocalBooleanControl>,
-    powerCapabilityIds: Set<CapabilityId>,
-    lightControls: LocalLightControls?,
-    controlState: LocalControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-) {
-    DeviceCapabilityList(
-        device = device,
-        controlState = controlState,
-        onIntent = onIntent,
-        modifier = Modifier.padding(top = 16.dp),
-        capabilityIds = powerCapabilityIds,
-        sectionTitle = "Light controls",
-    )
-    val modeControl = lightControls?.mode ?: return
-    val currentMode = modeControl.currentMode
-    val powerIsOn = powerControls.singleOrNull()?.currentValue == true
-    val canAdjust = powerIsOn &&
-        controlState !is LocalControlUiState.Unavailable &&
-        controlState !is LocalControlUiState.Sending
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp)
-            .testTag("light_controls"),
-    ) {
-        Text(text = "Mode", style = MaterialTheme.typography.titleSmall)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LightModeButton(
-                label = "White",
-                selected = currentMode == LocalLightMode.WHITE,
-                enabled = canAdjust,
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    onIntent(
-                        DeviceIntent.SetChoice(
-                            deviceId = device.deviceId,
-                            capabilityId = modeControl.capabilityId,
-                            wireValue = LocalLightMode.WHITE.wireValue,
-                        )
-                    )
-                },
-            )
-            LightModeButton(
-                label = "Color",
-                selected = currentMode == LocalLightMode.COLOR,
-                enabled = canAdjust,
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    onIntent(
-                        DeviceIntent.SetChoice(
-                            deviceId = device.deviceId,
-                            capabilityId = modeControl.capabilityId,
-                            wireValue = LocalLightMode.COLOR.wireValue,
-                        )
-                    )
-                },
-            )
-        }
-        when {
-            !powerIsOn -> Text(
-                text = "Turn on the light to adjust its color and brightness.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp),
-            )
-            currentMode == LocalLightMode.WHITE -> {
-                lightControls.whiteBrightness?.let { control ->
-                    LightRangeSlider(
-                        label = "Brightness",
-                        control = control,
-                        enabled = canAdjust,
-                        pending = controlState.isSending(device.deviceId, control.capabilityId),
-                        onValueCommitted = { value ->
-                            onIntent(
-                                DeviceIntent.SetRange(
-                                    deviceId = device.deviceId,
-                                    capabilityId = control.capabilityId,
-                                    value = value,
-                                )
-                            )
-                        },
-                    )
-                }
-                lightControls.colorTemperature?.let { control ->
-                    LightRangeSlider(
-                        label = "Color temperature",
-                        control = control,
-                        enabled = canAdjust,
-                        pending = controlState.isSending(device.deviceId, control.capabilityId),
-                        startLabel = "Warm",
-                        endLabel = "Cool",
-                        onValueCommitted = { value ->
-                            onIntent(
-                                DeviceIntent.SetRange(
-                                    deviceId = device.deviceId,
-                                    capabilityId = control.capabilityId,
-                                    value = value,
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-            currentMode == LocalLightMode.COLOR -> lightControls.color?.let { control ->
-                LightColorPicker(
-                    control = control,
-                    enabled = canAdjust,
-                    pending = controlState.isSending(device.deviceId, control.capabilityId),
-                    onColorCommitted = { color ->
-                        onIntent(
-                            DeviceIntent.SetColor(
-                                deviceId = device.deviceId,
-                                capabilityId = control.capabilityId,
-                                color = TuyaHsvColor(
-                                    color.hue,
-                                    color.saturation,
-                                    color.brightness,
-                                ),
-                            )
-                        )
-                    },
-                )
-            }
-            else -> Text(
-                text = "Scene and music modes are not controlled here. Choose White or Color.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp),
-            )
-        }
-        LightControlFeedback(device.deviceId, controlState)
-    }
-}
-
-@Composable
-private fun LightModeButton(
-    label: String,
-    selected: Boolean,
-    enabled: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    if (selected) {
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = modifier.testTag("light_mode_${label.lowercase()}"),
-        ) {
-            Text(label)
-        }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = modifier.testTag("light_mode_${label.lowercase()}"),
-        ) {
-            Text(label)
-        }
-    }
-}
-
-@Composable
-private fun LightRangeSlider(
-    label: String,
-    control: LocalLightIntegerControl,
-    enabled: Boolean,
-    pending: Boolean,
-    startLabel: String? = null,
-    endLabel: String? = null,
-    onValueCommitted: (Int) -> Unit,
-) {
-    var value by remember(control.dataPointId, control.currentValue) {
-        mutableStateOf(control.currentValue.toFloat())
-    }
-    LaunchedEffect(control.currentValue, pending) {
-        if (!pending) value = control.currentValue.toFloat()
-    }
-    val alignedValue = alignLightValue(value, control)
-    val percentage = lightPercentage(alignedValue, control.minimum, control.maximum)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(text = label, style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = "$percentage%",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = { value = it },
-            onValueChangeFinished = {
-                if (alignedValue != control.currentValue) {
-                    value = alignedValue.toFloat()
-                    onValueCommitted(alignedValue)
-                }
-            },
-            valueRange = control.minimum.toFloat()..control.maximum.toFloat(),
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("light_slider_${control.code}"),
-        )
-        if (startLabel != null && endLabel != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = startLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = endLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun LightColorPicker(
-    control: LocalLightColorControl,
-    enabled: Boolean,
-    pending: Boolean,
-    onColorCommitted: (LocalLightHsv) -> Unit,
-) {
-    var selectedColor by remember(control.dataPointId, control.currentColor) {
-        mutableStateOf(control.currentColor)
-    }
-    LaunchedEffect(control.currentColor, pending) {
-        if (!pending) selectedColor = control.currentColor
-    }
-    var wheelSize by remember { mutableStateOf(IntSize.Zero) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(text = "Color", style = MaterialTheme.typography.titleSmall)
-            Surface(
-                color = Color.hsv(
-                    hue = selectedColor.hue.toFloat(),
-                    saturation = selectedColor.saturation / 1_000f,
-                    value = selectedColor.brightness.coerceAtLeast(100) / 1_000f,
-                ),
-                shape = CircleShape,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.size(24.dp),
-                content = {},
-            )
-        }
-        Canvas(
-            modifier = Modifier
-                .padding(top = 12.dp)
-                .fillMaxWidth(0.72f)
-                .sizeIn(maxWidth = 260.dp)
-                .aspectRatio(1f)
-                .onSizeChanged { wheelSize = it }
-                .semantics { contentDescription = "Color wheel" }
-                .testTag("light_color_wheel")
-                .pointerInput(enabled, control.dataPointId) {
-                    if (!enabled) return@pointerInput
-                    fun updateColor(position: Offset) {
-                        if (wheelSize == IntSize.Zero) return
-                        val centerX = wheelSize.width / 2f
-                        val centerY = wheelSize.height / 2f
-                        val deltaX = position.x - centerX
-                        val deltaY = position.y - centerY
-                        val radius = minOf(centerX, centerY)
-                        val saturation = (hypot(deltaX, deltaY) / radius * 1_000f)
-                            .roundToInt()
-                            .coerceIn(0, 1_000)
-                        val hue = ((atan2(deltaY, deltaX) * 180f / PI.toFloat()) + 360f)
-                            .rem(360f)
-                            .roundToInt()
-                        selectedColor = selectedColor.copy(
-                            hue = hue,
-                            saturation = saturation,
-                        )
-                    }
-                    detectDragGestures(
-                        onDragStart = ::updateColor,
-                        onDragEnd = {
-                            if (selectedColor != control.currentColor) {
-                                onColorCommitted(selectedColor)
-                            }
-                        },
-                        onDrag = { change, _ ->
-                            change.consume()
-                            updateColor(change.position)
-                        },
-                    )
-                },
-        ) {
-            drawCircle(
-                brush = Brush.sweepGradient(
-                    listOf(
-                        Color.Red,
-                        Color.Yellow,
-                        Color.Green,
-                        Color.Cyan,
-                        Color.Blue,
-                        Color.Magenta,
-                        Color.Red,
-                    )
-                )
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color.White, Color.Transparent),
-                    center = center,
-                    radius = size.minDimension / 2f,
-                )
-            )
-            val radius = size.minDimension / 2f
-            val pointerRadius = radius * selectedColor.saturation / 1_000f
-            val angle = selectedColor.hue * PI.toFloat() / 180f
-            val pointer = Offset(
-                x = center.x + cos(angle) * pointerRadius,
-                y = center.y + sin(angle) * pointerRadius,
-            )
-            drawCircle(
-                color = Color.White,
-                radius = 8.dp.toPx(),
-                center = pointer,
-                style = Stroke(width = 3.dp.toPx()),
-            )
-            drawCircle(
-                color = Color.Black.copy(alpha = 0.7f),
-                radius = 10.dp.toPx(),
-                center = pointer,
-                style = Stroke(width = 1.dp.toPx()),
-            )
-        }
-        LightColorBrightnessSlider(
-            color = selectedColor,
-            enabled = enabled,
-            pending = pending,
-            onColorCommitted = onColorCommitted,
-        )
-    }
-}
-
-@Composable
-private fun LightColorBrightnessSlider(
-    color: LocalLightHsv,
-    enabled: Boolean,
-    pending: Boolean,
-    onColorCommitted: (LocalLightHsv) -> Unit,
-) {
-    var brightness by remember(color) { mutableStateOf(color.brightness.toFloat()) }
-    LaunchedEffect(color.brightness, pending) {
-        if (!pending) brightness = color.brightness.toFloat()
-    }
-    val alignedBrightness = brightness.roundToInt().coerceIn(10, 1_000)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(text = "Brightness", style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = "${(alignedBrightness / 10f).roundToInt()}%",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Slider(
-            value = brightness.coerceIn(10f, 1_000f),
-            onValueChange = { brightness = it },
-            onValueChangeFinished = {
-                if (alignedBrightness != color.brightness) {
-                    brightness = alignedBrightness.toFloat()
-                    onColorCommitted(color.copy(brightness = alignedBrightness))
-                }
-            },
-            valueRange = 10f..1_000f,
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("light_slider_color_brightness"),
-        )
-    }
-}
-
-@Composable
-private fun LightControlFeedback(
-    deviceId: String,
-    controlState: LocalControlUiState,
-) {
-    val text = when {
-        controlState is LocalControlUiState.Sending &&
-            controlState.deviceId == deviceId &&
-            controlState.intent.isLightIntent -> controlState.intent.sendingMessage
-        controlState is LocalControlUiState.Confirmed &&
-            controlState.deviceId == deviceId &&
-            controlState.intent.isLightIntent -> "Confirmed directly by the light."
-        controlState is LocalControlUiState.Error &&
-            controlState.deviceId == deviceId &&
-            controlState.intent.isLightIntent -> controlState.message
-        else -> null
-    } ?: return
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = if (controlState is LocalControlUiState.Error) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        modifier = Modifier
-            .padding(top = 12.dp)
-            .testTag("light_control_feedback"),
-    )
-}
-
-private fun alignLightValue(
-    value: Float,
-    control: LocalLightIntegerControl,
-): Int {
-    val stepIndex = ((value - control.minimum) / control.step).roundToInt()
-    return (control.minimum + stepIndex * control.step).coerceIn(control.minimum, control.maximum)
-}
-
-private fun lightPercentage(value: Int, minimum: Int, maximum: Int): Int =
-    ((value - minimum).toFloat() / (maximum - minimum) * 100f)
-        .roundToInt()
-        .coerceIn(0, 100)
-
-private fun LocalControlUiState.appliesTo(deviceId: String, capabilityId: CapabilityId): Boolean =
-    when (this) {
-        is LocalControlUiState.Sending ->
-            this.deviceId == deviceId && this.capabilityId == capabilityId
-        is LocalControlUiState.Confirmed ->
-            this.deviceId == deviceId && this.capabilityId == capabilityId
-        is LocalControlUiState.Error ->
-            this.deviceId == deviceId && this.capabilityId == capabilityId
-        LocalControlUiState.Ready, LocalControlUiState.Unavailable -> false
-    }
-
-private fun LocalControlUiState.isSending(deviceId: String, capabilityId: CapabilityId): Boolean =
-    this is LocalControlUiState.Sending && appliesTo(deviceId, capabilityId)
-
-private val DeviceIntent.isLightIntent: Boolean
-    get() = capabilityId.value.startsWith("light.")
-
-private val DeviceIntent.sendingMessage: String
-    get() = when (this) {
-        is DeviceIntent.SetToggle -> if (value) {
-            "Turning on and confirming…"
-        } else {
-            "Turning off and confirming…"
-        }
-        is DeviceIntent.SetChoice -> "Changing mode and confirming…"
-        is DeviceIntent.SetRange -> when (capabilityId.value) {
-            "light.brightness" -> "Updating brightness and confirming…"
-            "light.temperature" -> "Updating color temperature and confirming…"
-            else -> "Updating value and confirming…"
-        }
-        is DeviceIntent.SetColor -> "Updating color and brightness…"
-        is DeviceIntent.InvokeAction -> "Sending action and confirming…"
-    }
-
-@Composable
 private fun UnmatchedLanDeviceCard(device: LanDeviceRecord) {
     OutlinedCard(
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1762,9 +1046,8 @@ private fun DeviceProfileMark(
     ) {
         Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
             if (
-                (profile.access == LocalDeviceAccessKind.DIRECT_CONTROL ||
-                    profile.access == LocalDeviceAccessKind.STATUS_ONLY) &&
-                profile.kind == LocalDeviceProfileKind.SWITCH_OR_OUTLET
+                profile.restriction == DeviceAccessRestriction.NONE &&
+                profile.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET
             ) {
                 SwitchProfileIcon(
                     color = contentColor,
@@ -1927,14 +1210,13 @@ private fun deviceDescription(
 private fun deviceProfileLabel(
     device: CloudImportedDevice,
     profile: LocalDeviceProfile,
-): String = when (profile.access) {
-    LocalDeviceAccessKind.GATEWAY_CHILD -> "Gateway child"
-    LocalDeviceAccessKind.GATEWAY -> "Tuya gateway"
-    LocalDeviceAccessKind.CAMERA -> "Smart camera"
-    LocalDeviceAccessKind.LOCK -> "Smart lock or access control"
-    LocalDeviceAccessKind.DIRECT_CONTROL,
-    LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
-        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> when {
+): String = when (profile.restriction) {
+    DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
+    DeviceAccessRestriction.GATEWAY -> "Tuya gateway"
+    DeviceAccessRestriction.CAMERA -> "Smart camera"
+    DeviceAccessRestriction.LOCK -> "Smart lock or access control"
+    DeviceAccessRestriction.NONE -> when (profile.familyId) {
+        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> when {
             profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
                 "${profile.mappedSwitchCount}-channel power strip"
             profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
@@ -1942,53 +1224,23 @@ private fun deviceProfileLabel(
             device.category.lowercase() == "pc" -> "Power strip"
             else -> "Smart switch"
         }
-        LocalDeviceProfileKind.LIGHT -> "Smart light"
-        LocalDeviceProfileKind.COVER -> "Curtain or cover"
-        LocalDeviceProfileKind.SENSOR -> sensorProfileLabel(profile.sensorKind)
-        LocalDeviceProfileKind.GENERIC -> "Tuya device"
+        else -> profile.presentation.typeLabel
     }
 }
 
-private fun deviceProfileSymbol(profile: LocalDeviceProfile): String = when (profile.access) {
-    LocalDeviceAccessKind.GATEWAY_CHILD -> "⌁"
-    LocalDeviceAccessKind.GATEWAY -> "⌂"
-    LocalDeviceAccessKind.CAMERA -> "◉"
-    LocalDeviceAccessKind.LOCK -> "◇"
-    LocalDeviceAccessKind.DIRECT_CONTROL,
-    LocalDeviceAccessKind.STATUS_ONLY -> when (profile.kind) {
-        LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "⏻"
-        LocalDeviceProfileKind.LIGHT -> "✦"
-        LocalDeviceProfileKind.COVER -> "↕"
-        LocalDeviceProfileKind.SENSOR -> sensorProfileSymbol(profile.sensorKind)
-        LocalDeviceProfileKind.GENERIC -> "••"
-    }
+private fun deviceProfileSymbol(profile: LocalDeviceProfile): String = when (profile.restriction) {
+    DeviceAccessRestriction.GATEWAY_CHILD -> "⌁"
+    DeviceAccessRestriction.GATEWAY -> "⌂"
+    DeviceAccessRestriction.CAMERA -> "◉"
+    DeviceAccessRestriction.LOCK -> "◇"
+    DeviceAccessRestriction.NONE -> profile.presentation.symbol
 }
 
-private fun sensorProfileLabel(sensorKind: LocalSensorKind?): String = when (sensorKind) {
-    LocalSensorKind.CLIMATE -> "Temperature and humidity sensor"
-    LocalSensorKind.CONTACT -> "Contact sensor"
-    LocalSensorKind.MOTION -> "Motion sensor"
-    LocalSensorKind.PRESENCE -> "Presence sensor"
-    LocalSensorKind.WATER_LEAK -> "Water leak sensor"
-    LocalSensorKind.SMOKE -> "Smoke alarm"
-    LocalSensorKind.GAS -> "Gas alarm"
-    null -> "Tuya sensor"
-}
+private val LocalDeviceProfile.isSensor: Boolean
+    get() = presentation.layoutId == StandardDeviceLayoutIds.SENSOR_SUMMARY
 
-private fun sensorProfileSymbol(sensorKind: LocalSensorKind?): String = when (sensorKind) {
-    LocalSensorKind.CLIMATE -> "°"
-    LocalSensorKind.CONTACT -> "▯"
-    LocalSensorKind.MOTION -> "⌁"
-    LocalSensorKind.PRESENCE -> "◎"
-    LocalSensorKind.WATER_LEAK -> "≈"
-    LocalSensorKind.SMOKE -> "≋"
-    LocalSensorKind.GAS -> "◇"
-    null -> "·"
-}
-
-private val LocalDeviceAccessKind.canReadLocalStatus: Boolean
-    get() = this == LocalDeviceAccessKind.DIRECT_CONTROL ||
-        this == LocalDeviceAccessKind.STATUS_ONLY
+private val LocalDeviceProfile.canReadLocalStatus: Boolean
+    get() = restriction == DeviceAccessRestriction.NONE
 
 private val TuyaCloudRegion.displayName: String
     get() = when (this) {

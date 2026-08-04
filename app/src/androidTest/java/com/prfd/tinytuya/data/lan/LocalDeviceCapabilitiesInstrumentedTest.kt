@@ -4,10 +4,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
+import com.prfd.tinytuya.device.core.capability.CapabilityAccess
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.ResolvedActionGroup
+import com.prfd.tinytuya.device.core.capability.ResolvedChoice
+import com.prfd.tinytuya.device.core.capability.ResolvedColor
 import com.prfd.tinytuya.device.core.capability.ResolvedMeasurement
 import com.prfd.tinytuya.device.core.capability.ResolvedRange
+import com.prfd.tinytuya.device.core.capability.ResolvedToggle
+import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
+import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
+import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,11 +47,13 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.SWITCH_OR_OUTLET, profile.kind)
+        assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, profile.familyId)
+        assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
         assertEquals(3, profile.mappedSwitchCount)
-        assertEquals(listOf("1", "2", "3"), profile.booleanControls.map { it.dataPointId })
-        assertEquals(listOf("Switch 1", "Switch 2", "Switch 3"), profile.booleanControls.map { it.label })
-        assertEquals(listOf(false, true, true), profile.booleanControls.map { it.currentValue })
+        val toggles = profile.capabilities.ofType<ResolvedToggle>()
+        assertEquals(listOf("1", "2", "3"), toggles.map { it.dataPointId })
+        assertEquals(listOf("Switch 1", "Switch 2", "Switch 3"), toggles.map { it.label })
+        assertEquals(listOf(false, true, true), toggles.map { it.currentValue })
     }
 
     @Test
@@ -64,40 +73,21 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.LIGHT, profile.kind)
+        assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
         assertEquals(1, profile.mappedSwitchCount)
-        assertEquals(listOf("20"), profile.booleanControls.map { it.dataPointId })
-        assertEquals("Power", profile.booleanControls.single().label)
-        val controls = requireNotNull(profile.lightControls)
-        assertEquals("21", controls.mode?.dataPointId)
-        assertEquals(LocalLightMode.WHITE, controls.mode?.currentMode)
+        assertEquals(listOf("20"), profile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId })
+        assertEquals("Power", profile.capabilities.ofType<ResolvedToggle>().single().label)
+        val mode = profile.capabilities.ofType<ResolvedChoice>().single()
+        assertEquals("21", mode.dataPointId)
+        assertEquals("white", mode.currentWireValue)
+        val ranges = profile.capabilities.ofType<ResolvedRange>().associateBy { it.id }
+        assertEquals("22", ranges.getValue(CapabilityId("light.brightness")).dataPointId)
+        assertEquals(730, ranges.getValue(CapabilityId("light.brightness")).currentValue)
+        assertEquals("23", ranges.getValue(CapabilityId("light.temperature")).dataPointId)
+        assertEquals(420, ranges.getValue(CapabilityId("light.temperature")).currentValue)
         assertEquals(
-            LocalLightIntegerControl(
-                CapabilityId("light.brightness"),
-                "22",
-                "bright_value_v2",
-                10,
-                1_000,
-                1,
-                730,
-            ),
-            controls.whiteBrightness,
-        )
-        assertEquals(
-            LocalLightIntegerControl(
-                CapabilityId("light.temperature"),
-                "23",
-                "temp_value_v2",
-                0,
-                1_000,
-                1,
-                420,
-            ),
-            controls.colorTemperature,
-        )
-        assertEquals(
-            LocalLightHsv(hue = 300, saturation = 700, brightness = 500),
-            controls.color?.currentColor,
+            TuyaHsvColor(hue = 300, saturation = 700, brightness = 500),
+            profile.capabilities.ofType<ResolvedColor>().single().currentColor,
         )
     }
 
@@ -126,8 +116,8 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(null, stale.lightControls)
-        assertEquals(null, malformed.lightControls)
+        assertTrue(stale.capabilities.capabilities.isEmpty())
+        assertTrue(malformed.capabilities.capabilities.isEmpty())
     }
 
     @Test
@@ -151,7 +141,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(null, profile.lightControls)
+        assertTrue(profile.capabilities.ofType<ResolvedRange>().isEmpty())
     }
 
     @Test
@@ -170,7 +160,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
                 device = device,
                 status = staleStatus,
                 lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            ).booleanControls.isEmpty()
+            ).capabilities.ofType<ResolvedToggle>().isEmpty()
         )
         assertTrue(
             LocalDeviceCapabilityRegistry.profile(
@@ -179,7 +169,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
                     LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
                 ),
                 lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            ).booleanControls.isEmpty()
+            ).capabilities.ofType<ResolvedToggle>().isEmpty()
         )
     }
 
@@ -202,16 +192,16 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertTrue(profile.booleanControls.isEmpty())
+        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
     }
 
     @Test
     fun protectedDeviceFamiliesNeverPollOrExposeSwitchControls() {
         val protectedCategories = listOf(
-            "wg2" to LocalDeviceAccessKind.GATEWAY,
-            "sp" to LocalDeviceAccessKind.CAMERA,
-            "ms" to LocalDeviceAccessKind.LOCK,
-            "videolock" to LocalDeviceAccessKind.LOCK,
+            "wg2" to DeviceAccessRestriction.GATEWAY,
+            "sp" to DeviceAccessRestriction.CAMERA,
+            "ms" to DeviceAccessRestriction.LOCK,
+            "videolock" to DeviceAccessRestriction.LOCK,
         )
 
         protectedCategories.forEach { (category, expectedAccess) ->
@@ -224,18 +214,10 @@ class LocalDeviceCapabilitiesInstrumentedTest {
                 lastDiscoveryAtEpochMillis = DISCOVERED_AT,
             )
 
-            assertEquals(expectedAccess, profile.access)
-            assertTrue(profile.booleanControls.isEmpty())
+            assertEquals(expectedAccess, profile.restriction)
+            assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
+            assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
             assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
-            assertTrue(
-                LocalDeviceCapabilityRegistry.booleanControls(
-                    device = device,
-                    status = respondedStatus(
-                        LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-                    ),
-                    lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-                ).isEmpty()
-            )
         }
     }
 
@@ -251,22 +233,23 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.LIGHT, profile.kind)
-        assertEquals(LocalDeviceAccessKind.GATEWAY_CHILD, profile.access)
-        assertTrue(profile.booleanControls.isEmpty())
+        assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
+        assertEquals(DeviceAccessRestriction.GATEWAY_CHILD, profile.restriction)
+        assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
+        assertTrue(profile.capabilities.capabilities.isEmpty())
         assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
     }
 
     @Test
     fun standardSensorCategoriesArePollableReadOnlyProfiles() {
         val categories = listOf(
-            "wsdcg" to LocalSensorKind.CLIMATE,
-            "mcs" to LocalSensorKind.CONTACT,
-            "pir" to LocalSensorKind.MOTION,
-            "hps" to LocalSensorKind.PRESENCE,
-            "sj" to LocalSensorKind.WATER_LEAK,
-            "ywbj" to LocalSensorKind.SMOKE,
-            "rqbj" to LocalSensorKind.GAS,
+            "wsdcg" to BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
+            "mcs" to BuiltinDeviceFamilyIds.CONTACT_SENSOR,
+            "pir" to BuiltinDeviceFamilyIds.MOTION_SENSOR,
+            "hps" to BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
+            "sj" to BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
+            "ywbj" to BuiltinDeviceFamilyIds.SMOKE_SENSOR,
+            "rqbj" to BuiltinDeviceFamilyIds.GAS_SENSOR,
         )
 
         categories.forEach { (category, expectedSensorKind) ->
@@ -282,10 +265,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
                 lastDiscoveryAtEpochMillis = DISCOVERED_AT,
             )
 
-            assertEquals(LocalDeviceProfileKind.SENSOR, profile.kind)
-            assertEquals(expectedSensorKind, profile.sensorKind)
-            assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
-            assertTrue(profile.booleanControls.isEmpty())
+            assertEquals(expectedSensorKind, profile.familyId)
+            assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+            assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
             assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
         }
     }
@@ -312,15 +294,15 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.COVER, profile.kind)
-        assertEquals(LocalDeviceAccessKind.DIRECT_CONTROL, profile.access)
+        assertEquals(BuiltinDeviceFamilyIds.COVER, profile.familyId)
+        assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
         val actions = profile.capabilities.ofType<ResolvedActionGroup>().single()
         assertEquals("7", actions.dataPointId)
         assertEquals(listOf("up", "stop", "down"), actions.actions.map { it.wireValue })
         assertTrue(actions.writable)
         assertEquals("8", profile.capabilities.ofType<ResolvedRange>().single().dataPointId)
         assertEquals("48%", profile.capabilities.ofType<ResolvedMeasurement>().single().displayValue)
-        assertTrue(profile.booleanControls.isEmpty())
+        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
     }
 
     @Test
@@ -347,17 +329,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.SENSOR, profile.kind)
-        assertEquals(LocalSensorKind.CLIMATE, profile.sensorKind)
-        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
-        assertTrue(profile.booleanControls.isEmpty())
-        assertTrue(
-            LocalDeviceCapabilityRegistry.booleanControls(
-                device = device,
-                status = status,
-                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            ).isEmpty()
-        )
+        assertEquals(BuiltinDeviceFamilyIds.CLIMATE_SENSOR, profile.familyId)
+        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
     }
 
     @Test
@@ -381,12 +355,13 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.SENSOR, unknownProfile.kind)
-        assertEquals(LocalSensorKind.WATER_LEAK, unknownProfile.sensorKind)
-        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, unknownProfile.access)
-        assertEquals(LocalDeviceProfileKind.SWITCH_OR_OUTLET, switchProfile.kind)
-        assertEquals(null, switchProfile.sensorKind)
-        assertEquals(listOf("1"), switchProfile.booleanControls.map { it.dataPointId })
+        assertEquals(BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR, unknownProfile.familyId)
+        assertEquals(CapabilityAccess.READ_ONLY, unknownProfile.capabilityAccess)
+        assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, switchProfile.familyId)
+        assertEquals(
+            listOf("1"),
+            switchProfile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId },
+        )
     }
 
     @Test
@@ -410,10 +385,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.GENERIC, profile.kind)
-        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
-        assertTrue(profile.booleanControls.isEmpty())
-        assertEquals(null, profile.lightControls)
+        assertEquals(null, profile.familyId)
+        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+        assertTrue(profile.capabilities.capabilities.isEmpty())
     }
 
     @Test
@@ -430,9 +404,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(LocalDeviceProfileKind.GENERIC, profile.kind)
-        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
-        assertTrue(profile.booleanControls.isEmpty())
+        assertEquals(null, profile.familyId)
+        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+        assertTrue(profile.capabilities.capabilities.isEmpty())
         assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
     }
 
@@ -468,6 +442,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         dataPoints = dataPoints.toList(),
         polledAtEpochMillis = polledAtEpochMillis,
     )
+
+    private val LocalDeviceProfile.capabilities
+        get() = resolvedDevice.capabilities
 
     private companion object {
         const val DISCOVERED_AT = 9L

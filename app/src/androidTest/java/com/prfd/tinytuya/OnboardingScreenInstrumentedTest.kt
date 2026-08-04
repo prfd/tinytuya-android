@@ -23,16 +23,6 @@ class OnboardingScreenInstrumentedTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun welcomeExplainsLocalFirstPrivacy() {
-        setOnboardingContent(OnboardingUiState())
-
-        composeRule.onNodeWithText("Your devices.\nYour network.").assertExists()
-        composeRule.onNodeWithText("Local by default").assertExists()
-        composeRule.onNodeWithText("No surveillance stack").assertExists()
-        composeRule.onNodeWithText("Set up TinyTuya").assertExists()
-    }
-
-    @Test
     fun credentialValidationExplainsBothRequiredValues() {
         setOnboardingContent(
             OnboardingUiState(

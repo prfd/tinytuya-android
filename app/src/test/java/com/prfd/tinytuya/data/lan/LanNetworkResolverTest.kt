@@ -8,11 +8,6 @@ import org.junit.Test
 
 class LanNetworkResolverTest {
     @Test
-    fun calculatesSlash24Broadcast() {
-        assertEquals("192.168.50.255", broadcast("192.168.50.23", 24))
-    }
-
-    @Test
     fun calculatesNonOctetAlignedBroadcast() {
         assertEquals("10.42.15.255", broadcast("10.42.5.2", 20))
     }

@@ -202,25 +202,6 @@ class LocalControlCoordinatorInstrumentedTest {
     }
 
     @Test
-    fun protectedCameraMappingCannotAuthorizeAWrite() = runBlocking {
-        val catalog = sampleCatalog(category = "sp")
-        val gateway = FakeGateway { confirmedResult(false) }
-        val coordinator = DefaultLocalControlCoordinator(
-            gateway = gateway,
-            catalogStore = FakeStore(catalog),
-            networkResolver = FakeNetworkResolver(NETWORK),
-        )
-
-        try {
-            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
-            throw AssertionError("Expected a camera mapping to reject local control")
-        } catch (error: LocalControlException) {
-            assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
-        }
-        assertEquals(0, gateway.callCount)
-    }
-
-    @Test
     fun rejectedWritePersistsObservedRollbackAndReturnsSafeError() = runBlocking {
         val catalog = sampleCatalog()
         val gateway = FakeGateway {

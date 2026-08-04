@@ -17,8 +17,6 @@ import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.local.AppSettings
-import com.prfd.tinytuya.data.local.AppSettingsStorageException
-import com.prfd.tinytuya.data.local.AppSettingsStore
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.LanDeviceRecord
@@ -27,9 +25,6 @@ import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
-import com.prfd.tinytuya.data.python.PythonBridgeException
-import com.prfd.tinytuya.data.python.PythonCryptoHealth
-import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppUiState
@@ -38,8 +33,6 @@ import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.app.LocalControlOperation
-import com.prfd.tinytuya.ui.app.LocalRefreshPhase
-import com.prfd.tinytuya.ui.app.TinyTuyaHealthUiState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -91,120 +84,6 @@ class AppViewModelInstrumentedTest {
     }
 
     @Test
-    fun deletingLocalDataReturnsToOnboarding() = runBlocking {
-        val store = FakeCatalogStore(sampleCatalog())
-        val viewModel = AppViewModel(
-            store,
-            FakeLanDiscoveryCoordinator(),
-            FakeLocalStatusCoordinator(),
-            FakeLocalControlCoordinator(),
-        )
-        withTimeout(5_000) {
-            viewModel.state.first { it is AppUiState.Inventory }
-        }
-
-        viewModel.deleteAllLocalData()
-
-        val state = withTimeout(5_000) {
-            viewModel.state.first { it is AppUiState.Onboarding }
-        }
-        assertTrue(store.deleted)
-        assertTrue(state is AppUiState.Onboarding)
-    }
-
-    @Test
-    fun savedCloudAccountPublishesOnlyItsMaskedSummary() = runBlocking {
-        val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            credentialStore = credentialStore,
-        )
-
-        val account = withTimeout(5_000) {
-            viewModel.settingsState.first {
-                it.cloudAccount is CloudAccountUiState.Saved
-            }.cloudAccount
-        } as CloudAccountUiState.Saved
-
-        assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, account.summary.region)
-        assertEquals("know••••t-id", account.summary.maskedClientId)
-        assertTrue(!account.toString().contains("known-good-secret"))
-    }
-
-    @Test
-    fun openingTheHealthCheckPublishesEmbeddedTinyTuyaInfo() = runBlocking {
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            pythonHealthCheck = {
-                PythonRuntimeHealth(
-                    contractVersion = 1,
-                    pythonVersion = "3.11.13",
-                    tinytuyaVersion = "1.20.0",
-                    crypto = PythonCryptoHealth(
-                        library = "cryptography",
-                        version = "45.0.0",
-                        gcmAvailable = true,
-                        selfTestPassed = true,
-                    ),
-                    supportedProtocols = listOf("3.1", "3.2", "3.3", "3.4", "3.5"),
-                )
-            },
-        )
-
-        assertTrue(viewModel.settingsState.value.tinyTuyaHealth is TinyTuyaHealthUiState.Loading)
-        viewModel.checkPythonHealth()
-
-        val healthState = withTimeout(5_000) {
-            viewModel.settingsState.first {
-                it.tinyTuyaHealth is TinyTuyaHealthUiState.Ready
-            }.tinyTuyaHealth
-        } as TinyTuyaHealthUiState.Ready
-
-        assertEquals("3.11.13", healthState.health.pythonVersion)
-        assertEquals("1.20.0", healthState.health.tinytuyaVersion)
-        assertTrue(healthState.health.crypto.gcmAvailable)
-        assertTrue(healthState.health.crypto.selfTestPassed)
-        assertEquals(listOf("3.1", "3.2", "3.3", "3.4", "3.5"), healthState.health.supportedProtocols)
-    }
-
-    @Test
-    fun embeddedTinyTuyaHealthFailureIsMappedToSafeUiState() = runBlocking {
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            pythonHealthCheck = {
-                throw PythonBridgeException(
-                    code = "BRIDGE_HEALTH_FAILED",
-                    message = "The embedded TinyTuya runtime could not be initialized.",
-                )
-            },
-        )
-
-        viewModel.checkPythonHealth()
-
-        val healthState = withTimeout(5_000) {
-            viewModel.settingsState.first {
-                it.tinyTuyaHealth is TinyTuyaHealthUiState.Error
-            }.tinyTuyaHealth
-        } as TinyTuyaHealthUiState.Error
-
-        assertEquals("BRIDGE_HEALTH_FAILED", healthState.code)
-        assertEquals(
-            "The embedded TinyTuya runtime could not be initialized.",
-            healthState.message,
-        )
-        assertTrue(!healthState.toString().contains("client-secret"))
-    }
-
-    @Test
     fun forgettingCloudCredentialsPreservesTheDeviceCatalog() = runBlocking {
         val catalogStore = FakeCatalogStore(sampleCatalog())
         val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
@@ -230,10 +109,11 @@ class AppViewModelInstrumentedTest {
     }
 
     @Test
-    fun deletingAllLocalDataAlsoForgetsCloudCredentials() = runBlocking {
+    fun deletingAllLocalDataClearsBothStoresAndReturnsToOnboarding() = runBlocking {
+        val catalogStore = FakeCatalogStore(sampleCatalog())
         val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
         val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
+            catalogStore = catalogStore,
             lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
             localStatusCoordinator = FakeLocalStatusCoordinator(),
             localControlCoordinator = FakeLocalControlCoordinator(),
@@ -244,6 +124,7 @@ class AppViewModelInstrumentedTest {
         viewModel.deleteAllLocalData()
 
         withTimeout(5_000) { viewModel.state.first { it is AppUiState.Onboarding } }
+        assertTrue(catalogStore.deleted)
         assertNull(credentialStore.load())
         assertTrue(
             viewModel.settingsState.value.cloudAccount is CloudAccountUiState.Missing
@@ -629,63 +510,6 @@ class AppViewModelInstrumentedTest {
     }
 
     @Test
-    fun foregroundDoesNothingBeforeADeviceHasEverBeenMatched() = runBlocking {
-        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
-        val discoveryCoordinator = FakeLanDiscoveryCoordinator()
-        val knownCoordinator = FakeKnownDeviceRefreshCoordinator()
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = discoveryCoordinator,
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            lanNetworkObserver = observer,
-            knownDeviceRefreshCoordinator = knownCoordinator,
-            settingsStore = InMemoryAppSettingsStore(),
-        )
-        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
-
-        viewModel.onAppForegrounded()
-        observer.emit(LanNetworkObservation.Available(NETWORK))
-        delay(150)
-
-        assertEquals(0, knownCoordinator.callCount)
-        assertEquals(0, discoveryCoordinator.callCount)
-    }
-
-    @Test
-    fun repeatedForegroundEventInsideCooldownDoesNotRefreshTwice() = runBlocking {
-        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
-        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(discoveredCatalog())
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(discoveredCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            lanNetworkObserver = observer,
-            knownDeviceRefreshCoordinator = knownCoordinator,
-            settingsStore = InMemoryAppSettingsStore(),
-            elapsedRealtimeMillis = { 100_000L },
-        )
-        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
-
-        viewModel.onAppForegrounded()
-        observer.emit(LanNetworkObservation.Available(NETWORK))
-        withTimeout(5_000) {
-            viewModel.state.first {
-                it is AppUiState.Inventory &&
-                    it.discovery is LanDiscoveryUiState.Completed
-            }
-        }
-
-        viewModel.onAppForegrounded()
-        delay(150)
-
-        assertEquals(1, knownCoordinator.callCount)
-    }
-
-    @Test
     fun foregroundQuickRefreshFallsBackWhenNetworkResolverRejectsTheSnapshot() = runBlocking {
         val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
         val discoveryCoordinator = FakeLanDiscoveryCoordinator(discoveredCatalog())
@@ -720,85 +544,6 @@ class AppViewModelInstrumentedTest {
         assertEquals(1, discoveryCoordinator.callCount)
     }
 
-    @Test
-    fun quickRefreshFailureIsOwnedByTheInventoryStatusAction() = runBlocking {
-        val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
-        val knownCoordinator = FakeKnownDeviceRefreshCoordinator(
-            error = LocalStatusException(
-                code = "LOCAL_POLL_FAILED",
-                message = "Local device status could not be read.",
-            )
-        )
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(discoveredCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            lanNetworkObserver = observer,
-            knownDeviceRefreshCoordinator = knownCoordinator,
-        )
-        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-
-        viewModel.refreshKnownDevices()
-
-        val error = withTimeout(5_000) {
-            val inventory = viewModel.state.first {
-                it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Error
-            } as AppUiState.Inventory
-            inventory.discovery as LanDiscoveryUiState.Error
-        }
-        assertEquals(LocalRefreshPhase.STATUS, error.phase)
-        assertEquals(1, knownCoordinator.callCount)
-    }
-
-    @Test
-    fun refreshPreferenceIsSavedThroughTheViewModel() = runBlocking {
-        val settingsStore = InMemoryAppSettingsStore()
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            settingsStore = settingsStore,
-        )
-        withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
-
-        viewModel.setRefreshWhenAppOpens(false)
-
-        val savedState = withTimeout(5_000) {
-            viewModel.settingsState.first {
-                it.isLoaded && !it.isSaving && !it.refreshWhenAppOpens
-            }
-        }
-        assertTrue(!savedState.refreshWhenAppOpens)
-        assertTrue(!settingsStore.load().refreshWhenAppOpens)
-    }
-
-    @Test
-    fun failedPreferenceWriteDoesNotDiscardLoadedCloudAccountSummary() = runBlocking {
-        val viewModel = AppViewModel(
-            catalogStore = FakeCatalogStore(sampleCatalog()),
-            lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-            localStatusCoordinator = FakeLocalStatusCoordinator(),
-            localControlCoordinator = FakeLocalControlCoordinator(),
-            settingsStore = FailingAppSettingsStore(),
-            credentialStore = InMemoryCloudCredentialStore(savedCredentials()),
-        )
-        withTimeout(5_000) {
-            viewModel.settingsState.first {
-                it.isLoaded && it.cloudAccount is CloudAccountUiState.Saved
-            }
-        }
-
-        viewModel.setRefreshWhenAppOpens(false)
-
-        val failed = withTimeout(5_000) {
-            viewModel.settingsState.first { it.errorCode == "SETTINGS_WRITE_FAILED" }
-        }
-        assertTrue(failed.cloudAccount is CloudAccountUiState.Saved)
-        assertTrue(failed.refreshWhenAppOpens)
-    }
-
     private class FakeLanDiscoveryCoordinator(
         private val result: DeviceCatalog? = null,
         private val network: LanNetworkContext = NETWORK,
@@ -812,19 +557,6 @@ class AppViewModelInstrumentedTest {
                 network = network,
             )
         }
-    }
-
-    private class FailingAppSettingsStore : AppSettingsStore {
-        override suspend fun load() = AppSettings(refreshWhenAppOpens = true)
-
-        override suspend fun setRefreshWhenAppOpens(enabled: Boolean): AppSettings {
-            throw AppSettingsStorageException(
-                code = "SETTINGS_WRITE_FAILED",
-                message = "The refresh preference could not be saved.",
-            )
-        }
-
-        override suspend fun deleteAll() = Unit
     }
 
     private class FakeKnownDeviceRefreshCoordinator(

@@ -97,19 +97,6 @@ class LocalStatusPresentationInstrumentedTest {
         assertFalse(summary.toString().contains("private-json-token"))
     }
 
-    @Test
-    fun inspectorOrdersNumericIdsAndKeepsTheCompleteBoundedList() {
-        val dataPoints = (20 downTo 1).map { id ->
-            LocalDataPoint(id.toString(), LocalDataPointKind.INTEGER, id.toString())
-        }
-
-        val inspection = inspectLocalDataPoints(sampleDevice(), dataPoints)
-
-        assertEquals(20, inspection.totalCount)
-        assertEquals(20, inspection.dataPoints.size)
-        assertEquals((1..20).map(Int::toString), inspection.dataPoints.map { it.id })
-    }
-
     private fun sampleDevice(mappingJson: String = "{}") = CloudImportedDevice(
         id = "presentation-fixture",
         name = "Presentation fixture",

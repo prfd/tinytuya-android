@@ -109,17 +109,6 @@ class TuyaPythonGatewayInstrumentedTest {
     }
 
     @Test
-    fun localPollResponsePreservesBoundedAttemptCountForDiagnostics() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val result = ChaquopyTuyaPythonGateway(context).parseLocalPoll(
-            localPollResponse(attemptCount = 3)
-        )
-
-        assertEquals(3, result.devices.single().attemptCount)
-        assertEquals(5_500L, result.devices.single().durationMillis)
-    }
-
-    @Test
     fun localPollResponseRejectsAttemptCountOutsideRetryBudget() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
 

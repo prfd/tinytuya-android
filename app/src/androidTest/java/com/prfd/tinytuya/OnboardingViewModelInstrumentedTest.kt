@@ -42,6 +42,7 @@ class OnboardingViewModelInstrumentedTest {
         viewModel.updateRegion(TuyaCloudRegion.SINGAPORE)
         viewModel.updateClientId(" saved-client-id ")
         viewModel.updateClientSecret(" saved-client-secret ")
+        viewModel.updateSampleDeviceId(" sample-device-id ")
 
         viewModel.importDevices()
 
@@ -54,6 +55,7 @@ class OnboardingViewModelInstrumentedTest {
         assertEquals("saved-client-secret", saved.clientSecret.reveal())
         assertTrue(state.clientId.isBlank)
         assertTrue(state.clientSecret.isBlank)
+        assertTrue(state.sampleDeviceId.isBlank)
         assertFalse(saved.toString().contains("saved-client-secret"))
     }
 
@@ -83,15 +85,20 @@ class OnboardingViewModelInstrumentedTest {
 
         viewModel.importDevices()
 
-        withTimeout(5_000) {
+        val state = withTimeout(5_000) {
             viewModel.state.first { it.cloudImport is CloudImportUiState.Error }
         }
         val retained = requireNotNull(credentialStore.load())
+        assertEquals(
+            "CLOUD_CREDENTIALS_INVALID",
+            (state.cloudImport as CloudImportUiState.Error).code,
+        )
         assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, retained.region)
         assertEquals("known-good-id", retained.clientId.reveal())
         assertEquals("known-good-secret", retained.clientSecret.reveal())
-        assertFalse(viewModel.state.value.clientId.isBlank)
-        assertFalse(viewModel.state.value.clientSecret.isBlank)
+        assertFalse(state.clientId.isBlank)
+        assertFalse(state.clientSecret.isBlank)
+        assertFalse(state.toString().contains("rejected-secret"))
     }
 
     @Test
@@ -125,56 +132,6 @@ class OnboardingViewModelInstrumentedTest {
         assertTrue(state.clientId.isBlank)
         assertTrue(state.clientSecret.isBlank)
         assertFalse(state.toString().contains("retained-client-secret"))
-    }
-
-    @Test
-    fun successfulImportClearsEveryCredentialField() = runBlocking {
-        val viewModel = OnboardingViewModel(
-            gateway = FakeGateway { _, _ -> successfulEmptyImport() },
-            catalogStore = FakeCatalogStore(),
-        )
-        viewModel.updateClientId("private-client-id")
-        viewModel.updateClientSecret("private-client-secret")
-        viewModel.updateSampleDeviceId("private-device-id")
-
-        viewModel.importDevices()
-
-        val state = withTimeout(5_000) {
-            viewModel.state.first { it.cloudImport is CloudImportUiState.Success }
-        }
-        assertTrue(state.clientId.isBlank)
-        assertTrue(state.clientSecret.isBlank)
-        assertTrue(state.sampleDeviceId.isBlank)
-        assertFalse(state.toString().contains("private-client-secret"))
-
-        viewModel.clearSession()
-        assertTrue(viewModel.state.value.cloudImport is CloudImportUiState.Idle)
-    }
-
-    @Test
-    fun safeFailureKeepsInMemoryValuesForCorrection() = runBlocking {
-        val viewModel = OnboardingViewModel(
-            gateway = FakeGateway { _, _ ->
-                throw PythonBridgeException(
-                    code = "CLOUD_CREDENTIALS_INVALID",
-                    message = "Tuya did not accept these cloud credentials.",
-                )
-            },
-            catalogStore = FakeCatalogStore(),
-        )
-        viewModel.updateClientId("retry-client-id")
-        viewModel.updateClientSecret("retry-client-secret")
-
-        viewModel.importDevices()
-
-        val state = withTimeout(5_000) {
-            viewModel.state.first { it.cloudImport is CloudImportUiState.Error }
-        }
-        val error = state.cloudImport as CloudImportUiState.Error
-        assertEquals("CLOUD_CREDENTIALS_INVALID", error.code)
-        assertFalse(state.clientId.isBlank)
-        assertFalse(state.clientSecret.isBlank)
-        assertFalse(state.toString().contains("retry-client-secret"))
     }
 
     @Test

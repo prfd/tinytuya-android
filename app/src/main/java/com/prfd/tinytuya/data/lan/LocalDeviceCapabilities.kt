@@ -2,9 +2,16 @@ package com.prfd.tinytuya.data.lan
 
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
+import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
+import com.prfd.tinytuya.device.core.profile.DeviceClassification
+import com.prfd.tinytuya.device.core.profile.DeviceClassifier
+import com.prfd.tinytuya.device.core.profile.DeviceFamilyResolution
+import com.prfd.tinytuya.device.core.profile.DeviceIdentity
+import com.prfd.tinytuya.device.core.profile.ProtectedDevicePolicy
 import com.prfd.tinytuya.device.core.schema.DpDeclaredType
-import com.prfd.tinytuya.device.core.schema.DpDefinition
 import com.prfd.tinytuya.device.core.schema.DpSchema
+import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
+import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 import java.math.BigDecimal
 
 data class LocalBooleanControl(
@@ -130,6 +137,8 @@ data class LocalDeviceProfile(
  * checklist. Public support should stay limited to device classes covered by representative tests.
  */
 object LocalDeviceCapabilityRegistry {
+    private val deviceClassifier = DeviceClassifier(BuiltinDeviceFamilies.registry)
+
     fun profile(
         device: CloudImportedDevice,
         status: LocalStatusRecord?,
@@ -141,18 +150,13 @@ object LocalDeviceCapabilityRegistry {
             definition.declaredType == DpDeclaredType.BOOLEAN &&
                 isSwitchCode(definition.code.orEmpty())
         }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
-        val sensorKind = sensorKind(device, definitions)
-        val kind = profileKind(
-            device = device,
-            definitions = definitions,
-            mappedSwitchCount = mappedSwitchCount,
-            sensorKind = sensorKind,
-        )
-        val access = accessKind(device, kind)
+        val classification = classify(device, schema)
+        val legacyFamily = classification.toLegacyFamily()
+        val access = accessKind(classification.restriction, legacyFamily.kind)
         return LocalDeviceProfile(
-            kind = kind,
+            kind = legacyFamily.kind,
             access = access,
-            sensorKind = sensorKind.takeIf { kind == LocalDeviceProfileKind.SENSOR },
+            sensorKind = legacyFamily.sensorKind,
             mappedSwitchCount = mappedSwitchCount,
             booleanControls = if (access == LocalDeviceAccessKind.DIRECT_CONTROL) {
                 booleanControls(
@@ -166,7 +170,7 @@ object LocalDeviceCapabilityRegistry {
             },
             lightControls = if (
                 access == LocalDeviceAccessKind.DIRECT_CONTROL &&
-                kind == LocalDeviceProfileKind.LIGHT
+                legacyFamily.kind == LocalDeviceProfileKind.LIGHT
             ) {
                 lightControls(
                     device = device,
@@ -181,7 +185,8 @@ object LocalDeviceCapabilityRegistry {
     }
 
     fun canPollStatus(device: CloudImportedDevice): Boolean =
-        restrictedAccessKind(device) == null
+        ProtectedDevicePolicy.restrictionFor(device.toDeviceIdentity()) ==
+            DeviceAccessRestriction.NONE
 
     fun booleanControls(
         device: CloudImportedDevice,
@@ -189,19 +194,12 @@ object LocalDeviceCapabilityRegistry {
         lastDiscoveryAtEpochMillis: Long?,
     ): List<LocalBooleanControl> {
         val schema = parseTuyaDpSchema(device.mappingJson)
-        val definitions = schema.definitions
-        val mappedSwitchCount = definitions.count { definition ->
-            definition.declaredType == DpDeclaredType.BOOLEAN &&
-                isSwitchCode(definition.code.orEmpty())
-        }.coerceAtMost(MAX_BOOLEAN_CONTROLS)
-        val sensorKind = sensorKind(device, definitions)
-        val kind = profileKind(
-            device = device,
-            definitions = definitions,
-            mappedSwitchCount = mappedSwitchCount,
-            sensorKind = sensorKind,
-        )
-        if (accessKind(device, kind) != LocalDeviceAccessKind.DIRECT_CONTROL) {
+        val classification = classify(device, schema)
+        val legacyFamily = classification.toLegacyFamily()
+        if (
+            accessKind(classification.restriction, legacyFamily.kind) !=
+            LocalDeviceAccessKind.DIRECT_CONTROL
+        ) {
             return emptyList()
         }
         return booleanControls(
@@ -400,59 +398,10 @@ object LocalDeviceCapabilityRegistry {
         }
     }
 
-    private fun profileKind(
-        device: CloudImportedDevice,
-        definitions: List<DpDefinition>,
-        mappedSwitchCount: Int,
-        sensorKind: LocalSensorKind?,
-    ): LocalDeviceProfileKind {
-        val category = device.category.trim().lowercase()
-        val codes = definitions.mapNotNullTo(mutableSetOf()) { it.code }
-        return when {
-            category in LIGHT_CATEGORIES ->
-                LocalDeviceProfileKind.LIGHT
-            category in COVER_CATEGORIES ->
-                LocalDeviceProfileKind.COVER
-            category in SWITCH_CATEGORIES ->
-                LocalDeviceProfileKind.SWITCH_OR_OUTLET
-            sensorKind != null -> LocalDeviceProfileKind.SENSOR
-            codes.any { it in LIGHT_PROFILE_CODES } -> LocalDeviceProfileKind.LIGHT
-            codes.any { it in COVER_PROFILE_CODES } -> LocalDeviceProfileKind.COVER
-            mappedSwitchCount > 0 -> LocalDeviceProfileKind.SWITCH_OR_OUTLET
-            else -> LocalDeviceProfileKind.GENERIC
-        }
-    }
-
-    private fun sensorKind(
-        device: CloudImportedDevice,
-        definitions: List<DpDefinition>,
-    ): LocalSensorKind? {
-        when (device.category.trim().lowercase()) {
-            "wsdcg" -> return LocalSensorKind.CLIMATE
-            "mcs" -> return LocalSensorKind.CONTACT
-            "pir" -> return LocalSensorKind.MOTION
-            "hps" -> return LocalSensorKind.PRESENCE
-            "sj" -> return LocalSensorKind.WATER_LEAK
-            "ywbj" -> return LocalSensorKind.SMOKE
-            "rqbj" -> return LocalSensorKind.GAS
-        }
-        val codes = definitions.mapNotNullTo(mutableSetOf()) { definition -> definition.code }
-        return when {
-            codes.any { code -> code in WATER_SENSOR_CODES } -> LocalSensorKind.WATER_LEAK
-            codes.any { code -> code in SMOKE_SENSOR_CODES } -> LocalSensorKind.SMOKE
-            codes.any { code -> code in GAS_SENSOR_CODES } -> LocalSensorKind.GAS
-            codes.any { code -> code in CONTACT_SENSOR_CODES } -> LocalSensorKind.CONTACT
-            codes.any { code -> code in PRESENCE_SENSOR_CODES } -> LocalSensorKind.PRESENCE
-            codes.any { code -> code in MOTION_SENSOR_CODES } -> LocalSensorKind.MOTION
-            codes.any { code -> code in CLIMATE_SENSOR_CODES } -> LocalSensorKind.CLIMATE
-            else -> null
-        }
-    }
-
     private fun accessKind(
-        device: CloudImportedDevice,
+        restriction: DeviceAccessRestriction,
         kind: LocalDeviceProfileKind,
-    ): LocalDeviceAccessKind = restrictedAccessKind(device) ?: when (kind) {
+    ): LocalDeviceAccessKind = restriction.toLegacyAccessKind() ?: when (kind) {
         LocalDeviceProfileKind.SWITCH_OR_OUTLET,
         LocalDeviceProfileKind.LIGHT -> LocalDeviceAccessKind.DIRECT_CONTROL
         LocalDeviceProfileKind.COVER,
@@ -460,16 +409,46 @@ object LocalDeviceCapabilityRegistry {
         LocalDeviceProfileKind.GENERIC -> LocalDeviceAccessKind.STATUS_ONLY
     }
 
-    private fun restrictedAccessKind(device: CloudImportedDevice): LocalDeviceAccessKind? {
-        val category = device.category.trim().lowercase()
-        return when {
-            device.isSubDevice -> LocalDeviceAccessKind.GATEWAY_CHILD
-            category in GATEWAY_CATEGORIES -> LocalDeviceAccessKind.GATEWAY
-            category in CAMERA_CATEGORIES -> LocalDeviceAccessKind.CAMERA
-            category in LOCK_CATEGORIES -> LocalDeviceAccessKind.LOCK
-            else -> null
+    private fun classify(device: CloudImportedDevice, schema: DpSchema): DeviceClassification =
+        deviceClassifier.classify(device.toDeviceIdentity(), schema)
+
+    private fun DeviceClassification.toLegacyFamily(): LegacyFamily =
+        when ((family as? DeviceFamilyResolution.Matched)?.definition?.id) {
+            BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> LegacyFamily(
+                LocalDeviceProfileKind.SWITCH_OR_OUTLET
+            )
+            BuiltinDeviceFamilyIds.LIGHT -> LegacyFamily(LocalDeviceProfileKind.LIGHT)
+            BuiltinDeviceFamilyIds.COVER -> LegacyFamily(LocalDeviceProfileKind.COVER)
+            BuiltinDeviceFamilyIds.CLIMATE_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.CLIMATE,
+            )
+            BuiltinDeviceFamilyIds.CONTACT_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.CONTACT,
+            )
+            BuiltinDeviceFamilyIds.MOTION_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.MOTION,
+            )
+            BuiltinDeviceFamilyIds.PRESENCE_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.PRESENCE,
+            )
+            BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.WATER_LEAK,
+            )
+            BuiltinDeviceFamilyIds.SMOKE_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.SMOKE,
+            )
+            BuiltinDeviceFamilyIds.GAS_SENSOR -> LegacyFamily(
+                LocalDeviceProfileKind.SENSOR,
+                LocalSensorKind.GAS,
+            )
+            else -> LegacyFamily(LocalDeviceProfileKind.GENERIC)
         }
-    }
 
     private fun isSwitchCode(code: String): Boolean =
         code == "switch" ||
@@ -488,72 +467,13 @@ object LocalDeviceCapabilityRegistry {
         val currentValue: Boolean,
     )
 
+    private data class LegacyFamily(
+        val kind: LocalDeviceProfileKind,
+        val sensorKind: LocalSensorKind? = null,
+    )
+
     private val BOOLEAN_WIRE_VALUES = setOf("true", "false")
     private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")
-    private val SWITCH_CATEGORIES = setOf("kg", "cz", "pc")
-    private val LIGHT_CATEGORIES = setOf(
-        "dj",
-        "xdd",
-        "fwd",
-        "dc",
-        "dd",
-        "gyd",
-        "fsd",
-        "tyndj",
-    )
-    private val COVER_CATEGORIES = setOf("cl", "clkg")
-    private val GATEWAY_CATEGORIES = setOf("wg2", "wfcon")
-    private val CAMERA_CATEGORIES = setOf("sp")
-    private val LOCK_CATEGORIES = setOf(
-        "ms",
-        "bxx",
-        "gyms",
-        "jtmspro",
-        "hotelms",
-        "ms_category",
-        "jtmsbh",
-        "mk",
-        "videolock",
-        "photolock",
-    )
-    private val LIGHT_PROFILE_CODES = setOf(
-        "switch_led",
-        "bright_value",
-        "bright_value_v2",
-        "temp_value",
-        "temp_value_v2",
-        "colour_data",
-        "colour_data_v2",
-        "work_mode",
-    )
-    private val COVER_PROFILE_CODES = setOf(
-        "control",
-        "control_2",
-        "percent_control",
-        "percent_control_2",
-        "percent_state",
-        "percent_state_2",
-    )
-    private val CLIMATE_SENSOR_CODES = setOf(
-        "temp_current",
-        "va_temperature",
-        "humidity_value",
-        "va_humidity",
-    )
-    private val CONTACT_SENSOR_CODES = setOf("doorcontact_state")
-    private val MOTION_SENSOR_CODES = setOf("pir")
-    private val PRESENCE_SENSOR_CODES = setOf("presence_state")
-    private val WATER_SENSOR_CODES = setOf("watersensor_state")
-    private val SMOKE_SENSOR_CODES = setOf(
-        "smoke_sensor_status",
-        "smoke_sensor_state",
-        "smoke_sensor_value",
-    )
-    private val GAS_SENSOR_CODES = setOf(
-        "gas_sensor_status",
-        "gas_sensor_state",
-        "gas_sensor_value",
-    )
     private const val MAX_BOOLEAN_CONTROLS = 16
     private const val MAX_LIGHT_ENUM_LENGTH = 40
     private const val MAX_LIGHT_HUE = 360
@@ -561,6 +481,22 @@ object LocalDeviceCapabilityRegistry {
     private const val MAX_LIGHT_INTEGER_VALUE = 10_000
     private const val LIGHT_COLOR_HEX_LENGTH = 12
     private val LIGHT_COLOR_HEX = Regex("[0-9a-fA-F]{12}")
+}
+
+private fun CloudImportedDevice.toDeviceIdentity(): DeviceIdentity = DeviceIdentity.normalize(
+    category = category,
+    productId = productId,
+    productName = productName,
+    model = model,
+    isSubDevice = isSubDevice,
+)
+
+private fun DeviceAccessRestriction.toLegacyAccessKind(): LocalDeviceAccessKind? = when (this) {
+    DeviceAccessRestriction.NONE -> null
+    DeviceAccessRestriction.GATEWAY_CHILD -> LocalDeviceAccessKind.GATEWAY_CHILD
+    DeviceAccessRestriction.GATEWAY -> LocalDeviceAccessKind.GATEWAY
+    DeviceAccessRestriction.CAMERA -> LocalDeviceAccessKind.CAMERA
+    DeviceAccessRestriction.LOCK -> LocalDeviceAccessKind.LOCK
 }
 
 private fun BigDecimal?.exactIntOrNull(): Int? =

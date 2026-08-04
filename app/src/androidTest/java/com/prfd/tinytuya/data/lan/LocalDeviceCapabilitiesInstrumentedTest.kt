@@ -337,6 +337,33 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
+    fun ambiguousDistinctiveMappingsFallBackToGenericReadOnlyAccess() {
+        val profile = LocalDeviceCapabilityRegistry.profile(
+            device = sampleDevice(
+                category = "custom",
+                mappingJson = """
+                    {
+                      "1":{"code":"switch_1","type":"Boolean"},
+                      "2":{"code":"bright_value_v2","type":"Integer"},
+                      "3":{"code":"percent_state","type":"Integer"}
+                    }
+                """.trimIndent(),
+            ),
+            status = respondedStatus(
+                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+                LocalDataPoint("2", LocalDataPointKind.INTEGER, "500"),
+                LocalDataPoint("3", LocalDataPointKind.INTEGER, "50"),
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(LocalDeviceProfileKind.GENERIC, profile.kind)
+        assertEquals(LocalDeviceAccessKind.STATUS_ONLY, profile.access)
+        assertTrue(profile.booleanControls.isEmpty())
+        assertEquals(null, profile.lightControls)
+    }
+
+    @Test
     fun genericDirectDeviceIsPollableButStatusOnly() {
         val device = sampleDevice(
             category = "custom_sensor",

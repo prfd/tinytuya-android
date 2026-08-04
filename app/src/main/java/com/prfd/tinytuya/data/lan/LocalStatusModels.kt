@@ -44,11 +44,13 @@ data class LocalPolledDevice(
     val state: LocalPollDeviceState,
     val errorCode: String,
     val durationMillis: Long,
+    val attemptCount: Int = 1,
     val dataPoints: List<LocalDataPoint>,
 ) {
     override fun toString(): String =
         "LocalPolledDevice(id=[REDACTED], state=$state, errorCode=$errorCode, " +
-            "durationMillis=$durationMillis, dataPointCount=${dataPoints.size})"
+            "durationMillis=$durationMillis, attemptCount=$attemptCount, " +
+            "dataPointCount=${dataPoints.size})"
 }
 
 data class LocalPollResult(

@@ -109,6 +109,31 @@ class TuyaPythonGatewayInstrumentedTest {
     }
 
     @Test
+    fun localPollResponsePreservesBoundedAttemptCountForDiagnostics() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val result = ChaquopyTuyaPythonGateway(context).parseLocalPoll(
+            localPollResponse(attemptCount = 3)
+        )
+
+        assertEquals(3, result.devices.single().attemptCount)
+        assertEquals(5_500L, result.devices.single().durationMillis)
+    }
+
+    @Test
+    fun localPollResponseRejectsAttemptCountOutsideRetryBudget() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        try {
+            ChaquopyTuyaPythonGateway(context).parseLocalPoll(
+                localPollResponse(attemptCount = 4)
+            )
+            fail("Expected an out-of-budget attempt count to be rejected")
+        } catch (error: PythonBridgeException) {
+            assertEquals("BRIDGE_RESPONSE_INVALID", error.code)
+        }
+    }
+
+    @Test
     fun localControlRejectsAddressOutsideSelectedWifiBeforeWriting() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val gateway = ChaquopyTuyaPythonGateway(context)
@@ -142,4 +167,29 @@ class TuyaPythonGatewayInstrumentedTest {
             assertEquals("LOCAL_CONTROL_DEVICE_INVALID", error.code)
         }
     }
+
+    private fun localPollResponse(attemptCount: Int) = """
+        {
+          "ok": true,
+          "contract_version": 1,
+          "result": {
+            "device_count": 1,
+            "responded_device_count": 0,
+            "offline_device_count": 1,
+            "error_device_count": 0,
+            "duration_ms": 5500,
+            "warnings": ["PARTIAL_LOCAL_STATUS"],
+            "devices": [
+              {
+                "id": "known-device",
+                "state": "offline",
+                "error_code": "LOCAL_DEVICE_TIMEOUT",
+                "duration_ms": 5500,
+                "attempt_count": $attemptCount,
+                "data_points": []
+              }
+            ]
+          }
+        }
+    """.trimIndent()
 }

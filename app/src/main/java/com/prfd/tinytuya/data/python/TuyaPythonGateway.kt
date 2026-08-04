@@ -1,13 +1,16 @@
 package com.prfd.tinytuya.data.python
 
 import android.content.Context
+import android.os.SystemClock
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.prfd.tinytuya.data.lan.DiagnosticBridgeOperation
 import com.prfd.tinytuya.data.lan.LanDiscoveredDevice
 import com.prfd.tinytuya.data.lan.LanDiscoveryRequest
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.lan.LanKnownDevice
 import com.prfd.tinytuya.data.lan.LanNetworkContext
+import com.prfd.tinytuya.data.lan.LocalRefreshDiagnostics
 import com.prfd.tinytuya.data.lan.LocalControlChange
 import com.prfd.tinytuya.data.lan.LocalControlDevice
 import com.prfd.tinytuya.data.lan.LocalControlRequest
@@ -20,6 +23,7 @@ import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.lan.LocalPollRequest
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalPolledDevice
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -78,7 +82,10 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         credentials: CloudCredentials,
         previousDevices: List<CloudImportedDevice>,
     ): CloudImportResult = withContext(Dispatchers.IO) {
-        bridgeOperationMutex.withLock {
+        runBridgeOperation(
+            operation = DiagnosticBridgeOperation.CLOUD_IMPORT,
+            targetCount = previousDevices.size,
+        ) {
             val response = python(applicationContext)
                 .getModule(BRIDGE_MODULE)
                 .callAttr(
@@ -94,7 +101,10 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
 
     override suspend fun discoverLan(request: LanDiscoveryRequest): LanDiscoveryResult =
         withContext(Dispatchers.IO) {
-            bridgeOperationMutex.withLock {
+            runBridgeOperation(
+                operation = DiagnosticBridgeOperation.DISCOVERY,
+                targetCount = request.knownDevices.size,
+            ) { operationId ->
                 val response = python(applicationContext)
                     .getModule(BRIDGE_MODULE)
                     .callAttr(
@@ -104,13 +114,18 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                     )
                     .toString()
 
-                parseLanDiscovery(response)
+                parseLanDiscovery(response).also { result ->
+                    LocalRefreshDiagnostics.discoveryResult(operationId, result)
+                }
             }
         }
 
     override suspend fun pollLocal(request: LocalPollRequest): LocalPollResult =
         withContext(Dispatchers.IO) {
-            bridgeOperationMutex.withLock {
+            runBridgeOperation(
+                operation = DiagnosticBridgeOperation.STATUS,
+                targetCount = request.devices.size,
+            ) { operationId ->
                 val response = python(applicationContext)
                     .getModule(BRIDGE_MODULE)
                     .callAttr(
@@ -120,13 +135,18 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                     )
                     .toString()
 
-                parseLocalPoll(response)
+                parseLocalPoll(response).also { result ->
+                    LocalRefreshDiagnostics.pollResult(operationId, result)
+                }
             }
         }
 
     override suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult =
         withContext(Dispatchers.IO) {
-            bridgeOperationMutex.withLock {
+            runBridgeOperation(
+                operation = DiagnosticBridgeOperation.CONTROL,
+                targetCount = 1,
+            ) {
                 val response = python(applicationContext)
                     .getModule(BRIDGE_MODULE)
                     .callAttr(
@@ -140,6 +160,67 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                 parseLocalControl(response, request)
             }
         }
+
+    private suspend fun <T> runBridgeOperation(
+        operation: DiagnosticBridgeOperation,
+        targetCount: Int,
+        block: (operationId: Long) -> T,
+    ): T {
+        val operationId = LocalRefreshDiagnostics.nextBridgeOperationId()
+        val queuedAt = SystemClock.elapsedRealtime()
+        var startedAt: Long? = null
+        LocalRefreshDiagnostics.bridgeQueued(operationId, operation, targetCount)
+        try {
+            return bridgeOperationMutex.withLock {
+                val currentStartedAt = SystemClock.elapsedRealtime()
+                startedAt = currentStartedAt
+                LocalRefreshDiagnostics.bridgeStarted(
+                    operationId = operationId,
+                    operation = operation,
+                    queueMillis = currentStartedAt - queuedAt,
+                )
+                block(operationId).also {
+                    LocalRefreshDiagnostics.bridgeCompleted(
+                        operationId = operationId,
+                        operation = operation,
+                        activeMillis = SystemClock.elapsedRealtime() - currentStartedAt,
+                    )
+                }
+            }
+        } catch (error: CancellationException) {
+            logBridgeFailure(operationId, operation, "CANCELLED", queuedAt, startedAt)
+            throw error
+        } catch (error: PythonBridgeException) {
+            logBridgeFailure(operationId, operation, error.code, queuedAt, startedAt)
+            throw error
+        } catch (error: Exception) {
+            logBridgeFailure(
+                operationId,
+                operation,
+                "UNEXPECTED_EXCEPTION",
+                queuedAt,
+                startedAt,
+            )
+            throw error
+        }
+    }
+
+    private fun logBridgeFailure(
+        operationId: Long,
+        operation: DiagnosticBridgeOperation,
+        code: String,
+        queuedAt: Long,
+        startedAt: Long?,
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        LocalRefreshDiagnostics.bridgeFailed(
+            operationId = operationId,
+            operation = operation,
+            code = code,
+            queuedMillis = (startedAt ?: now) - queuedAt,
+            activeMillis = startedAt?.let { now - it },
+        )
+    }
 
     private fun parseHealth(response: String): PythonRuntimeHealth = parseResponse(response) { contractVersion, result ->
         val crypto = result.getJSONObject("crypto")
@@ -251,7 +332,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
             )
         }
 
-    private fun parseLocalPoll(response: String): LocalPollResult =
+    internal fun parseLocalPoll(response: String): LocalPollResult =
         parseResponse(response) { contractVersion, result ->
             val devicesJson = result.getJSONArray("devices")
             val devices = buildList(devicesJson.length()) {
@@ -268,6 +349,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
                             state = state,
                             errorCode = device.getString("error_code"),
                             durationMillis = device.getLong("duration_ms"),
+                            attemptCount = device.getInt("attempt_count"),
                             dataPoints = dataPoints,
                         )
                     )
@@ -370,6 +452,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         device.id.isBlank() ||
             device.id.length > 128 ||
             device.durationMillis !in 0..MAX_SINGLE_POLL_DURATION_MILLIS ||
+            device.attemptCount !in 1..MAX_LOCAL_POLL_ATTEMPT_COUNT ||
             (device.state == LocalPollDeviceState.RESPONDED && device.errorCode.isNotEmpty()) ||
             (device.state != LocalPollDeviceState.RESPONDED && device.errorCode.isBlank()) ||
             (device.state != LocalPollDeviceState.RESPONDED && device.dataPoints.isNotEmpty()) ||
@@ -523,6 +606,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
         const val MAX_LOCAL_POLL_DEVICE_COUNT = 32
         const val MAX_LOCAL_DATA_POINT_COUNT = 256
         const val MAX_LOCAL_DATA_POINT_VALUE_LENGTH = 8192
+        const val MAX_LOCAL_POLL_ATTEMPT_COUNT = 3
         const val MAX_SINGLE_POLL_DURATION_MILLIS = 30_000L
         const val MAX_LOCAL_POLL_DURATION_MILLIS = 120_000L
         const val MAX_LOCAL_CONTROL_CHANGE_COUNT = 8

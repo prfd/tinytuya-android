@@ -709,9 +709,11 @@ def _poll_one_local_device(tinytuya, config):
     error_code = "LOCAL_STATUS_FAILED"
     data_points = []
     warnings = set()
+    attempt_count = 0
     for delay_seconds in LOCAL_POLL_ATTEMPT_DELAYS_SECONDS:
         if delay_seconds:
             time.sleep(delay_seconds)
+        attempt_count += 1
 
         device = None
         attempt_warnings = []
@@ -772,6 +774,7 @@ def _poll_one_local_device(tinytuya, config):
         "state": state,
         "error_code": error_code,
         "duration_ms": duration_ms,
+        "attempt_count": attempt_count,
         "data_points": data_points,
     }, sorted(warnings)
 

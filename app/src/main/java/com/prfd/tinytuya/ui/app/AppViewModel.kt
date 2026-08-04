@@ -13,6 +13,9 @@ import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalControlException
 import com.prfd.tinytuya.data.lan.LocalLightControlAction
+import com.prfd.tinytuya.data.lan.LocalRefreshDiagnostics
+import com.prfd.tinytuya.data.lan.LocalRefreshMode
+import com.prfd.tinytuya.data.lan.LocalRefreshTrigger
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
@@ -366,19 +369,42 @@ class AppViewModel(
     }
 
     fun refreshKnownDevices() {
-        refreshKnownDevices(fallbackToDiscovery = false)
+        refreshKnownDevices(
+            fallbackToDiscovery = false,
+            trigger = LocalRefreshTrigger.MANUAL,
+        )
     }
 
-    private fun refreshKnownDevices(fallbackToDiscovery: Boolean) {
-        val current = mutableState.value as? AppUiState.Inventory ?: return
-        if (
+    private fun refreshKnownDevices(
+        fallbackToDiscovery: Boolean,
+        trigger: LocalRefreshTrigger,
+    ) {
+        val current = mutableState.value as? AppUiState.Inventory ?: run {
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = trigger,
+                mode = LocalRefreshMode.STATUS,
+                reason = "invalid_destination",
+            )
+            return
+        }
+        val skipReason = when {
             current.discovery is LanDiscoveryUiState.Scanning ||
-            current.discovery is LanDiscoveryUiState.ReadingStatus ||
-            current.control is LocalControlUiState.Sending ||
-            !current.isLanSnapshotCurrent ||
-            !current.catalog.hasCurrentKnownStatusTargets()
-        ) return
+                current.discovery is LanDiscoveryUiState.ReadingStatus ||
+                current.control is LocalControlUiState.Sending -> "busy"
+            !current.isLanSnapshotCurrent -> "snapshot_not_current"
+            !current.catalog.hasCurrentKnownStatusTargets() -> "no_current_targets"
+            else -> null
+        }
+        if (skipReason != null) {
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = trigger,
+                mode = LocalRefreshMode.STATUS,
+                reason = skipReason,
+            )
+            return
+        }
         markLocalRefreshStarted()
+        val refreshTrace = LocalRefreshDiagnostics.refreshStarted(trigger, LocalRefreshMode.STATUS)
         clearControlSession()
         mutableState.value = current.copy(
             discovery = LanDiscoveryUiState.ReadingStatus,
@@ -388,6 +414,7 @@ class AppViewModel(
             try {
                 val outcome = knownDeviceRefreshCoordinator.refresh(current.catalog)
                 if (!observationMatches(outcome.network)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED)
                     publishChangedNetwork(outcome.catalog)
                     return@launch
                 }
@@ -401,21 +428,25 @@ class AppViewModel(
                     control = LocalControlUiState.Ready,
                     isLanSnapshotCurrent = true,
                 )
+                refreshTrace.completed()
             } catch (error: CancellationException) {
+                refreshTrace.failed("CANCELLED")
                 throw error
             } catch (error: LocalStatusException) {
                 if (
                     fallbackToDiscovery &&
                     error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED
                 ) {
+                    refreshTrace.fallback(LocalRefreshMode.DISCOVERY, error.code)
                     mutableState.value = current.copy(
                         discovery = LanDiscoveryUiState.Idle,
                         control = LocalControlUiState.Unavailable,
                         isLanSnapshotCurrent = false,
                     )
-                    discoverLan()
+                    discoverLan(trigger = LocalRefreshTrigger.FOREGROUND_FALLBACK)
                     return@launch
                 }
+                refreshTrace.failed(error.code)
                 val snapshotCurrent = if (error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED) {
                     false
                 } else {
@@ -438,6 +469,7 @@ class AppViewModel(
                     isLanSnapshotCurrent = snapshotCurrent,
                 )
             } catch (error: DeviceCatalogStorageException) {
+                refreshTrace.failed(error.code)
                 mutableState.value = current.copy(
                     discovery = LanDiscoveryUiState.Error(
                         code = error.code,
@@ -447,6 +479,7 @@ class AppViewModel(
                     control = LocalControlUiState.Unavailable,
                 )
             } catch (_: Exception) {
+                refreshTrace.failed("LOCAL_POLL_FAILED")
                 mutableState.value = current.copy(
                     discovery = LanDiscoveryUiState.Error(
                         code = "LOCAL_POLL_FAILED",
@@ -460,13 +493,32 @@ class AppViewModel(
     }
 
     fun discoverLan() {
-        val current = mutableState.value as? AppUiState.Inventory ?: return
+        discoverLan(trigger = LocalRefreshTrigger.MANUAL)
+    }
+
+    private fun discoverLan(trigger: LocalRefreshTrigger) {
+        val current = mutableState.value as? AppUiState.Inventory ?: run {
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = trigger,
+                mode = LocalRefreshMode.DISCOVERY,
+                reason = "invalid_destination",
+            )
+            return
+        }
         if (
             current.discovery is LanDiscoveryUiState.Scanning ||
             current.discovery is LanDiscoveryUiState.ReadingStatus ||
             current.control is LocalControlUiState.Sending
-        ) return
+        ) {
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = trigger,
+                mode = LocalRefreshMode.DISCOVERY,
+                reason = "busy",
+            )
+            return
+        }
         markLocalRefreshStarted()
+        val refreshTrace = LocalRefreshDiagnostics.refreshStarted(trigger, LocalRefreshMode.DISCOVERY)
         clearControlSession()
         mutableState.value = current.copy(
             discovery = LanDiscoveryUiState.Scanning,
@@ -479,6 +531,7 @@ class AppViewModel(
                 val discovery = lanDiscoveryCoordinator.discover(current.catalog)
                 latestCatalog = discovery.catalog
                 if (!observationMatches(discovery.network)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED)
                     publishChangedNetwork(latestCatalog)
                     return@launch
                 }
@@ -498,6 +551,7 @@ class AppViewModel(
                     network = discovery.network,
                 )
                 if (!controlSessionMatches(discovery.network, latestCatalog)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED, LocalRefreshMode.STATUS)
                     publishChangedNetwork(latestCatalog)
                     return@launch
                 }
@@ -507,9 +561,13 @@ class AppViewModel(
                     control = LocalControlUiState.Ready,
                     isLanSnapshotCurrent = true,
                 )
+                refreshTrace.completed()
             } catch (error: CancellationException) {
+                val phase = if (readingStatus) LocalRefreshMode.STATUS else LocalRefreshMode.DISCOVERY
+                refreshTrace.failed("CANCELLED", phase)
                 throw error
             } catch (error: LanDiscoveryException) {
+                refreshTrace.failed(error.code)
                 val snapshotCurrent = catalogIsCurrentNow(
                     catalog = current.catalog,
                     fallback = current.isLanSnapshotCurrent,
@@ -529,9 +587,11 @@ class AppViewModel(
                 )
             } catch (error: LocalStatusException) {
                 if (!activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED, LocalRefreshMode.STATUS)
                     publishChangedNetwork(latestCatalog)
                     return@launch
                 }
+                refreshTrace.failed(error.code, LocalRefreshMode.STATUS)
                 mutableState.value = AppUiState.Inventory(
                     catalog = latestCatalog,
                     discovery = LanDiscoveryUiState.Error(
@@ -544,9 +604,12 @@ class AppViewModel(
                 )
             } catch (error: DeviceCatalogStorageException) {
                 if (readingStatus && !activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED, LocalRefreshMode.STATUS)
                     publishChangedNetwork(latestCatalog)
                     return@launch
                 }
+                val phase = if (readingStatus) LocalRefreshMode.STATUS else LocalRefreshMode.DISCOVERY
+                refreshTrace.failed(error.code, phase)
                 val snapshotCurrent = if (readingStatus) {
                     true
                 } else {
@@ -583,9 +646,13 @@ class AppViewModel(
                 )
             } catch (_: Exception) {
                 if (readingStatus && !activeDiscoverySessionIsCurrent(latestCatalog)) {
+                    refreshTrace.failed(LAN_NETWORK_CHANGED, LocalRefreshMode.STATUS)
                     publishChangedNetwork(latestCatalog)
                     return@launch
                 }
+                val phase = if (readingStatus) LocalRefreshMode.STATUS else LocalRefreshMode.DISCOVERY
+                val code = if (readingStatus) "LOCAL_POLL_FAILED" else "LAN_SCAN_FAILED"
+                refreshTrace.failed(code, phase)
                 val snapshotCurrent = if (readingStatus) {
                     true
                 } else {
@@ -908,6 +975,11 @@ class AppViewModel(
         if (!settings.isLoaded) return
         if (!settings.refreshWhenAppOpens) {
             foregroundRefreshPending = false
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = LocalRefreshTrigger.FOREGROUND,
+                mode = LocalRefreshMode.STATUS,
+                reason = "disabled",
+            )
             return
         }
         val current = when (val destination = mutableState.value) {
@@ -916,6 +988,11 @@ class AppViewModel(
             AppUiState.Onboarding,
             is AppUiState.Recovery -> {
                 foregroundRefreshPending = false
+                LocalRefreshDiagnostics.refreshSkipped(
+                    trigger = LocalRefreshTrigger.FOREGROUND,
+                    mode = LocalRefreshMode.STATUS,
+                    reason = "invalid_destination",
+                )
                 return
             }
         }
@@ -927,10 +1004,20 @@ class AppViewModel(
             current.control is LocalControlUiState.Sending
         ) {
             foregroundRefreshPending = false
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = LocalRefreshTrigger.FOREGROUND,
+                mode = LocalRefreshMode.STATUS,
+                reason = "busy",
+            )
             return
         }
         if (!current.catalog.hasPreviouslyMatchedStatusTargets()) {
             foregroundRefreshPending = false
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = LocalRefreshTrigger.FOREGROUND,
+                mode = LocalRefreshMode.STATUS,
+                reason = "no_previously_matched_targets",
+            )
             return
         }
         val now = elapsedRealtimeMillis()
@@ -941,13 +1028,22 @@ class AppViewModel(
             now - lastStartedAt < FOREGROUND_REFRESH_COOLDOWN_MILLIS
         ) {
             foregroundRefreshPending = false
+            LocalRefreshDiagnostics.refreshSkipped(
+                trigger = LocalRefreshTrigger.FOREGROUND,
+                mode = LocalRefreshMode.STATUS,
+                reason = "cooldown",
+                remainingMillis = FOREGROUND_REFRESH_COOLDOWN_MILLIS - (now - lastStartedAt),
+            )
             return
         }
 
         if (current.isLanSnapshotCurrent && current.catalog.hasCurrentKnownStatusTargets()) {
-            refreshKnownDevices(fallbackToDiscovery = true)
+            refreshKnownDevices(
+                fallbackToDiscovery = true,
+                trigger = LocalRefreshTrigger.FOREGROUND,
+            )
         } else {
-            discoverLan()
+            discoverLan(trigger = LocalRefreshTrigger.FOREGROUND)
         }
     }
 

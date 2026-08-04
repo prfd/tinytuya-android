@@ -382,6 +382,8 @@ After each production flow, read its nearest test instead of immediately reading
 
 Most feature tests are instrumentation tests because Compose, Android Keystore, Android networking types, and Chaquopy need an Android runtime. The small tests under `app/src/test` are host JVM tests for code which has no Android dependency.
 
+The opt-in [LightCapabilityProbeInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/LightCapabilityProbeInstrumentedTest.kt) produces a sanitized mapping report from the encrypted on-device catalog. It is skipped by default. Read and follow its manual ADB workflow exactly; do not invoke it through `connectedDebugAndroidTest`, which may remove the installed debug app and its private data during teardown.
+
 ## Files to postpone
 
 You can safely skip these during the architecture tour:

@@ -3,6 +3,7 @@ package com.prfd.tinytuya.ui.inventory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,12 +11,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -31,10 +34,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,14 +49,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
@@ -61,6 +73,12 @@ import com.prfd.tinytuya.data.lan.LocalDeviceAccessKind
 import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalDeviceProfile
 import com.prfd.tinytuya.data.lan.LocalDeviceProfileKind
+import com.prfd.tinytuya.data.lan.LocalLightControlAction
+import com.prfd.tinytuya.data.lan.LocalLightColorControl
+import com.prfd.tinytuya.data.lan.LocalLightControls
+import com.prfd.tinytuya.data.lan.LocalLightHsv
+import com.prfd.tinytuya.data.lan.LocalLightIntegerControl
+import com.prfd.tinytuya.data.lan.LocalLightMode
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.lan.LocalSensorKind
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
@@ -69,11 +87,18 @@ import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalControlOperation
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 @Composable
 fun InventoryScreen(
@@ -84,6 +109,7 @@ fun InventoryScreen(
     onRefreshKnownDevices: () -> Unit,
     onDiscoverLan: () -> Unit,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onSetLightControl: (deviceId: String, action: LocalLightControlAction) -> Unit,
     onOpenSettings: () -> Unit,
     onImportFromCloud: () -> Unit,
     onDeleteAllLocalData: () -> Unit,
@@ -160,6 +186,7 @@ fun InventoryScreen(
                         discovery = discovery,
                         control = control,
                         onSetBooleanControl = onSetBooleanControl,
+                        onSetLightControl = onSetLightControl,
                     )
                 }
                 if (unmatchedLanDevices.isNotEmpty()) {
@@ -562,6 +589,7 @@ internal fun InventoryDeviceCard(
     discovery: LanDiscoveryUiState,
     control: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onSetLightControl: (deviceId: String, action: LocalLightControlAction) -> Unit,
 ) {
     val isOnCurrentLan = lastDiscoveryAtEpochMillis != null &&
         lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
@@ -672,6 +700,7 @@ internal fun InventoryDeviceCard(
                 isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
                 control = control,
                 onSetBooleanControl = onSetBooleanControl,
+                onSetLightControl = onSetLightControl,
             )
         }
     }
@@ -688,6 +717,7 @@ private fun LocalStatusPanel(
     isReadingStatus: Boolean,
     control: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onSetLightControl: (deviceId: String, action: LocalLightControlAction) -> Unit,
 ) {
     if (!isOnCurrentLan || !profile.access.canReadLocalStatus) return
     val updatedAt = remember(status?.polledAtEpochMillis) {
@@ -702,9 +732,16 @@ private fun LocalStatusPanel(
         status?.dataPoints,
         booleanControls,
         sensorPresentation,
+        profile.lightControls,
     ) {
         val featuredIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
         sensorPresentation?.consumedDataPointIds?.let(featuredIds::addAll)
+        profile.lightControls?.let { lightControls ->
+            lightControls.mode?.dataPointId?.let(featuredIds::add)
+            lightControls.whiteBrightness?.dataPointId?.let(featuredIds::add)
+            lightControls.colorTemperature?.dataPointId?.let(featuredIds::add)
+            lightControls.color?.dataPointId?.let(featuredIds::add)
+        }
         status?.let { currentStatus ->
             presentLocalDataPoints(
                 device = device,
@@ -764,10 +801,11 @@ private fun LocalStatusPanel(
                     if (booleanControls.isNotEmpty()) {
                         LocalDeviceControls(
                             deviceId = device.id,
-                            profileKind = profile.kind,
+                            profile = profile,
                             controls = booleanControls,
                             controlState = control,
                             onSetBooleanControl = onSetBooleanControl,
+                            onSetLightControl = onSetLightControl,
                         )
                     }
                     if (presentedDataPoints.isNotEmpty()) {
@@ -1132,17 +1170,20 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
 @Composable
 private fun LocalDeviceControls(
     deviceId: String,
-    profileKind: LocalDeviceProfileKind,
+    profile: LocalDeviceProfile,
     controls: List<LocalBooleanControl>,
     controlState: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onSetLightControl: (deviceId: String, action: LocalLightControlAction) -> Unit,
 ) {
-    when (profileKind) {
+    when (profile.kind) {
         LocalDeviceProfileKind.LIGHT -> LocalLightControls(
             deviceId = deviceId,
             powerControls = controls,
+            lightControls = profile.lightControls,
             controlState = controlState,
             onSetBooleanControl = onSetBooleanControl,
+            onSetLightControl = onSetLightControl,
         )
         else -> LocalBooleanControls(
             deviceId = deviceId,
@@ -1154,16 +1195,14 @@ private fun LocalDeviceControls(
     }
 }
 
-/**
- * Light controls have a dedicated composition boundary so brightness, temperature, work mode,
- * and color can be added without turning the generic switch row into a device-specific panel.
- */
 @Composable
 private fun LocalLightControls(
     deviceId: String,
     powerControls: List<LocalBooleanControl>,
+    lightControls: LocalLightControls?,
     controlState: LocalControlUiState,
     onSetBooleanControl: (deviceId: String, dataPointId: String, value: Boolean) -> Unit,
+    onSetLightControl: (deviceId: String, action: LocalLightControlAction) -> Unit,
 ) {
     LocalBooleanControls(
         deviceId = deviceId,
@@ -1172,7 +1211,443 @@ private fun LocalLightControls(
         controlState = controlState,
         onSetBooleanControl = onSetBooleanControl,
     )
+    val modeControl = lightControls?.mode ?: return
+    val currentMode = modeControl.currentMode
+    val powerIsOn = powerControls.singleOrNull()?.currentValue == true
+    val canAdjust = powerIsOn &&
+        controlState !is LocalControlUiState.Unavailable &&
+        controlState !is LocalControlUiState.Sending
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp)
+            .testTag("light_controls"),
+    ) {
+        Text(text = "Mode", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LightModeButton(
+                label = "White",
+                selected = currentMode == LocalLightMode.WHITE,
+                enabled = canAdjust,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onSetLightControl(
+                        deviceId,
+                        LocalLightControlAction.SetMode(
+                            dataPointId = modeControl.dataPointId,
+                            mode = LocalLightMode.WHITE,
+                        ),
+                    )
+                },
+            )
+            LightModeButton(
+                label = "Color",
+                selected = currentMode == LocalLightMode.COLOR,
+                enabled = canAdjust,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    onSetLightControl(
+                        deviceId,
+                        LocalLightControlAction.SetMode(
+                            dataPointId = modeControl.dataPointId,
+                            mode = LocalLightMode.COLOR,
+                        ),
+                    )
+                },
+            )
+        }
+        when {
+            !powerIsOn -> Text(
+                text = "Turn on the light to adjust its color and brightness.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            currentMode == LocalLightMode.WHITE -> {
+                lightControls.whiteBrightness?.let { control ->
+                    LightRangeSlider(
+                        label = "Brightness",
+                        control = control,
+                        enabled = canAdjust,
+                        pending = controlState.isSending(deviceId, control.dataPointId),
+                        onValueCommitted = { value ->
+                            onSetLightControl(
+                                deviceId,
+                                LocalLightControlAction.SetWhiteBrightness(
+                                    dataPointId = control.dataPointId,
+                                    value = value,
+                                ),
+                            )
+                        },
+                    )
+                }
+                lightControls.colorTemperature?.let { control ->
+                    LightRangeSlider(
+                        label = "Color temperature",
+                        control = control,
+                        enabled = canAdjust,
+                        pending = controlState.isSending(deviceId, control.dataPointId),
+                        startLabel = "Warm",
+                        endLabel = "Cool",
+                        onValueCommitted = { value ->
+                            onSetLightControl(
+                                deviceId,
+                                LocalLightControlAction.SetColorTemperature(
+                                    dataPointId = control.dataPointId,
+                                    value = value,
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
+            currentMode == LocalLightMode.COLOR -> lightControls.color?.let { control ->
+                LightColorPicker(
+                    control = control,
+                    enabled = canAdjust,
+                    pending = controlState.isSending(deviceId, control.dataPointId),
+                    onColorCommitted = { color ->
+                        onSetLightControl(
+                            deviceId,
+                            LocalLightControlAction.SetColor(
+                                dataPointId = control.dataPointId,
+                                color = color,
+                            ),
+                        )
+                    },
+                )
+            }
+            else -> Text(
+                text = "Scene and music modes are not controlled here. Choose White or Color.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        LightControlFeedback(deviceId, controlState)
+    }
 }
+
+@Composable
+private fun LightModeButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier.testTag("light_mode_${label.lowercase()}"),
+        ) {
+            Text(label)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier.testTag("light_mode_${label.lowercase()}"),
+        ) {
+            Text(label)
+        }
+    }
+}
+
+@Composable
+private fun LightRangeSlider(
+    label: String,
+    control: LocalLightIntegerControl,
+    enabled: Boolean,
+    pending: Boolean,
+    startLabel: String? = null,
+    endLabel: String? = null,
+    onValueCommitted: (Int) -> Unit,
+) {
+    var value by remember(control.dataPointId, control.currentValue) {
+        mutableStateOf(control.currentValue.toFloat())
+    }
+    LaunchedEffect(control.currentValue, pending) {
+        if (!pending) value = control.currentValue.toFloat()
+    }
+    val alignedValue = alignLightValue(value, control)
+    val percentage = lightPercentage(alignedValue, control.minimum, control.maximum)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(text = label, style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "$percentage%",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = { value = it },
+            onValueChangeFinished = {
+                if (alignedValue != control.currentValue) {
+                    value = alignedValue.toFloat()
+                    onValueCommitted(alignedValue)
+                }
+            },
+            valueRange = control.minimum.toFloat()..control.maximum.toFloat(),
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("light_slider_${control.code}"),
+        )
+        if (startLabel != null && endLabel != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = startLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = endLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LightColorPicker(
+    control: LocalLightColorControl,
+    enabled: Boolean,
+    pending: Boolean,
+    onColorCommitted: (LocalLightHsv) -> Unit,
+) {
+    var selectedColor by remember(control.dataPointId, control.currentColor) {
+        mutableStateOf(control.currentColor)
+    }
+    LaunchedEffect(control.currentColor, pending) {
+        if (!pending) selectedColor = control.currentColor
+    }
+    var wheelSize by remember { mutableStateOf(IntSize.Zero) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(text = "Color", style = MaterialTheme.typography.titleSmall)
+            Surface(
+                color = Color.hsv(
+                    hue = selectedColor.hue.toFloat(),
+                    saturation = selectedColor.saturation / 1_000f,
+                    value = selectedColor.brightness.coerceAtLeast(100) / 1_000f,
+                ),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.size(24.dp),
+                content = {},
+            )
+        }
+        Canvas(
+            modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth(0.72f)
+                .sizeIn(maxWidth = 260.dp)
+                .aspectRatio(1f)
+                .onSizeChanged { wheelSize = it }
+                .semantics { contentDescription = "Color wheel" }
+                .testTag("light_color_wheel")
+                .pointerInput(enabled, control.dataPointId) {
+                    if (!enabled) return@pointerInput
+                    fun updateColor(position: Offset) {
+                        if (wheelSize == IntSize.Zero) return
+                        val centerX = wheelSize.width / 2f
+                        val centerY = wheelSize.height / 2f
+                        val deltaX = position.x - centerX
+                        val deltaY = position.y - centerY
+                        val radius = minOf(centerX, centerY)
+                        val saturation = (hypot(deltaX, deltaY) / radius * 1_000f)
+                            .roundToInt()
+                            .coerceIn(0, 1_000)
+                        val hue = ((atan2(deltaY, deltaX) * 180f / PI.toFloat()) + 360f)
+                            .rem(360f)
+                            .roundToInt()
+                        selectedColor = selectedColor.copy(
+                            hue = hue,
+                            saturation = saturation,
+                        )
+                    }
+                    detectDragGestures(
+                        onDragStart = ::updateColor,
+                        onDragEnd = {
+                            if (selectedColor != control.currentColor) {
+                                onColorCommitted(selectedColor)
+                            }
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            updateColor(change.position)
+                        },
+                    )
+                },
+        ) {
+            drawCircle(
+                brush = Brush.sweepGradient(
+                    listOf(
+                        Color.Red,
+                        Color.Yellow,
+                        Color.Green,
+                        Color.Cyan,
+                        Color.Blue,
+                        Color.Magenta,
+                        Color.Red,
+                    )
+                )
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color.Transparent),
+                    center = center,
+                    radius = size.minDimension / 2f,
+                )
+            )
+            val radius = size.minDimension / 2f
+            val pointerRadius = radius * selectedColor.saturation / 1_000f
+            val angle = selectedColor.hue * PI.toFloat() / 180f
+            val pointer = Offset(
+                x = center.x + cos(angle) * pointerRadius,
+                y = center.y + sin(angle) * pointerRadius,
+            )
+            drawCircle(
+                color = Color.White,
+                radius = 8.dp.toPx(),
+                center = pointer,
+                style = Stroke(width = 3.dp.toPx()),
+            )
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.7f),
+                radius = 10.dp.toPx(),
+                center = pointer,
+                style = Stroke(width = 1.dp.toPx()),
+            )
+        }
+        LightColorBrightnessSlider(
+            color = selectedColor,
+            enabled = enabled,
+            pending = pending,
+            onColorCommitted = onColorCommitted,
+        )
+    }
+}
+
+@Composable
+private fun LightColorBrightnessSlider(
+    color: LocalLightHsv,
+    enabled: Boolean,
+    pending: Boolean,
+    onColorCommitted: (LocalLightHsv) -> Unit,
+) {
+    var brightness by remember(color) { mutableStateOf(color.brightness.toFloat()) }
+    LaunchedEffect(color.brightness, pending) {
+        if (!pending) brightness = color.brightness.toFloat()
+    }
+    val alignedBrightness = brightness.roundToInt().coerceIn(10, 1_000)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(text = "Brightness", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "${(alignedBrightness / 10f).roundToInt()}%",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = brightness.coerceIn(10f, 1_000f),
+            onValueChange = { brightness = it },
+            onValueChangeFinished = {
+                if (alignedBrightness != color.brightness) {
+                    brightness = alignedBrightness.toFloat()
+                    onColorCommitted(color.copy(brightness = alignedBrightness))
+                }
+            },
+            valueRange = 10f..1_000f,
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("light_slider_color_brightness"),
+        )
+    }
+}
+
+@Composable
+private fun LightControlFeedback(
+    deviceId: String,
+    controlState: LocalControlUiState,
+) {
+    val text = when {
+        controlState is LocalControlUiState.Sending &&
+            controlState.deviceId == deviceId &&
+            controlState.operation.isLightOperation -> controlState.operation.sendingMessage
+        controlState is LocalControlUiState.Confirmed &&
+            controlState.deviceId == deviceId &&
+            controlState.operation.isLightOperation -> "Confirmed directly by the light."
+        controlState is LocalControlUiState.Error &&
+            controlState.deviceId == deviceId &&
+            controlState.operation.isLightOperation -> controlState.message
+        else -> null
+    } ?: return
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (controlState is LocalControlUiState.Error) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .testTag("light_control_feedback"),
+    )
+}
+
+private fun alignLightValue(
+    value: Float,
+    control: LocalLightIntegerControl,
+): Int {
+    val stepIndex = ((value - control.minimum) / control.step).roundToInt()
+    return (control.minimum + stepIndex * control.step).coerceIn(control.minimum, control.maximum)
+}
+
+private fun lightPercentage(value: Int, minimum: Int, maximum: Int): Int =
+    ((value - minimum).toFloat() / (maximum - minimum) * 100f)
+        .roundToInt()
+        .coerceIn(0, 100)
 
 @Composable
 private fun LocalBooleanControls(
@@ -1211,7 +1686,6 @@ private fun LocalBooleanControls(
                     localControlSupportingText(
                         state = controlState,
                         appliesToControl = appliesToControl,
-                        requestedValue = (controlState as? LocalControlUiState.Sending)?.value,
                     )?.let { supportingText ->
                         Text(
                             text = supportingText,
@@ -1262,18 +1736,41 @@ private fun LocalControlUiState.appliesTo(deviceId: String, dataPointId: String)
         LocalControlUiState.Ready, LocalControlUiState.Unavailable -> false
     }
 
+private fun LocalControlUiState.isSending(deviceId: String, dataPointId: String): Boolean =
+    this is LocalControlUiState.Sending && appliesTo(deviceId, dataPointId)
+
 private fun localControlSupportingText(
     state: LocalControlUiState,
     appliesToControl: Boolean,
-    requestedValue: Boolean?,
 ): String? = when {
     state is LocalControlUiState.Unavailable -> "Refresh status to enable control."
-    appliesToControl && state is LocalControlUiState.Sending ->
-        if (requestedValue == true) "Turning on and confirming…" else "Turning off and confirming…"
+    appliesToControl && state is LocalControlUiState.Sending -> state.operation.sendingMessage
     appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
     appliesToControl && state is LocalControlUiState.Error -> state.message
     else -> null
 }
+
+private val LocalControlOperation.isLightOperation: Boolean
+    get() = when (this) {
+        LocalControlOperation.LIGHT_MODE,
+        LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+        LocalControlOperation.LIGHT_COLOR_TEMPERATURE,
+        LocalControlOperation.LIGHT_COLOR -> true
+        LocalControlOperation.TURN_ON,
+        LocalControlOperation.TURN_OFF -> false
+    }
+
+private val LocalControlOperation.sendingMessage: String
+    get() = when (this) {
+        LocalControlOperation.TURN_ON -> "Turning on and confirming…"
+        LocalControlOperation.TURN_OFF -> "Turning off and confirming…"
+        LocalControlOperation.LIGHT_MODE -> "Changing mode and confirming…"
+        LocalControlOperation.LIGHT_WHITE_BRIGHTNESS ->
+            "Updating brightness and confirming…"
+        LocalControlOperation.LIGHT_COLOR_TEMPERATURE ->
+            "Updating color temperature and confirming…"
+        LocalControlOperation.LIGHT_COLOR -> "Updating color and brightness…"
+    }
 
 @Composable
 private fun UnmatchedLanDeviceCard(device: LanDeviceRecord) {
@@ -1645,6 +2142,7 @@ private fun InventoryPreview() {
             onRefreshKnownDevices = {},
             onDiscoverLan = {},
             onSetBooleanControl = { _, _, _ -> },
+            onSetLightControl = { _, _ -> },
             onOpenSettings = {},
             onImportFromCloud = {},
             onDeleteAllLocalData = {},

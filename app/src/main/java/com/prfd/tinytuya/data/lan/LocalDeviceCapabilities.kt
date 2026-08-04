@@ -11,6 +11,43 @@ data class LocalBooleanControl(
     val currentValue: Boolean,
 )
 
+enum class LocalLightMode(val wireValue: String) {
+    WHITE("white"),
+    COLOR("colour"),
+}
+
+data class LocalLightHsv(
+    val hue: Int,
+    val saturation: Int,
+    val brightness: Int,
+)
+
+data class LocalLightModeControl(
+    val dataPointId: String,
+    val currentMode: LocalLightMode?,
+)
+
+data class LocalLightIntegerControl(
+    val dataPointId: String,
+    val code: String,
+    val minimum: Int,
+    val maximum: Int,
+    val step: Int,
+    val currentValue: Int,
+)
+
+data class LocalLightColorControl(
+    val dataPointId: String,
+    val currentColor: LocalLightHsv,
+)
+
+data class LocalLightControls(
+    val mode: LocalLightModeControl?,
+    val whiteBrightness: LocalLightIntegerControl?,
+    val colorTemperature: LocalLightIntegerControl?,
+    val color: LocalLightColorControl?,
+)
+
 /**
  * Describes which capability model and UI presentation a device receives.
  *
@@ -76,6 +113,7 @@ data class LocalDeviceProfile(
     val sensorKind: LocalSensorKind?,
     val mappedSwitchCount: Int,
     val booleanControls: List<LocalBooleanControl>,
+    val lightControls: LocalLightControls?,
 )
 
 /**
@@ -122,6 +160,19 @@ object LocalDeviceCapabilityRegistry {
                 )
             } else {
                 emptyList()
+            },
+            lightControls = if (
+                access == LocalDeviceAccessKind.DIRECT_CONTROL &&
+                kind == LocalDeviceProfileKind.LIGHT
+            ) {
+                lightControls(
+                    device = device,
+                    status = status,
+                    lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+                    mapping = mapping,
+                )
+            } else {
+                null
             },
         )
     }
@@ -205,6 +256,162 @@ object LocalDeviceCapabilityRegistry {
                 currentValue = candidate.currentValue,
             )
         }
+    }
+
+    private fun lightControls(
+        device: CloudImportedDevice,
+        status: LocalStatusRecord?,
+        lastDiscoveryAtEpochMillis: Long?,
+        mapping: JSONObject?,
+    ): LocalLightControls? {
+        if (
+            device.isSubDevice ||
+            status == null ||
+            status.state != LocalPollDeviceState.RESPONDED ||
+            lastDiscoveryAtEpochMillis == null ||
+            status.polledAtEpochMillis < lastDiscoveryAtEpochMillis ||
+            mapping == null
+        ) {
+            return null
+        }
+        val mode = status.dataPoints.firstNotNullOfOrNull { dataPoint ->
+            val definition = mapping.optJSONObject(dataPoint.id) ?: return@firstNotNullOfOrNull null
+            if (
+                definition.optString("code").trim().lowercase() != "work_mode" ||
+                !definition.optString("type").equals("Enum", ignoreCase = true) ||
+                dataPoint.kind != LocalDataPointKind.STRING ||
+                dataPoint.value.length > MAX_LIGHT_ENUM_LENGTH ||
+                dataPoint.value.any(Char::isISOControl)
+            ) {
+                return@firstNotNullOfOrNull null
+            }
+            val range = definition.mappingValues()?.optJSONArray("range")
+                ?: return@firstNotNullOfOrNull null
+            val declaredValues = (0 until range.length()).mapTo(mutableSetOf()) { index ->
+                range.optString(index)
+            }
+            if (
+                LocalLightMode.WHITE.wireValue !in declaredValues ||
+                LocalLightMode.COLOR.wireValue !in declaredValues ||
+                dataPoint.value !in declaredValues
+            ) {
+                return@firstNotNullOfOrNull null
+            }
+            LocalLightModeControl(
+                dataPointId = dataPoint.id,
+                currentMode = LocalLightMode.entries.firstOrNull { mode ->
+                    mode.wireValue == dataPoint.value
+                },
+            )
+        }
+        val whiteBrightness = lightIntegerControl(
+            status = status,
+            mapping = mapping,
+            codes = listOf("bright_value_v2", "bright_value"),
+        )
+        val colorTemperature = lightIntegerControl(
+            status = status,
+            mapping = mapping,
+            codes = listOf("temp_value_v2", "temp_value"),
+        )
+        val color = status.dataPoints.firstNotNullOfOrNull { dataPoint ->
+            val definition = mapping.optJSONObject(dataPoint.id) ?: return@firstNotNullOfOrNull null
+            if (
+                definition.optString("code").trim().lowercase() != "colour_data_v2" ||
+                !definition.optString("type").equals("Json", ignoreCase = true) ||
+                dataPoint.kind != LocalDataPointKind.STRING
+            ) {
+                return@firstNotNullOfOrNull null
+            }
+            decodeLightColor(dataPoint.value)?.let { currentColor ->
+                LocalLightColorControl(
+                    dataPointId = dataPoint.id,
+                    currentColor = currentColor,
+                )
+            }
+        }
+        return LocalLightControls(
+            mode = mode,
+            whiteBrightness = whiteBrightness,
+            colorTemperature = colorTemperature,
+            color = color,
+        ).takeIf { controls ->
+            controls.mode != null ||
+                controls.whiteBrightness != null ||
+                controls.colorTemperature != null ||
+                controls.color != null
+        }
+    }
+
+    private fun lightIntegerControl(
+        status: LocalStatusRecord,
+        mapping: JSONObject,
+        codes: List<String>,
+    ): LocalLightIntegerControl? = codes.firstNotNullOfOrNull codeLoop@ { requestedCode ->
+        status.dataPoints.firstNotNullOfOrNull dataPointLoop@ { dataPoint ->
+            val definition = mapping.optJSONObject(dataPoint.id) ?: return@dataPointLoop null
+            val code = definition.optString("code").trim().lowercase()
+            if (
+                code != requestedCode ||
+                !definition.optString("type").equals("Integer", ignoreCase = true) ||
+                dataPoint.kind != LocalDataPointKind.INTEGER
+            ) {
+                return@dataPointLoop null
+            }
+            val values = definition.mappingValues() ?: return@dataPointLoop null
+            val minimum = values.strictInt("min") ?: return@dataPointLoop null
+            val maximum = values.strictInt("max") ?: return@dataPointLoop null
+            val step = values.strictInt("step") ?: return@dataPointLoop null
+            val scale = values.strictInt("scale") ?: return@dataPointLoop null
+            val currentValue = dataPoint.value.toIntOrNull() ?: return@dataPointLoop null
+            if (
+                scale != 0 ||
+                minimum !in 0..MAX_LIGHT_INTEGER_VALUE ||
+                maximum !in 1..MAX_LIGHT_INTEGER_VALUE ||
+                minimum >= maximum ||
+                step !in 1..(maximum - minimum) ||
+                currentValue !in minimum..maximum ||
+                (currentValue - minimum) % step != 0
+            ) {
+                return@dataPointLoop null
+            }
+            LocalLightIntegerControl(
+                dataPointId = dataPoint.id,
+                code = code,
+                minimum = minimum,
+                maximum = maximum,
+                step = step,
+                currentValue = currentValue,
+            )
+        }
+    }
+
+    private fun decodeLightColor(value: String): LocalLightHsv? {
+        if (value.length != LIGHT_COLOR_HEX_LENGTH || !LIGHT_COLOR_HEX.matches(value)) return null
+        val color = runCatching {
+            LocalLightHsv(
+                hue = value.substring(0, 4).toInt(16),
+                saturation = value.substring(4, 8).toInt(16),
+                brightness = value.substring(8, 12).toInt(16),
+            )
+        }.getOrNull() ?: return null
+        return color.takeIf { candidate ->
+            candidate.hue in 0..MAX_LIGHT_HUE &&
+                candidate.saturation in 0..MAX_LIGHT_COLOR_COMPONENT &&
+                candidate.brightness in 0..MAX_LIGHT_COLOR_COMPONENT
+        }
+    }
+
+    private fun JSONObject.mappingValues(): JSONObject? = when (val values = opt("values")) {
+        is JSONObject -> values
+        is String -> runCatching { JSONObject(values) }.getOrNull()
+        else -> null
+    }
+
+    private fun JSONObject.strictInt(name: String): Int? {
+        val value = opt(name) ?: return null
+        if (value == JSONObject.NULL) return null
+        return value.toString().toIntOrNull()
     }
 
     private fun parseMapping(mappingJson: String): JSONObject? =
@@ -387,4 +594,10 @@ object LocalDeviceCapabilityRegistry {
         "gas_sensor_value",
     )
     private const val MAX_BOOLEAN_CONTROLS = 16
+    private const val MAX_LIGHT_ENUM_LENGTH = 40
+    private const val MAX_LIGHT_HUE = 360
+    private const val MAX_LIGHT_COLOR_COMPONENT = 1_000
+    private const val MAX_LIGHT_INTEGER_VALUE = 10_000
+    private const val LIGHT_COLOR_HEX_LENGTH = 12
+    private val LIGHT_COLOR_HEX = Regex("[0-9a-fA-F]{12}")
 }

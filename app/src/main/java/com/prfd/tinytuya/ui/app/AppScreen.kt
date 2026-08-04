@@ -108,6 +108,7 @@ fun AppRoute(
                 onRefreshKnownDevices = appViewModel::refreshKnownDevices,
                 onDiscoverLan = appViewModel::discoverLan,
                 onSetBooleanControl = appViewModel::setBooleanControl,
+                onSetLightControl = appViewModel::setLightControl,
                 onOpenSettings = { showSettings = true },
                 onImportFromCloud = {
                     onboardingViewModel.prepareForCloudSync(destination.catalog.region)

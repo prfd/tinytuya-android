@@ -44,20 +44,18 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
-    fun lightProfileExposesOnlyItsVerifiedBooleanPowerControl() {
+    fun lightProfileExposesControlsFromTheVerifiedBulbMappingAndFreshStatus() {
         val profile = LocalDeviceCapabilityRegistry.profile(
             device = sampleDevice(
                 category = "dj",
-                mappingJson = """
-                    {
-                      "20":{"code":"switch_led","type":"Boolean"},
-                      "22":{"code":"bright_value","type":"Integer"}
-                    }
-                """.trimIndent(),
+                mappingJson = LIGHT_MAPPING,
             ),
             status = respondedStatus(
-                LocalDataPoint("22", LocalDataPointKind.INTEGER, "500"),
                 LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
+                LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+                LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
+                LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
+                LocalDataPoint("24", LocalDataPointKind.STRING, "012c02bc01f4"),
             ),
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
@@ -66,6 +64,50 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         assertEquals(1, profile.mappedSwitchCount)
         assertEquals(listOf("20"), profile.booleanControls.map { it.dataPointId })
         assertEquals("Power", profile.booleanControls.single().label)
+        val controls = requireNotNull(profile.lightControls)
+        assertEquals("21", controls.mode?.dataPointId)
+        assertEquals(LocalLightMode.WHITE, controls.mode?.currentMode)
+        assertEquals(
+            LocalLightIntegerControl("22", "bright_value_v2", 10, 1_000, 1, 730),
+            controls.whiteBrightness,
+        )
+        assertEquals(
+            LocalLightIntegerControl("23", "temp_value_v2", 0, 1_000, 1, 420),
+            controls.colorTemperature,
+        )
+        assertEquals(
+            LocalLightHsv(hue = 300, saturation = 700, brightness = 500),
+            controls.color?.currentColor,
+        )
+    }
+
+    @Test
+    fun malformedOrStaleLightDataCannotBecomeWritable() {
+        val device = sampleDevice(category = "dj", mappingJson = LIGHT_MAPPING)
+        val stale = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = respondedStatus(
+                LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+                LocalDataPoint("22", LocalDataPointKind.INTEGER, "500"),
+                LocalDataPoint("23", LocalDataPointKind.INTEGER, "500"),
+                LocalDataPoint("24", LocalDataPointKind.STRING, "000003e803e8"),
+                polledAtEpochMillis = DISCOVERED_AT - 1,
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+        val malformed = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = respondedStatus(
+                LocalDataPoint("21", LocalDataPointKind.STRING, "unsupported"),
+                LocalDataPoint("22", LocalDataPointKind.INTEGER, "1001"),
+                LocalDataPoint("23", LocalDataPointKind.STRING, "500"),
+                LocalDataPoint("24", LocalDataPointKind.STRING, "016903e903e8"),
+            ),
+            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+        assertEquals(null, stale.lightControls)
+        assertEquals(null, malformed.lightControls)
     }
 
     @Test
@@ -327,5 +369,14 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         const val DISCOVERED_AT = 9L
         const val POLLED_AT = 10L
         const val SWITCH_MAPPING = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}"
+        val LIGHT_MAPPING = """
+            {
+              "20":{"code":"switch_led","type":"Boolean"},
+              "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
+              "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
+              "23":{"code":"temp_value_v2","type":"Integer","values":"{\"min\":0,\"max\":1000,\"step\":1,\"scale\":0}"},
+              "24":{"code":"colour_data_v2","type":"Json"}
+            }
+        """.trimIndent()
     }
 }

@@ -11,6 +11,8 @@ import com.prfd.tinytuya.data.lan.LanNetworkContext
 import com.prfd.tinytuya.data.lan.LanNetworkObservation
 import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
+import com.prfd.tinytuya.data.lan.LocalLightControlAction
+import com.prfd.tinytuya.data.lan.LocalLightMode
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
@@ -35,6 +37,7 @@ import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalControlOperation
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.app.TinyTuyaHealthUiState
 import kotlinx.coroutines.CompletableDeferred
@@ -334,6 +337,40 @@ class AppViewModelInstrumentedTest {
         assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
         assertEquals(1, controlCoordinator.callCount)
         assertEquals(NETWORK, controlCoordinator.expectedNetwork)
+    }
+
+    @Test
+    fun lightControlPublishesItsTypedOperationAndConfirmedCatalog() = runBlocking {
+        val original = sampleCatalog()
+        val discovered = discoveredCatalog()
+        val confirmed = discovered.copy(lastLocalPollAtEpochMillis = 6L)
+        val controlCoordinator = FakeLocalControlCoordinator(confirmed)
+        val viewModel = AppViewModel(
+            FakeCatalogStore(original),
+            FakeLanDiscoveryCoordinator(discovered),
+            FakeLocalStatusCoordinator(discovered),
+            controlCoordinator,
+        )
+        withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+        viewModel.discoverLan()
+        withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
+            }
+        }
+        val action = LocalLightControlAction.SetMode("21", LocalLightMode.COLOR)
+
+        viewModel.setLightControl("saved-device", action)
+
+        val state = withTimeout(5_000) {
+            viewModel.state.first {
+                it is AppUiState.Inventory && it.control is LocalControlUiState.Confirmed
+            }
+        } as AppUiState.Inventory
+        val control = state.control as LocalControlUiState.Confirmed
+        assertEquals(LocalControlOperation.LIGHT_MODE, control.operation)
+        assertEquals(action, controlCoordinator.lightAction)
+        assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
     }
 
     @Test
@@ -836,6 +873,7 @@ class AppViewModelInstrumentedTest {
     ) : LocalControlCoordinator {
         var callCount = 0
         var expectedNetwork: LanNetworkContext? = null
+        var lightAction: LocalLightControlAction? = null
 
         override suspend fun setBoolean(
             catalog: DeviceCatalog,
@@ -846,6 +884,18 @@ class AppViewModelInstrumentedTest {
         ): DeviceCatalog {
             callCount += 1
             this.expectedNetwork = expectedNetwork
+            return result ?: catalog
+        }
+
+        override suspend fun setLight(
+            catalog: DeviceCatalog,
+            expectedNetwork: LanNetworkContext,
+            deviceId: String,
+            action: LocalLightControlAction,
+        ): DeviceCatalog {
+            callCount += 1
+            this.expectedNetwork = expectedNetwork
+            lightAction = action
             return result ?: catalog
         }
     }
@@ -860,6 +910,16 @@ class AppViewModelInstrumentedTest {
             deviceId: String,
             dataPointId: String,
             value: Boolean,
+        ): DeviceCatalog {
+            started.complete(Unit)
+            return result.await()
+        }
+
+        override suspend fun setLight(
+            catalog: DeviceCatalog,
+            expectedNetwork: LanNetworkContext,
+            deviceId: String,
+            action: LocalLightControlAction,
         ): DeviceCatalog {
             started.complete(Unit)
             return result.await()

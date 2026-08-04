@@ -12,6 +12,7 @@ import com.prfd.tinytuya.data.lan.LanNetworkObservation
 import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalControlException
+import com.prfd.tinytuya.data.lan.LocalLightControlAction
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
 import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
@@ -63,30 +64,41 @@ sealed interface LocalControlUiState {
     data class Sending(
         val deviceId: String,
         val dataPointId: String,
-        val value: Boolean,
+        val operation: LocalControlOperation,
     ) : LocalControlUiState {
         override fun toString(): String =
-            "Sending(deviceId=[REDACTED], dataPointId=$dataPointId, value=$value)"
+            "Sending(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation)"
     }
 
     data class Confirmed(
         val deviceId: String,
         val dataPointId: String,
-        val value: Boolean,
+        val operation: LocalControlOperation,
     ) : LocalControlUiState {
         override fun toString(): String =
-            "Confirmed(deviceId=[REDACTED], dataPointId=$dataPointId, value=$value)"
+            "Confirmed(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation)"
     }
 
     data class Error(
         val deviceId: String,
         val dataPointId: String,
+        val operation: LocalControlOperation,
         val code: String,
         val message: String,
     ) : LocalControlUiState {
         override fun toString(): String =
-            "Error(deviceId=[REDACTED], dataPointId=$dataPointId, code=$code, message=$message)"
+            "Error(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation, " +
+                "code=$code, message=$message)"
     }
+}
+
+enum class LocalControlOperation {
+    TURN_ON,
+    TURN_OFF,
+    LIGHT_MODE,
+    LIGHT_WHITE_BRIGHTNESS,
+    LIGHT_COLOR_TEMPERATURE,
+    LIGHT_COLOR,
 }
 
 sealed interface LanDiscoveryUiState {
@@ -620,6 +632,48 @@ class AppViewModel(
         deviceId: String,
         dataPointId: String,
         value: Boolean,
+    ) = submitControl(
+        deviceId = deviceId,
+        dataPointId = dataPointId,
+        operation = if (value) LocalControlOperation.TURN_ON else LocalControlOperation.TURN_OFF,
+    ) { catalog, network ->
+        localControlCoordinator.setBoolean(
+            catalog = catalog,
+            expectedNetwork = network,
+            deviceId = deviceId,
+            dataPointId = dataPointId,
+            value = value,
+        )
+    }
+
+    fun setLightControl(
+        deviceId: String,
+        action: LocalLightControlAction,
+    ) = submitControl(
+        deviceId = deviceId,
+        dataPointId = action.dataPointId,
+        operation = when (action) {
+            is LocalLightControlAction.SetMode -> LocalControlOperation.LIGHT_MODE
+            is LocalLightControlAction.SetWhiteBrightness ->
+                LocalControlOperation.LIGHT_WHITE_BRIGHTNESS
+            is LocalLightControlAction.SetColorTemperature ->
+                LocalControlOperation.LIGHT_COLOR_TEMPERATURE
+            is LocalLightControlAction.SetColor -> LocalControlOperation.LIGHT_COLOR
+        },
+    ) { catalog, network ->
+        localControlCoordinator.setLight(
+            catalog = catalog,
+            expectedNetwork = network,
+            deviceId = deviceId,
+            action = action,
+        )
+    }
+
+    private fun submitControl(
+        deviceId: String,
+        dataPointId: String,
+        operation: LocalControlOperation,
+        request: suspend (DeviceCatalog, LanNetworkContext) -> DeviceCatalog,
     ) {
         val current = mutableState.value as? AppUiState.Inventory ?: return
         if (
@@ -638,17 +692,11 @@ class AppViewModel(
         val sessionVersion = controlSessionVersion
 
         mutableState.value = current.copy(
-            control = LocalControlUiState.Sending(deviceId, dataPointId, value)
+            control = LocalControlUiState.Sending(deviceId, dataPointId, operation)
         )
         viewModelScope.launch {
             try {
-                val updated = localControlCoordinator.setBoolean(
-                    catalog = current.catalog,
-                    expectedNetwork = network,
-                    deviceId = deviceId,
-                    dataPointId = dataPointId,
-                    value = value,
-                )
+                val updated = request(current.catalog, network)
                 val live = activeControlInventory(
                     sessionVersion = sessionVersion,
                     network = network,
@@ -660,7 +708,7 @@ class AppViewModel(
                 }
                 mutableState.value = live.copy(
                     catalog = updated,
-                    control = LocalControlUiState.Confirmed(deviceId, dataPointId, value),
+                    control = LocalControlUiState.Confirmed(deviceId, dataPointId, operation),
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -680,6 +728,7 @@ class AppViewModel(
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
+                        operation = operation,
                         code = error.code,
                         message = error.message ?: "The local command could not be confirmed safely.",
                     ),
@@ -694,6 +743,7 @@ class AppViewModel(
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
+                        operation = operation,
                         code = error.code,
                         message = error.message ?: "The confirmed state could not be stored safely.",
                     ),
@@ -708,6 +758,7 @@ class AppViewModel(
                     control = LocalControlUiState.Error(
                         deviceId = deviceId,
                         dataPointId = dataPointId,
+                        operation = operation,
                         code = "LOCAL_CONTROL_FAILED",
                         message = "The local command could not be confirmed safely.",
                     ),

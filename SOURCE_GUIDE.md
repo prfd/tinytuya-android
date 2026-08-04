@@ -22,7 +22,7 @@ Do not begin with either of the 1,000-line Compose files. Read these files in or
 
 1. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt) — the composition root. It constructs the real stores, gateway, network resolver, coordinators, and ViewModels, then reports foreground entry from `onStart`.
 2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, recovery, or the local settings UI.
-3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, and `setBooleanControl`.
+3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, `setBooleanControl`, and `setLightControl`.
 4. [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt) — cloud credentials, imported devices, and the deliberately redacted `SensitiveString`.
 5. [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) and [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — the separate encrypted security domains for Tuya Cloud credentials and locally usable device data. Initially read only their models and interfaces.
 6. [LanDiscoveryModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryModels.kt), [LocalStatusModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalStatusModels.kt), and [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt) — the small typed vocabulary used by the coordinators and bridge.
@@ -207,13 +207,15 @@ Read [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/L
 
 1. The enums and `LocalDeviceProfile` explain the output vocabulary.
 2. `profile`, `profileKind`, `sensorKind`, and `accessKind` classify a device.
-3. `booleanControls` is the fail-closed write authorization rule.
+3. `booleanControls` and `lightControls` are the fail-closed write authorization rules.
 
 A Boolean control exists only when all of these agree:
 
 1. The device class is allowed direct control.
 2. The cached cloud mapping declares the DP as Boolean with a recognized switch code.
 3. A status response from the current discovery generation independently reports that DP as Boolean.
+
+Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; arbitrary JSON or other color encodings remain read-only.
 
 Switches/outlets and lights can currently reach `DIRECT_CONTROL`. Covers, sensors, and generic devices are `STATUS_ONLY`. Gateway children, gateways, cameras, and locks are explicitly protected and do not reach local polling or writes.
 
@@ -234,6 +236,7 @@ For `InventoryScreen.kt`, search for and read only these functions at first:
 7. `LocalAccessNotice`
 8. `LocalDpsInspector`
 9. `LocalBooleanControls`
+10. `LocalLightControls`
 
 The remaining functions are mostly reusable rows, labels, badges, previews, and styling.
 
@@ -241,12 +244,13 @@ Checkpoint: choose one displayed value, such as outlet power or temperature. Tra
 
 ## Pass 5: a confirmed local write
 
-A switch tap is deliberately non-optimistic. The UI retains the last confirmed state while the command is pending.
+A switch tap or light adjustment is deliberately non-optimistic. The UI retains the last confirmed state while the command is pending.
 
 ```text
 LocalBooleanControls callback
-  -> AppViewModel.setBooleanControl
-  -> DefaultLocalControlCoordinator.setBoolean
+  or LocalLightControls callback
+  -> AppViewModel.setBooleanControl or setLightControl
+  -> DefaultLocalControlCoordinator.setBoolean or setLight
   -> re-resolve and compare the active Wi-Fi network
   -> re-authorize the mapped + observed Boolean capability
   -> TuyaPythonGateway.setLocalValues
@@ -259,8 +263,8 @@ LocalBooleanControls callback
 
 Read:
 
-- `LocalBooleanControls` and `localControlSupportingText` in [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt).
-- `LocalControlUiState` and `setBooleanControl` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
+- `LocalBooleanControls`, `LocalLightControls`, and `localControlSupportingText` in [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt).
+- `LocalControlUiState`, `setBooleanControl`, and `setLightControl` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
 - All of [LocalControlCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlCoordinator.kt).
 - [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt).
 - `setLocalValues` and `parseLocalControl` in [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt).
@@ -416,7 +420,7 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 From WSL, `rg` is the quickest way to jump to a symbol:
 
 ```bash
-rg -n 'fun (refreshCatalog|refreshKnownDevices|discoverLan|setBooleanControl)' app/src/main/java
+rg -n 'fun (refreshCatalog|refreshKnownDevices|discoverLan|setBooleanControl|setLightControl)' app/src/main/java
 rg -n '^def (import_cloud|discover_lan|poll_local|set_values)' app/src/main/python/tuya_bridge.py
 rg -n 'LOCAL_CONTROL_UNCONFIRMED' app/src
 ```
@@ -425,10 +429,10 @@ Because this checkout and Android toolchain live on Windows, run Gradle through 
 
 ```bash
 /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat testDebugUnitTest
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat connectedDebugAndroidTest
+/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat assembleDebugAndroidTest
 ```
 
-The second command needs a connected device and may require accepting installation on the phone.
+For device tests, upgrade the target app with `installDebug`, install the assembled test APK with `adb install -r -t`, and invoke the runner directly. Do not use `connectedDebugAndroidTest` against an installed catalog which must be preserved: Gradle's deployment teardown may uninstall the target app and erase its private data.
 
 ## A practical learning loop
 

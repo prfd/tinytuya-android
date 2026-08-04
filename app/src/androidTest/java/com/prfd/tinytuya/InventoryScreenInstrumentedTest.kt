@@ -1,6 +1,7 @@
 package com.prfd.tinytuya
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -8,25 +9,35 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
+import com.prfd.tinytuya.data.lan.LocalLightControlAction
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.ui.app.LocalControlOperation
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.roundToInt
 
 class InventoryScreenInstrumentedTest {
     @get:Rule
@@ -224,7 +235,11 @@ class InventoryScreenInstrumentedTest {
     fun pendingControlKeepsTheLastConfirmedStateVisible() {
         setInventoryContent(
             catalog = controlledCatalog(),
-            control = LocalControlUiState.Sending("office-lamp", "1", false),
+            control = LocalControlUiState.Sending(
+                "office-lamp",
+                "1",
+                LocalControlOperation.TURN_OFF,
+            ),
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
@@ -253,6 +268,7 @@ class InventoryScreenInstrumentedTest {
             control = LocalControlUiState.Error(
                 deviceId = "office-lamp",
                 dataPointId = "1",
+                operation = LocalControlOperation.TURN_OFF,
                 code = "LOCAL_CONTROL_UNCONFIRMED",
                 message = "The device did not confirm its new state.",
             ),
@@ -312,7 +328,7 @@ class InventoryScreenInstrumentedTest {
     }
 
     @Test
-    fun lightCardHasItsOwnControlSectionAndCuratedLightDetails() {
+    fun lightCardShowsWhiteModeControlsWithoutRepeatingRawLightDetails() {
         setInventoryContent(catalog = lightCatalog(), control = LocalControlUiState.Ready)
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
@@ -320,7 +336,13 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Light controls").assertExists()
         composeRule.onNodeWithTag("local_switch_20").assertIsOn()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
-        composeRule.onNodeWithText("Light details").assertExists()
+        composeRule.onNodeWithTag("light_controls").assertExists()
+        composeRule.onNodeWithTag("light_mode_white").assertExists()
+        composeRule.onNodeWithTag("light_mode_color").assertExists()
+        composeRule.onNodeWithTag("light_slider_bright_value_v2").assertExists()
+        composeRule.onNodeWithTag("light_slider_temp_value_v2").assertExists()
+        composeRule.onNodeWithTag("light_color_wheel").assertDoesNotExist()
+        composeRule.onNodeWithText("Light details").assertDoesNotExist()
         composeRule.onNodeWithText("Brightness").assertExists()
         composeRule.onNodeWithText("73%").assertExists()
         composeRule.onNodeWithText("Color temperature").assertExists()
@@ -328,6 +350,122 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Mode").assertExists()
         composeRule.onNodeWithText("White").assertExists()
         composeRule.onNodeWithText("Colour data").assertDoesNotExist()
+    }
+
+    @Test
+    fun lightModeCallbackIsTyped() {
+        var request: Pair<String, LocalLightControlAction>? = null
+        setInventoryContent(
+            catalog = lightCatalog(),
+            control = LocalControlUiState.Ready,
+            onSetLightControl = { deviceId, action -> request = deviceId to action },
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+
+        composeRule.onNodeWithTag("light_mode_color").performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(
+                request == Pair(
+                    "office-lamp",
+                    LocalLightControlAction.SetMode(
+                        dataPointId = "21",
+                        mode = com.prfd.tinytuya.data.lan.LocalLightMode.COLOR,
+                    ),
+                )
+            )
+        }
+    }
+
+    @Test
+    fun colorModeShowsTheHsvWheelAndItsOwnBrightnessControl() {
+        setInventoryContent(
+            catalog = lightCatalog(mode = "colour"),
+            control = LocalControlUiState.Ready,
+        )
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+        composeRule.onNodeWithTag("light_color_wheel").assertExists()
+        composeRule.onNodeWithTag("light_slider_color_brightness").assertExists()
+        composeRule.onNodeWithTag("light_slider_temp_value_v2").assertDoesNotExist()
+    }
+
+    @Test
+    fun lightSliderKeepsTheRequestedValueUntilConfirmationOrFailure() {
+        var catalog by mutableStateOf(lightCatalog())
+        var controlState by mutableStateOf<LocalControlUiState>(LocalControlUiState.Ready)
+        var requestedValue: Int? = null
+        composeRule.setContent {
+            TinytuyaTheme(darkTheme = false) {
+                InventoryScreen(
+                    catalog = catalog,
+                    discovery = LanDiscoveryUiState.Idle,
+                    control = controlState,
+                    onRefreshKnownDevices = {},
+                    onDiscoverLan = {},
+                    onSetBooleanControl = { _, _, _ -> },
+                    onSetLightControl = { deviceId, action ->
+                        val brightness = action as LocalLightControlAction.SetWhiteBrightness
+                        requestedValue = brightness.value
+                        controlState = LocalControlUiState.Sending(
+                            deviceId = deviceId,
+                            dataPointId = brightness.dataPointId,
+                            operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+                        )
+                    },
+                    onOpenSettings = {},
+                    onImportFromCloud = {},
+                    onDeleteAllLocalData = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+        val slider = composeRule.onNodeWithTag("light_slider_bright_value_v2")
+        slider.performScrollTo().performTouchInput {
+            swipe(
+                start = Offset(width * 0.73f, height / 2f),
+                end = Offset(width * 0.30f, height / 2f),
+            )
+        }
+
+        val firstRequest = composeRule.runOnIdle { requireNotNull(requestedValue) }
+        val firstPercentage = lightBrightnessPercentage(firstRequest)
+        slider.assertIsNotEnabled()
+        composeRule.onNodeWithText("$firstPercentage%").assertExists()
+
+        composeRule.runOnIdle {
+            catalog = lightCatalog(brightness = firstRequest)
+            controlState = LocalControlUiState.Confirmed(
+                deviceId = "office-lamp",
+                dataPointId = "22",
+                operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+            )
+        }
+        slider.assertIsEnabled()
+        composeRule.onNodeWithText("$firstPercentage%").assertExists()
+
+        requestedValue = null
+        slider.performTouchInput {
+            swipe(
+                start = Offset(width * 0.30f, height / 2f),
+                end = Offset(width * 0.80f, height / 2f),
+            )
+        }
+        val secondRequest = composeRule.runOnIdle { requireNotNull(requestedValue) }
+        assertTrue(secondRequest != firstRequest)
+        slider.assertIsNotEnabled()
+        composeRule.onNodeWithText("${lightBrightnessPercentage(secondRequest)}%").assertExists()
+
+        composeRule.runOnIdle {
+            controlState = LocalControlUiState.Error(
+                deviceId = "office-lamp",
+                dataPointId = "22",
+                operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+                code = "LOCAL_CONTROL_NOT_APPLIED",
+                message = "The light kept its previous brightness.",
+            )
+        }
+        slider.assertIsEnabled()
+        composeRule.onNodeWithText("$firstPercentage%").assertExists()
     }
 
     @Test
@@ -444,6 +582,7 @@ class InventoryScreenInstrumentedTest {
         onRefreshKnownDevices: () -> Unit = {},
         onDiscoverLan: () -> Unit = {},
         onSetBooleanControl: (String, String, Boolean) -> Unit = { _, _, _ -> },
+        onSetLightControl: (String, LocalLightControlAction) -> Unit = { _, _ -> },
         onOpenSettings: () -> Unit = {},
         onDelete: () -> Unit = {},
     ) {
@@ -457,6 +596,7 @@ class InventoryScreenInstrumentedTest {
                     onRefreshKnownDevices = onRefreshKnownDevices,
                     onDiscoverLan = onDiscoverLan,
                     onSetBooleanControl = onSetBooleanControl,
+                    onSetLightControl = onSetLightControl,
                     onOpenSettings = onOpenSettings,
                     onImportFromCloud = {},
                     onDeleteAllLocalData = onDelete,
@@ -576,7 +716,10 @@ class InventoryScreenInstrumentedTest {
         ),
     )
 
-    private fun lightCatalog() = controlledCatalog().copy(
+    private fun lightCatalog(
+        mode: String = "white",
+        brightness: Int = 730,
+    ) = controlledCatalog().copy(
         devices = listOf(
             controlledCatalog().devices.single().copy(
                 category = "dj",
@@ -585,9 +728,9 @@ class InventoryScreenInstrumentedTest {
                     {
                       "20":{"code":"switch_led","type":"Boolean"},
                       "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
-                      "22":{"code":"bright_value","type":"Integer","values":{"min":10,"max":1000,"scale":0}},
-                      "23":{"code":"temp_value","type":"Integer","values":{"min":0,"max":1000,"scale":0}},
-                      "24":{"code":"colour_data","type":"String"}
+                      "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
+                      "23":{"code":"temp_value_v2","type":"Integer","values":{"min":0,"max":1000,"step":1,"scale":0}},
+                      "24":{"code":"colour_data_v2","type":"Json"}
                     }
                 """.trimIndent(),
             )
@@ -596,8 +739,8 @@ class InventoryScreenInstrumentedTest {
             controlledCatalog().localStatus.single().copy(
                 dataPoints = listOf(
                     LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
-                    LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
-                    LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
+                    LocalDataPoint("21", LocalDataPointKind.STRING, mode),
+                    LocalDataPoint("22", LocalDataPointKind.INTEGER, brightness.toString()),
                     LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
                     LocalDataPoint("24", LocalDataPointKind.STRING, "00d003e803e8"),
                 )
@@ -693,6 +836,9 @@ class InventoryScreenInstrumentedTest {
         origin = "broadcast",
         lastSeenAtEpochMillis = 9L,
     )
+
+    private fun lightBrightnessPercentage(value: Int): Int =
+        ((value - 10) / 990f * 100f).roundToInt().coerceIn(0, 100)
 
     private companion object {
         const val LOCAL_KEY = "inventory-local-key-must-stay-hidden"

@@ -63,11 +63,18 @@ private fun OutletCardPreview() = PreviewDeviceCard(
     ),
 )
 
-@Preview(name = "Light", group = "Supported device cards", widthDp = 420, heightDp = 620)
+@Preview(name = "Light · white", group = "Supported device cards", widthDp = 420, heightDp = 760)
 @Composable
-private fun LightCardPreview() = PreviewDeviceCard(
+private fun WhiteLightCardPreview() = PreviewLightCard(mode = "white")
+
+@Preview(name = "Light · color", group = "Supported device cards", widthDp = 420, heightDp = 820)
+@Composable
+private fun ColorLightCardPreview() = PreviewLightCard(mode = "colour")
+
+@Composable
+private fun PreviewLightCard(mode: String) = PreviewDeviceCard(
     device = previewDevice(
-        id = "light",
+        id = "light-$mode",
         name = "Reading lamp",
         category = "dj",
         productName = "Color bulb",
@@ -75,15 +82,15 @@ private fun LightCardPreview() = PreviewDeviceCard(
             {
               "20":{"code":"switch_led","type":"Boolean"},
               "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
-              "22":{"code":"bright_value","type":"Integer","values":{"min":10,"max":1000,"scale":0}},
-              "23":{"code":"temp_value","type":"Integer","values":{"min":0,"max":1000,"scale":0}},
-              "24":{"code":"colour_data","type":"String"}
+              "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
+              "23":{"code":"temp_value_v2","type":"Integer","values":{"min":0,"max":1000,"step":1,"scale":0}},
+              "24":{"code":"colour_data_v2","type":"Json"}
             }
         """.trimIndent(),
     ),
     dataPoints = listOf(
         LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
-        LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+        LocalDataPoint("21", LocalDataPointKind.STRING, mode),
         LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
         LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
         LocalDataPoint("24", LocalDataPointKind.STRING, "00d003e803e8"),
@@ -280,6 +287,7 @@ private fun PreviewDeviceCard(
                 discovery = LanDiscoveryUiState.Idle,
                 control = LocalControlUiState.Ready,
                 onSetBooleanControl = { _, _, _ -> },
+                onSetLightControl = { _, _ -> },
             )
         }
     }

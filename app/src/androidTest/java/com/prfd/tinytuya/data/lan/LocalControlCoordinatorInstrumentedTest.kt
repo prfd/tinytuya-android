@@ -51,6 +51,94 @@ class LocalControlCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun verifiedLightWritesUseTypedValuesAndTheObservedHsvEncoding() = runBlocking {
+        val catalog = lightCatalog()
+        val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(catalog),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        listOf(
+            LocalLightControlAction.SetMode("21", LocalLightMode.COLOR),
+            LocalLightControlAction.SetWhiteBrightness("22", 500),
+            LocalLightControlAction.SetColorTemperature("23", 400),
+            LocalLightControlAction.SetColor(
+                "24",
+                LocalLightHsv(hue = 300, saturation = 700, brightness = 500),
+            ),
+        ).forEach { action ->
+            coordinator.setLight(catalog, NETWORK, DEVICE_ID, action)
+        }
+
+        assertEquals(
+            listOf(
+                LocalControlChange("21", LocalDataPointKind.STRING, "colour"),
+                LocalControlChange("22", LocalDataPointKind.INTEGER, "500"),
+                LocalControlChange("23", LocalDataPointKind.INTEGER, "400"),
+                LocalControlChange("24", LocalDataPointKind.STRING, "012c02bc01f4"),
+            ),
+            gateway.requests.map { request -> request.changes.single() },
+        )
+    }
+
+    @Test
+    fun invalidLightValueIsRejectedBeforeThePythonBridge() = runBlocking {
+        val catalog = lightCatalog()
+        val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(catalog),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        try {
+            coordinator.setLight(
+                catalog,
+                NETWORK,
+                DEVICE_ID,
+                LocalLightControlAction.SetColor(
+                    dataPointId = "24",
+                    color = LocalLightHsv(hue = 361, saturation = 700, brightness = 500),
+                ),
+            )
+            throw AssertionError("Expected an invalid light value to be rejected")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
+    fun staleLightStatusCannotAuthorizeAWrite() = runBlocking {
+        val catalog = lightCatalog().copy(
+            localStatus = listOf(
+                lightCatalog().localStatus.single().copy(polledAtEpochMillis = 9L)
+            )
+        )
+        val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(catalog),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        try {
+            coordinator.setLight(
+                catalog,
+                NETWORK,
+                DEVICE_ID,
+                LocalLightControlAction.SetMode("21", LocalLightMode.COLOR),
+            )
+            throw AssertionError("Expected stale light status to be rejected")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
     fun changedWifiIsRejectedBeforeThePythonBridge() = runBlocking {
         val catalog = sampleCatalog()
         val gateway = FakeGateway { confirmedResult(false) }
@@ -175,6 +263,7 @@ class LocalControlCoordinatorInstrumentedTest {
         private val response: suspend (LocalControlRequest) -> LocalControlResult,
     ) : TuyaPythonGateway {
         var request: LocalControlRequest? = null
+        val requests = mutableListOf<LocalControlRequest>()
         var callCount = 0
 
         override suspend fun health(): PythonRuntimeHealth = error("Not used")
@@ -193,6 +282,7 @@ class LocalControlCoordinatorInstrumentedTest {
         override suspend fun setLocalValues(request: LocalControlRequest): LocalControlResult {
             callCount += 1
             this.request = request
+            requests += request
             return response(request)
         }
     }
@@ -300,6 +390,37 @@ class LocalControlCoordinatorInstrumentedTest {
             ),
         )
 
+        fun lightCatalog() = sampleCatalog(
+            category = "dj",
+            mappingJson = """
+                {
+                  "20":{"code":"switch_led","type":"Boolean"},
+                  "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
+                  "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
+                  "23":{"code":"temp_value_v2","type":"Integer","values":{"min":0,"max":1000,"step":1,"scale":0}},
+                  "24":{"code":"colour_data_v2","type":"Json"}
+                }
+            """.trimIndent(),
+        ).copy(
+            lastDiscoveryAtEpochMillis = 10L,
+            localStatus = listOf(
+                LocalStatusRecord(
+                    id = DEVICE_ID,
+                    state = LocalPollDeviceState.RESPONDED,
+                    errorCode = "",
+                    durationMillis = 20L,
+                    dataPoints = listOf(
+                        LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
+                        LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+                        LocalDataPoint("22", LocalDataPointKind.INTEGER, "1000"),
+                        LocalDataPoint("23", LocalDataPointKind.INTEGER, "1000"),
+                        LocalDataPoint("24", LocalDataPointKind.STRING, "000003e803e8"),
+                    ),
+                    polledAtEpochMillis = 10L,
+                )
+            ),
+        )
+
         fun confirmedResult(value: Boolean) = LocalControlResult(
             contractVersion = 1,
             id = DEVICE_ID,
@@ -308,6 +429,17 @@ class LocalControlCoordinatorInstrumentedTest {
             durationMillis = 35L,
             dataPoints = listOf(
                 LocalDataPoint("1", LocalDataPointKind.BOOLEAN, value.toString())
+            ),
+        )
+
+        fun confirmedResult(change: LocalControlChange) = LocalControlResult(
+            contractVersion = 1,
+            id = DEVICE_ID,
+            state = LocalControlState.CONFIRMED,
+            errorCode = "",
+            durationMillis = 35L,
+            dataPoints = listOf(
+                LocalDataPoint(change.id, change.kind, change.value)
             ),
         )
     }

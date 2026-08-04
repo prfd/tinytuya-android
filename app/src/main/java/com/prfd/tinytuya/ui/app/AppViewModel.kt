@@ -33,8 +33,8 @@ import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import com.prfd.tinytuya.data.python.PythonBridgeException
 import com.prfd.tinytuya.data.python.PythonRuntimeHealth
-import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
+import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,44 +58,6 @@ sealed interface AppUiState {
         val code: String,
         val message: String,
     ) : AppUiState
-}
-
-sealed interface LocalControlUiState {
-    data object Unavailable : LocalControlUiState
-
-    data object Ready : LocalControlUiState
-
-    data class Sending(
-        val intent: DeviceIntent,
-    ) : LocalControlUiState {
-        val deviceId: String get() = intent.deviceId
-        val capabilityId: CapabilityId get() = intent.capabilityId
-
-        override fun toString(): String =
-            "Sending(intent=$intent)"
-    }
-
-    data class Confirmed(
-        val intent: DeviceIntent,
-    ) : LocalControlUiState {
-        val deviceId: String get() = intent.deviceId
-        val capabilityId: CapabilityId get() = intent.capabilityId
-
-        override fun toString(): String =
-            "Confirmed(intent=$intent)"
-    }
-
-    data class Error(
-        val intent: DeviceIntent,
-        val code: String,
-        val message: String,
-    ) : LocalControlUiState {
-        val deviceId: String get() = intent.deviceId
-        val capabilityId: CapabilityId get() = intent.capabilityId
-
-        override fun toString(): String =
-            "Error(intent=$intent, code=$code, message=$message)"
-    }
 }
 
 sealed interface LanDiscoveryUiState {

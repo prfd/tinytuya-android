@@ -16,7 +16,7 @@ import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
-import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 @Preview(name = "Switch", group = "Supported device cards", widthDp = 420, heightDp = 430)

@@ -31,7 +31,7 @@ import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
-import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow

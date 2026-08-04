@@ -26,3 +26,4 @@ rootProject.name = "tinytuya"
 include(":app")
 include(":device-core")
 include(":device-profiles")
+include(":device-ui")

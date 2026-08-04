@@ -29,7 +29,7 @@ import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
-import com.prfd.tinytuya.ui.app.LocalControlUiState
+import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -84,7 +84,7 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(catalog = controlledCatalog())
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-        composeRule.onNodeWithTag("local_switch_1").assertIsNotEnabled().assertIsOn()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsNotEnabled().assertIsOn()
         composeRule.onNodeWithText("Refresh status to enable control.").assertExists()
     }
 
@@ -105,7 +105,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Scan needed").assertExists()
         composeRule.onNodeWithText("Local").assertDoesNotExist()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
-        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
     }
 
     @Test
@@ -118,7 +118,7 @@ class InventoryScreenInstrumentedTest {
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-        composeRule.onNodeWithTag("local_switch_1").assertIsOn().performClick()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn().performClick()
 
         composeRule.runOnIdle {
             assertEquals(
@@ -147,9 +147,9 @@ class InventoryScreenInstrumentedTest {
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-        composeRule.onNodeWithTag("local_switch_1").assertIsOn().assertIsNotEnabled()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn().assertIsNotEnabled()
         composeRule.onNodeWithText("Turning off and confirming…").assertExists()
-        composeRule.onNodeWithTag("local_control_progress").assertExists()
+        composeRule.onNodeWithTag("capability_control_progress").assertExists()
     }
 
     @Test
@@ -165,9 +165,9 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("3-gang switch", substring = true).assertExists()
         composeRule.onNodeWithText("2 of 3 switches on").assertDoesNotExist()
         composeRule.onNodeWithText("Controls").assertExists()
-        composeRule.onNodeWithTag("local_switch_1").assertIsOn()
-        composeRule.onNodeWithTag("local_switch_2").assertIsOff().performClick()
-        composeRule.onNodeWithTag("local_switch_3").assertIsOn()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn()
+        composeRule.onNodeWithTag("capability_toggle_switch_2").assertIsOff().performClick()
+        composeRule.onNodeWithTag("capability_toggle_switch_3").assertIsOn()
 
         composeRule.runOnIdle {
             assertEquals(
@@ -188,7 +188,7 @@ class InventoryScreenInstrumentedTest {
 
         composeRule.onNodeWithText("Smart light", substring = true).assertExists()
         composeRule.onNodeWithText("Light controls").assertExists()
-        composeRule.onNodeWithTag("local_switch_20").assertIsOn()
+        composeRule.onNodeWithTag("capability_toggle_power").assertIsOn()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
         composeRule.onNodeWithTag("light_controls").assertExists()
         composeRule.onNodeWithTag("light_mode_white").assertExists()
@@ -337,7 +337,7 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithText("Camera controls disabled").assertExists()
         composeRule.onNodeWithText("Camera streams and camera commands", substring = true)
             .assertExists()
-        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
         composeRule.onNodeWithTag("dps_inspector_toggle").assertDoesNotExist()
         composeRule.onNodeWithText("Power is on").assertDoesNotExist()
     }
@@ -366,7 +366,7 @@ class InventoryScreenInstrumentedTest {
             .assertExists()
         composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
         composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
-        composeRule.onNodeWithTag("local_switch_1").assertDoesNotExist()
+        composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
     }
 
     private fun setInventoryContent(

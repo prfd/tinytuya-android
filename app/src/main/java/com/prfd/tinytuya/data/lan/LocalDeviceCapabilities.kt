@@ -10,6 +10,7 @@ import com.prfd.tinytuya.device.core.capability.ObservedDataPointInput
 import com.prfd.tinytuya.device.core.capability.ObservedDataPointKind
 import com.prfd.tinytuya.device.core.capability.ResolvedChoice
 import com.prfd.tinytuya.device.core.capability.ResolvedColor
+import com.prfd.tinytuya.device.core.capability.ResolvedDevice
 import com.prfd.tinytuya.device.core.capability.ResolvedDeviceCapabilities
 import com.prfd.tinytuya.device.core.capability.ResolvedRange
 import com.prfd.tinytuya.device.core.capability.ResolvedToggle
@@ -114,6 +115,7 @@ data class LocalDeviceProfile(
     val booleanControls: List<LocalBooleanControl>,
     val lightControls: LocalLightControls?,
     val capabilities: ResolvedDeviceCapabilities,
+    val resolvedDevice: ResolvedDevice,
 )
 
 object LocalDeviceCapabilityRegistry {
@@ -135,6 +137,10 @@ object LocalDeviceCapabilityRegistry {
             observation = status.toObservation(lastDiscoveryAtEpochMillis),
             access = access.toCapabilityAccess(),
         )
+        val layoutId = (classification.family as? DeviceFamilyResolution.Matched)
+            ?.definition
+            ?.presentation
+            ?.layoutId
         val booleanControls = capabilities.ofType<ResolvedToggle>()
             .filter(ResolvedToggle::writable)
             .map { capability ->
@@ -166,6 +172,7 @@ object LocalDeviceCapabilityRegistry {
             booleanControls = booleanControls,
             lightControls = lightControls,
             capabilities = capabilities,
+            resolvedDevice = ResolvedDevice.create(device.id, layoutId, capabilities),
         )
     }
 

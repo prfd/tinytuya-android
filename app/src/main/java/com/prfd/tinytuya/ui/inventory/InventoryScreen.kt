@@ -35,7 +35,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -87,8 +86,11 @@ import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
+import com.prfd.tinytuya.device.ui.DeviceCapabilityList
+import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
+import com.prfd.tinytuya.device.ui.DeviceUiMapper
+import com.prfd.tinytuya.device.ui.DeviceUiModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
-import com.prfd.tinytuya.ui.app.LocalControlUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
@@ -723,14 +725,19 @@ private fun LocalStatusPanel(
         }
     }
     val booleanControls = profile.booleanControls
+    val atomicCapabilityIds = remember(profile) { profile.atomicCapabilityIds() }
     val presentedDataPoints = remember(
         device.mappingJson,
         status?.dataPoints,
         booleanControls,
         sensorPresentation,
         profile.lightControls,
+        atomicCapabilityIds,
     ) {
         val featuredIds = booleanControls.mapTo(mutableSetOf()) { it.dataPointId }
+        profile.capabilities.capabilities
+            .filter { capability -> capability.id in atomicCapabilityIds }
+            .mapTo(featuredIds) { capability -> capability.dataPointId }
         sensorPresentation?.consumedDataPointIds?.let(featuredIds::addAll)
         profile.lightControls?.let { lightControls ->
             lightControls.mode?.dataPointId?.let(featuredIds::add)
@@ -794,11 +801,10 @@ private fun LocalStatusPanel(
                     sensorPresentation?.let { presentation ->
                         LocalSensorSummary(presentation)
                     }
-                    if (booleanControls.isNotEmpty()) {
+                    if (profile.kind != LocalDeviceProfileKind.SENSOR) {
                         LocalDeviceControls(
-                            deviceId = device.id,
                             profile = profile,
-                            controls = booleanControls,
+                            atomicCapabilityIds = atomicCapabilityIds,
                             controlState = control,
                             onIntent = onIntent,
                         )
@@ -815,8 +821,9 @@ private fun LocalStatusPanel(
                     }
                     if (
                         presentedDataPoints.isEmpty() &&
-                        booleanControls.isEmpty() &&
-                        sensorPresentation == null
+                        sensorPresentation == null &&
+                        atomicCapabilityIds.isEmpty() &&
+                        profile.kind != LocalDeviceProfileKind.GENERIC
                     ) {
                         Text(
                             text = "No everyday controls or readings are available for this " +
@@ -1164,44 +1171,69 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
 
 @Composable
 private fun LocalDeviceControls(
-    deviceId: String,
     profile: LocalDeviceProfile,
-    controls: List<LocalBooleanControl>,
+    atomicCapabilityIds: Set<CapabilityId>,
     controlState: LocalControlUiState,
     onIntent: (DeviceIntent) -> Unit,
 ) {
+    val device = remember(profile.resolvedDevice) {
+        DeviceUiMapper.map(profile.resolvedDevice)
+    }
     when (profile.kind) {
         LocalDeviceProfileKind.LIGHT -> LocalLightControls(
-            deviceId = deviceId,
-            powerControls = controls,
+            device = device,
+            powerControls = profile.booleanControls,
+            powerCapabilityIds = atomicCapabilityIds,
             lightControls = profile.lightControls,
             controlState = controlState,
             onIntent = onIntent,
         )
-        else -> LocalBooleanControls(
-            deviceId = deviceId,
-            controls = controls,
-            sectionTitle = if (controls.size == 1) "Control" else "Controls",
+        else -> DeviceCapabilityList(
+            device = device,
             controlState = controlState,
             onIntent = onIntent,
+            modifier = Modifier.padding(top = 16.dp),
+            capabilityIds = atomicCapabilityIds,
+            sectionTitle = when {
+                atomicCapabilityIds.isEmpty() -> null
+                profile.kind == LocalDeviceProfileKind.COVER -> "Cover"
+                profile.booleanControls.size == 1 -> "Control"
+                profile.kind == LocalDeviceProfileKind.SWITCH_OR_OUTLET -> "Controls"
+                else -> "Controls and readings"
+            },
+            showEmptyFallback = true,
         )
+    }
+}
+
+private fun LocalDeviceProfile.atomicCapabilityIds(): Set<CapabilityId> = when (kind) {
+    LocalDeviceProfileKind.LIGHT -> booleanControls.mapTo(mutableSetOf()) { control ->
+        control.capabilityId
+    }
+    LocalDeviceProfileKind.SENSOR -> emptySet()
+    LocalDeviceProfileKind.SWITCH_OR_OUTLET,
+    LocalDeviceProfileKind.COVER,
+    LocalDeviceProfileKind.GENERIC -> capabilities.capabilities.mapTo(mutableSetOf()) { capability ->
+        capability.id
     }
 }
 
 @Composable
 private fun LocalLightControls(
-    deviceId: String,
+    device: DeviceUiModel,
     powerControls: List<LocalBooleanControl>,
+    powerCapabilityIds: Set<CapabilityId>,
     lightControls: LocalLightControls?,
     controlState: LocalControlUiState,
     onIntent: (DeviceIntent) -> Unit,
 ) {
-    LocalBooleanControls(
-        deviceId = deviceId,
-        controls = powerControls,
-        sectionTitle = "Light controls",
+    DeviceCapabilityList(
+        device = device,
         controlState = controlState,
         onIntent = onIntent,
+        modifier = Modifier.padding(top = 16.dp),
+        capabilityIds = powerCapabilityIds,
+        sectionTitle = "Light controls",
     )
     val modeControl = lightControls?.mode ?: return
     val currentMode = modeControl.currentMode
@@ -1231,7 +1263,7 @@ private fun LocalLightControls(
                 onClick = {
                     onIntent(
                         DeviceIntent.SetChoice(
-                            deviceId = deviceId,
+                            deviceId = device.deviceId,
                             capabilityId = modeControl.capabilityId,
                             wireValue = LocalLightMode.WHITE.wireValue,
                         )
@@ -1246,7 +1278,7 @@ private fun LocalLightControls(
                 onClick = {
                     onIntent(
                         DeviceIntent.SetChoice(
-                            deviceId = deviceId,
+                            deviceId = device.deviceId,
                             capabilityId = modeControl.capabilityId,
                             wireValue = LocalLightMode.COLOR.wireValue,
                         )
@@ -1267,11 +1299,11 @@ private fun LocalLightControls(
                         label = "Brightness",
                         control = control,
                         enabled = canAdjust,
-                        pending = controlState.isSending(deviceId, control.capabilityId),
+                        pending = controlState.isSending(device.deviceId, control.capabilityId),
                         onValueCommitted = { value ->
                             onIntent(
                                 DeviceIntent.SetRange(
-                                    deviceId = deviceId,
+                                    deviceId = device.deviceId,
                                     capabilityId = control.capabilityId,
                                     value = value,
                                 )
@@ -1284,13 +1316,13 @@ private fun LocalLightControls(
                         label = "Color temperature",
                         control = control,
                         enabled = canAdjust,
-                        pending = controlState.isSending(deviceId, control.capabilityId),
+                        pending = controlState.isSending(device.deviceId, control.capabilityId),
                         startLabel = "Warm",
                         endLabel = "Cool",
                         onValueCommitted = { value ->
                             onIntent(
                                 DeviceIntent.SetRange(
-                                    deviceId = deviceId,
+                                    deviceId = device.deviceId,
                                     capabilityId = control.capabilityId,
                                     value = value,
                                 )
@@ -1303,11 +1335,11 @@ private fun LocalLightControls(
                 LightColorPicker(
                     control = control,
                     enabled = canAdjust,
-                    pending = controlState.isSending(deviceId, control.capabilityId),
+                    pending = controlState.isSending(device.deviceId, control.capabilityId),
                     onColorCommitted = { color ->
                         onIntent(
                             DeviceIntent.SetColor(
-                                deviceId = deviceId,
+                                deviceId = device.deviceId,
                                 capabilityId = control.capabilityId,
                                 color = TuyaHsvColor(
                                     color.hue,
@@ -1326,7 +1358,7 @@ private fun LocalLightControls(
                 modifier = Modifier.padding(top = 12.dp),
             )
         }
-        LightControlFeedback(deviceId, controlState)
+        LightControlFeedback(device.deviceId, controlState)
     }
 }
 
@@ -1645,87 +1677,6 @@ private fun lightPercentage(value: Int, minimum: Int, maximum: Int): Int =
         .roundToInt()
         .coerceIn(0, 100)
 
-@Composable
-private fun LocalBooleanControls(
-    deviceId: String,
-    controls: List<LocalBooleanControl>,
-    sectionTitle: String,
-    controlState: LocalControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-) {
-    val isSending = controlState is LocalControlUiState.Sending
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-    ) {
-        Text(
-            text = sectionTitle,
-            style = MaterialTheme.typography.titleSmall,
-        )
-        controls.forEach { localControl ->
-            val appliesToControl = controlState.appliesTo(
-                deviceId = deviceId,
-                capabilityId = localControl.capabilityId,
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 7.dp, bottom = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = localControl.label,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    localControlSupportingText(
-                        state = controlState,
-                        appliesToControl = appliesToControl,
-                    )?.let { supportingText ->
-                        Text(
-                            text = supportingText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (
-                                appliesToControl && controlState is LocalControlUiState.Error
-                            ) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(10.dp))
-                if (appliesToControl && isSending) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .testTag("local_control_progress"),
-                        strokeWidth = 2.5.dp,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                }
-                Switch(
-                    checked = localControl.currentValue,
-                    onCheckedChange = { requestedValue ->
-                        onIntent(
-                            DeviceIntent.SetToggle(
-                                deviceId = deviceId,
-                                capabilityId = localControl.capabilityId,
-                                value = requestedValue,
-                            )
-                        )
-                    },
-                    enabled = controlState !is LocalControlUiState.Unavailable && !isSending,
-                    modifier = Modifier.testTag("local_switch_${localControl.dataPointId}"),
-                )
-            }
-        }
-    }
-}
-
 private fun LocalControlUiState.appliesTo(deviceId: String, capabilityId: CapabilityId): Boolean =
     when (this) {
         is LocalControlUiState.Sending ->
@@ -1739,17 +1690,6 @@ private fun LocalControlUiState.appliesTo(deviceId: String, capabilityId: Capabi
 
 private fun LocalControlUiState.isSending(deviceId: String, capabilityId: CapabilityId): Boolean =
     this is LocalControlUiState.Sending && appliesTo(deviceId, capabilityId)
-
-private fun localControlSupportingText(
-    state: LocalControlUiState,
-    appliesToControl: Boolean,
-): String? = when {
-    state is LocalControlUiState.Unavailable -> "Refresh status to enable control."
-    appliesToControl && state is LocalControlUiState.Sending -> state.intent.sendingMessage
-    appliesToControl && state is LocalControlUiState.Confirmed -> "Confirmed directly by the device."
-    appliesToControl && state is LocalControlUiState.Error -> state.message
-    else -> null
-}
 
 private val DeviceIntent.isLightIntent: Boolean
     get() = capabilityId.value.startsWith("light.")

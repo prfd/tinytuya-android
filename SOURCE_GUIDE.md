@@ -210,7 +210,8 @@ Read the capability path in three pieces:
 2. `CapabilitySpecs.kt`, `DeviceObservation.kt`, and `CapabilityResolver.kt` in `:device-core`
    define the reusable primitives and fail-closed schema/freshness/access intersection.
 3. [LocalDeviceCapabilities.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilities.kt)
-   adapts the canonical resolved capabilities to the temporary inventory presentation models.
+   packages the canonical capabilities and selected layout as a redacted `ResolvedDevice`; its
+   Boolean/light fields are temporary adapters for layouts which migrate in Phase 6.
 
 A Boolean control exists only when all of these agree:
 
@@ -224,6 +225,9 @@ Switches/outlets and lights can currently reach `DIRECT_CONTROL`. Covers, sensor
 
 Then read the presentation pipeline:
 
+- `DeviceUiModels.kt` and `DeviceCapabilityRenderers.kt` in `:device-ui` map `ResolvedDevice` into
+  bounded display-only models and render toggle, range, choice, action, color, measurement, binary,
+  and safe-text primitives. This module sees no catalog, mapping JSON, network, key, or Python type.
 - [LocalStatusPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalStatusPresentation.kt) turns safe mapped DPS primitives into readable rows and builds the capped inspector.
 - [LocalSensorPresentation.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/LocalSensorPresentation.kt) promotes a small allow-list of validated sensor values into a compact summary.
 - [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) renders the result.
@@ -238,8 +242,8 @@ For `InventoryScreen.kt`, search for and read only these functions at first:
 6. `LocalSensorSummary`
 7. `LocalAccessNotice`
 8. `LocalDpsInspector`
-9. `LocalBooleanControls`
-10. `LocalLightControls`
+9. `LocalDeviceControls`
+10. `LocalLightControls` (the temporary compound-light adapter)
 
 The remaining functions are mostly reusable rows, labels, badges, previews, and styling.
 
@@ -250,8 +254,8 @@ Checkpoint: choose one displayed value, such as outlet power or temperature. Tra
 A switch tap or light adjustment is deliberately non-optimistic. The UI retains the last confirmed state while the command is pending.
 
 ```text
-LocalBooleanControls callback
-  or LocalLightControls callback
+DeviceCapabilityList callback
+  or the temporary LocalLightControls callback
   -> DeviceIntent(device ID, semantic capability ID, semantic value)
   -> AppViewModel.submitControl
   -> DefaultLocalControlCoordinator.execute
@@ -267,9 +271,10 @@ LocalBooleanControls callback
 
 Read:
 
-- `LocalBooleanControls`, `LocalLightControls`, and `localControlSupportingText` in [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt).
+- `DeviceControlUiState` and the atomic renderer matching the intent in `:device-ui`.
+- `LocalDeviceControls` and `LocalLightControls` in [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt). Inventory chooses only which safe capability IDs belong in its current arrangement; the reusable renderer owns primitive state and feedback.
 - `DeviceIntent.kt` and `CapabilityCommandAuthorizer.kt` in `:device-core`.
-- `LocalControlUiState` and `submitControl` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
+- `AppUiState` and `submitControl` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt).
 - All of [LocalControlCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlCoordinator.kt).
 - [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt).
 - `setLocalValues` and `parseLocalControl` in [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt).

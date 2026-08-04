@@ -22,15 +22,16 @@ import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
-import com.prfd.tinytuya.data.lan.LocalLightControlAction
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
+import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
-import com.prfd.tinytuya.ui.app.LocalControlOperation
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -109,20 +110,25 @@ class InventoryScreenInstrumentedTest {
 
     @Test
     fun verifiedLocalSwitchInvokesTheTypedControlCallback() {
-        var request: Triple<String, String, Boolean>? = null
+        var request: DeviceIntent? = null
         setInventoryContent(
             catalog = controlledCatalog(),
             control = LocalControlUiState.Ready,
-            onSetBooleanControl = { deviceId, dataPointId, value ->
-                request = Triple(deviceId, dataPointId, value)
-            },
+            onIntent = { request = it },
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithTag("local_switch_1").assertIsOn().performClick()
 
         composeRule.runOnIdle {
-            assertTrue(request == Triple("office-lamp", "1", false))
+            assertEquals(
+                DeviceIntent.SetToggle(
+                    "office-lamp",
+                    CapabilityId("switch.1"),
+                    false,
+                ),
+                request,
+            )
         }
         composeRule.onNodeWithText(LOCAL_KEY, substring = true).assertDoesNotExist()
     }
@@ -132,9 +138,11 @@ class InventoryScreenInstrumentedTest {
         setInventoryContent(
             catalog = controlledCatalog(),
             control = LocalControlUiState.Sending(
-                "office-lamp",
-                "1",
-                LocalControlOperation.TURN_OFF,
+                DeviceIntent.SetToggle(
+                    "office-lamp",
+                    CapabilityId("switch.1"),
+                    false,
+                )
             ),
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
@@ -146,13 +154,11 @@ class InventoryScreenInstrumentedTest {
 
     @Test
     fun multiGangCardUsesTheSwitchesAsStateAndControlsEachVerifiedChannel() {
-        var request: Triple<String, String, Boolean>? = null
+        var request: DeviceIntent? = null
         setInventoryContent(
             catalog = multiGangCatalog(),
             control = LocalControlUiState.Ready,
-            onSetBooleanControl = { deviceId, dataPointId, value ->
-                request = Triple(deviceId, dataPointId, value)
-            },
+            onIntent = { request = it },
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
@@ -164,7 +170,14 @@ class InventoryScreenInstrumentedTest {
         composeRule.onNodeWithTag("local_switch_3").assertIsOn()
 
         composeRule.runOnIdle {
-            assertTrue(request == Triple("office-lamp", "2", true))
+            assertEquals(
+                DeviceIntent.SetToggle(
+                    "office-lamp",
+                    CapabilityId("switch.2"),
+                    true,
+                ),
+                request,
+            )
         }
     }
 
@@ -195,25 +208,24 @@ class InventoryScreenInstrumentedTest {
 
     @Test
     fun lightModeCallbackIsTyped() {
-        var request: Pair<String, LocalLightControlAction>? = null
+        var request: DeviceIntent? = null
         setInventoryContent(
             catalog = lightCatalog(),
             control = LocalControlUiState.Ready,
-            onSetLightControl = { deviceId, action -> request = deviceId to action },
+            onIntent = { request = it },
         )
         composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
         composeRule.onNodeWithTag("light_mode_color").performClick()
 
         composeRule.runOnIdle {
-            assertTrue(
-                request == Pair(
+            assertEquals(
+                DeviceIntent.SetChoice(
                     "office-lamp",
-                    LocalLightControlAction.SetMode(
-                        dataPointId = "21",
-                        mode = com.prfd.tinytuya.data.lan.LocalLightMode.COLOR,
-                    ),
-                )
+                    CapabilityId("light.mode"),
+                    "colour",
+                ),
+                request,
             )
         }
     }
@@ -243,15 +255,10 @@ class InventoryScreenInstrumentedTest {
                     control = controlState,
                     onRefreshKnownDevices = {},
                     onDiscoverLan = {},
-                    onSetBooleanControl = { _, _, _ -> },
-                    onSetLightControl = { deviceId, action ->
-                        val brightness = action as LocalLightControlAction.SetWhiteBrightness
+                    onIntent = { intent ->
+                        val brightness = intent as DeviceIntent.SetRange
                         requestedValue = brightness.value
-                        controlState = LocalControlUiState.Sending(
-                            deviceId = deviceId,
-                            dataPointId = brightness.dataPointId,
-                            operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
-                        )
+                        controlState = LocalControlUiState.Sending(intent)
                     },
                     onOpenSettings = {},
                     onImportFromCloud = {},
@@ -276,9 +283,11 @@ class InventoryScreenInstrumentedTest {
         composeRule.runOnIdle {
             catalog = lightCatalog(brightness = firstRequest)
             controlState = LocalControlUiState.Confirmed(
-                deviceId = "office-lamp",
-                dataPointId = "22",
-                operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+                DeviceIntent.SetRange(
+                    "office-lamp",
+                    CapabilityId("light.brightness"),
+                    firstRequest,
+                )
             )
         }
         slider.assertIsEnabled()
@@ -298,9 +307,11 @@ class InventoryScreenInstrumentedTest {
 
         composeRule.runOnIdle {
             controlState = LocalControlUiState.Error(
-                deviceId = "office-lamp",
-                dataPointId = "22",
-                operation = LocalControlOperation.LIGHT_WHITE_BRIGHTNESS,
+                intent = DeviceIntent.SetRange(
+                    "office-lamp",
+                    CapabilityId("light.brightness"),
+                    secondRequest,
+                ),
                 code = "LOCAL_CONTROL_NOT_APPLIED",
                 message = "The light kept its previous brightness.",
             )
@@ -365,8 +376,7 @@ class InventoryScreenInstrumentedTest {
         isLanSnapshotCurrent: Boolean = true,
         onRefreshKnownDevices: () -> Unit = {},
         onDiscoverLan: () -> Unit = {},
-        onSetBooleanControl: (String, String, Boolean) -> Unit = { _, _, _ -> },
-        onSetLightControl: (String, LocalLightControlAction) -> Unit = { _, _ -> },
+        onIntent: (DeviceIntent) -> Unit = {},
         onOpenSettings: () -> Unit = {},
         onDelete: () -> Unit = {},
     ) {
@@ -379,8 +389,7 @@ class InventoryScreenInstrumentedTest {
                     isLanSnapshotCurrent = isLanSnapshotCurrent,
                     onRefreshKnownDevices = onRefreshKnownDevices,
                     onDiscoverLan = onDiscoverLan,
-                    onSetBooleanControl = onSetBooleanControl,
-                    onSetLightControl = onSetLightControl,
+                    onIntent = onIntent,
                     onOpenSettings = onOpenSettings,
                     onImportFromCloud = {},
                     onDeleteAllLocalData = onDelete,

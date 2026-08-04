@@ -11,8 +11,6 @@ import com.prfd.tinytuya.data.lan.LanNetworkContext
 import com.prfd.tinytuya.data.lan.LanNetworkObservation
 import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
-import com.prfd.tinytuya.data.lan.LocalLightControlAction
-import com.prfd.tinytuya.data.lan.LocalLightMode
 import com.prfd.tinytuya.data.lan.LocalPollResult
 import com.prfd.tinytuya.data.lan.LocalStatusCoordinator
 import com.prfd.tinytuya.data.lan.LocalStatusException
@@ -27,12 +25,13 @@ import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
+import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalControlUiState
-import com.prfd.tinytuya.ui.app.LocalControlOperation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -208,7 +207,8 @@ class AppViewModelInstrumentedTest {
             }
         }
 
-        viewModel.setBooleanControl("saved-device", "1", true)
+        val intent = toggleIntent(true)
+        viewModel.submitControl(intent)
 
         val state = withTimeout(5_000) {
             viewModel.state.first {
@@ -218,6 +218,8 @@ class AppViewModelInstrumentedTest {
         assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
         assertEquals(1, controlCoordinator.callCount)
         assertEquals(NETWORK, controlCoordinator.expectedNetwork)
+        assertEquals(5L, controlCoordinator.expectedDiscoveryAtEpochMillis)
+        assertEquals(intent, controlCoordinator.intent)
     }
 
     @Test
@@ -239,9 +241,13 @@ class AppViewModelInstrumentedTest {
                 it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
             }
         }
-        val action = LocalLightControlAction.SetMode("21", LocalLightMode.COLOR)
+        val intent = DeviceIntent.SetChoice(
+            "saved-device",
+            CapabilityId("light.mode"),
+            "colour",
+        )
 
-        viewModel.setLightControl("saved-device", action)
+        viewModel.submitControl(intent)
 
         val state = withTimeout(5_000) {
             viewModel.state.first {
@@ -249,8 +255,8 @@ class AppViewModelInstrumentedTest {
             }
         } as AppUiState.Inventory
         val control = state.control as LocalControlUiState.Confirmed
-        assertEquals(LocalControlOperation.LIGHT_MODE, control.operation)
-        assertEquals(action, controlCoordinator.lightAction)
+        assertEquals(intent, control.intent)
+        assertEquals(intent, controlCoordinator.intent)
         assertEquals(6L, state.catalog.lastLocalPollAtEpochMillis)
     }
 
@@ -315,7 +321,7 @@ class AppViewModelInstrumentedTest {
         assertTrue(invalidated.discovery is LanDiscoveryUiState.Error)
         assertTrue(invalidated.control is LocalControlUiState.Unavailable)
 
-        viewModel.setBooleanControl("saved-device", "1", true)
+        viewModel.submitControl(toggleIntent(true))
         assertEquals(0, controlCoordinator.callCount)
     }
 
@@ -340,7 +346,7 @@ class AppViewModelInstrumentedTest {
             }
         }
 
-        viewModel.setBooleanControl("saved-device", "1", true)
+        viewModel.submitControl(toggleIntent(true))
         withTimeout(5_000) { controlCoordinator.started.await() }
         observer.emit(
             LanNetworkObservation.Available(
@@ -605,30 +611,19 @@ class AppViewModelInstrumentedTest {
     ) : LocalControlCoordinator {
         var callCount = 0
         var expectedNetwork: LanNetworkContext? = null
-        var lightAction: LocalLightControlAction? = null
+        var expectedDiscoveryAtEpochMillis: Long? = null
+        var intent: DeviceIntent? = null
 
-        override suspend fun setBoolean(
-            catalog: DeviceCatalog,
+        override suspend fun execute(
             expectedNetwork: LanNetworkContext,
-            deviceId: String,
-            dataPointId: String,
-            value: Boolean,
+            expectedDiscoveryAtEpochMillis: Long,
+            intent: DeviceIntent,
         ): DeviceCatalog {
             callCount += 1
             this.expectedNetwork = expectedNetwork
-            return result ?: catalog
-        }
-
-        override suspend fun setLight(
-            catalog: DeviceCatalog,
-            expectedNetwork: LanNetworkContext,
-            deviceId: String,
-            action: LocalLightControlAction,
-        ): DeviceCatalog {
-            callCount += 1
-            this.expectedNetwork = expectedNetwork
-            lightAction = action
-            return result ?: catalog
+            this.expectedDiscoveryAtEpochMillis = expectedDiscoveryAtEpochMillis
+            this.intent = intent
+            return requireNotNull(result) { "No fake control result configured." }
         }
     }
 
@@ -636,22 +631,10 @@ class AppViewModelInstrumentedTest {
         val started = CompletableDeferred<Unit>()
         val result = CompletableDeferred<DeviceCatalog>()
 
-        override suspend fun setBoolean(
-            catalog: DeviceCatalog,
+        override suspend fun execute(
             expectedNetwork: LanNetworkContext,
-            deviceId: String,
-            dataPointId: String,
-            value: Boolean,
-        ): DeviceCatalog {
-            started.complete(Unit)
-            return result.await()
-        }
-
-        override suspend fun setLight(
-            catalog: DeviceCatalog,
-            expectedNetwork: LanNetworkContext,
-            deviceId: String,
-            action: LocalLightControlAction,
+            expectedDiscoveryAtEpochMillis: Long,
+            intent: DeviceIntent,
         ): DeviceCatalog {
             started.complete(Unit)
             return result.await()
@@ -751,6 +734,12 @@ class AppViewModelInstrumentedTest {
             clientId = SensitiveString.of("known-good-client-id"),
             clientSecret = SensitiveString.of("known-good-secret"),
             savedAtEpochMillis = 1L,
+        )
+
+        fun toggleIntent(value: Boolean) = DeviceIntent.SetToggle(
+            deviceId = "saved-device",
+            capabilityId = CapabilityId("power"),
+            value = value,
         )
     }
 }

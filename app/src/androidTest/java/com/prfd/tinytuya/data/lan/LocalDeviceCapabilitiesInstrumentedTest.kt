@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
+import com.prfd.tinytuya.device.core.capability.CapabilityId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -68,11 +69,27 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         assertEquals("21", controls.mode?.dataPointId)
         assertEquals(LocalLightMode.WHITE, controls.mode?.currentMode)
         assertEquals(
-            LocalLightIntegerControl("22", "bright_value_v2", 10, 1_000, 1, 730),
+            LocalLightIntegerControl(
+                CapabilityId("light.brightness"),
+                "22",
+                "bright_value_v2",
+                10,
+                1_000,
+                1,
+                730,
+            ),
             controls.whiteBrightness,
         )
         assertEquals(
-            LocalLightIntegerControl("23", "temp_value_v2", 0, 1_000, 1, 420),
+            LocalLightIntegerControl(
+                CapabilityId("light.temperature"),
+                "23",
+                "temp_value_v2",
+                0,
+                1_000,
+                1,
+                420,
+            ),
             controls.colorTemperature,
         )
         assertEquals(

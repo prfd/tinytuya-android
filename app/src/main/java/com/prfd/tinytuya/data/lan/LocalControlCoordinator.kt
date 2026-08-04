@@ -4,26 +4,19 @@ import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.python.PythonBridgeException
 import com.prfd.tinytuya.data.python.TuyaPythonGateway
-import java.util.Locale
+import com.prfd.tinytuya.device.core.capability.CapabilityCommandAuthorizer
+import com.prfd.tinytuya.device.core.capability.DeviceIntent
+import com.prfd.tinytuya.device.core.capability.PrimitiveWriteKind
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 interface LocalControlCoordinator {
-    suspend fun setBoolean(
-        catalog: DeviceCatalog,
+    suspend fun execute(
         expectedNetwork: LanNetworkContext,
-        deviceId: String,
-        dataPointId: String,
-        value: Boolean,
-    ): DeviceCatalog
-
-    suspend fun setLight(
-        catalog: DeviceCatalog,
-        expectedNetwork: LanNetworkContext,
-        deviceId: String,
-        action: LocalLightControlAction,
+        expectedDiscoveryAtEpochMillis: Long,
+        intent: DeviceIntent,
     ): DeviceCatalog
 }
 
@@ -34,60 +27,11 @@ class DefaultLocalControlCoordinator(
 ) : LocalControlCoordinator {
     private val deviceLocks = ConcurrentHashMap<String, Mutex>()
 
-    override suspend fun setBoolean(
-        catalog: DeviceCatalog,
+    override suspend fun execute(
         expectedNetwork: LanNetworkContext,
-        deviceId: String,
-        dataPointId: String,
-        value: Boolean,
-    ): DeviceCatalog = setAuthorizedValues(
-        catalog = catalog,
-        expectedNetwork = expectedNetwork,
-        deviceId = deviceId,
-    ) { device, localStatus, lastDiscoveryAt ->
-        val capability = LocalDeviceCapabilityRegistry.booleanControls(
-            device = device,
-            status = localStatus,
-            lastDiscoveryAtEpochMillis = lastDiscoveryAt,
-        ).singleOrNull { it.dataPointId == dataPointId }
-            ?: throw unsupportedControl()
-        listOf(
-            LocalControlChange(
-                id = capability.dataPointId,
-                kind = LocalDataPointKind.BOOLEAN,
-                value = value.toString(),
-            )
-        )
-    }
-
-    override suspend fun setLight(
-        catalog: DeviceCatalog,
-        expectedNetwork: LanNetworkContext,
-        deviceId: String,
-        action: LocalLightControlAction,
-    ): DeviceCatalog = setAuthorizedValues(
-        catalog = catalog,
-        expectedNetwork = expectedNetwork,
-        deviceId = deviceId,
-    ) { device, localStatus, lastDiscoveryAt ->
-        val controls = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = localStatus,
-            lastDiscoveryAtEpochMillis = lastDiscoveryAt,
-        ).lightControls ?: throw unsupportedControl()
-        listOf(authorizedLightChange(controls, action))
-    }
-
-    private suspend fun setAuthorizedValues(
-        catalog: DeviceCatalog,
-        expectedNetwork: LanNetworkContext,
-        deviceId: String,
-        authorize: (
-            device: com.prfd.tinytuya.data.python.CloudImportedDevice,
-            localStatus: com.prfd.tinytuya.data.local.LocalStatusRecord,
-            lastDiscoveryAt: Long,
-        ) -> List<LocalControlChange>,
-    ): DeviceCatalog = deviceLocks.getOrPut(deviceId) { Mutex() }.withLock {
+        expectedDiscoveryAtEpochMillis: Long,
+        intent: DeviceIntent,
+    ): DeviceCatalog = deviceLocks.getOrPut(intent.deviceId) { Mutex() }.withLock {
         val currentNetwork = try {
             networkResolver.resolve()
         } catch (error: CancellationException) {
@@ -105,15 +49,37 @@ class DefaultLocalControlCoordinator(
             )
         }
 
+        // Load inside the per-device lock: a UI snapshot or queued intent is never write authority.
+        val catalog = catalogStore.load() ?: throw refreshRequired()
+        if (catalog.lastDiscoveryNetwork != expectedNetwork) throw refreshRequired()
         val lastDiscoveryAt = catalog.lastDiscoveryAtEpochMillis ?: throw refreshRequired()
-        val device = catalog.devices.singleOrNull { it.id == deviceId }
+        if (lastDiscoveryAt != expectedDiscoveryAtEpochMillis) throw refreshRequired()
+        val device = catalog.devices.singleOrNull { it.id == intent.deviceId }
             ?: throw unsupportedControl()
         val lanRecord = catalog.lanDevices.singleOrNull {
-            it.id == deviceId && it.lastSeenAtEpochMillis == lastDiscoveryAt
+            it.id == intent.deviceId && it.lastSeenAtEpochMillis == lastDiscoveryAt
         } ?: throw refreshRequired()
-        val localStatus = catalog.localStatus.singleOrNull { it.id == deviceId }
+        val localStatus = catalog.localStatus.singleOrNull { it.id == intent.deviceId }
             ?: throw refreshRequired()
-        val changes = authorize(device, localStatus, lastDiscoveryAt)
+
+        val capabilities = LocalDeviceCapabilityRegistry.profile(
+            device = device,
+            status = localStatus,
+            lastDiscoveryAtEpochMillis = lastDiscoveryAt,
+        ).capabilities
+        val command = CapabilityCommandAuthorizer.authorize(capabilities, intent)
+            ?: throw unsupportedControl()
+        val changes = command.writes.map { write ->
+            LocalControlChange(
+                id = write.dataPointId,
+                kind = when (write.kind) {
+                    PrimitiveWriteKind.BOOLEAN -> LocalDataPointKind.BOOLEAN
+                    PrimitiveWriteKind.INTEGER -> LocalDataPointKind.INTEGER
+                    PrimitiveWriteKind.STRING -> LocalDataPointKind.STRING
+                },
+                value = write.value,
+            )
+        }
         if (changes.isEmpty()) throw unsupportedControl()
         val observedById = localStatus.dataPoints.associateBy { dataPoint -> dataPoint.id }
         if (changes.all { change ->
@@ -202,74 +168,6 @@ class DefaultLocalControlCoordinator(
         updatedCatalog
     }
 
-    private fun authorizedLightChange(
-        controls: LocalLightControls,
-        action: LocalLightControlAction,
-    ): LocalControlChange = when (action) {
-        is LocalLightControlAction.SetMode -> {
-            val control = controls.mode
-                ?.takeIf { candidate -> candidate.dataPointId == action.dataPointId }
-                ?: throw unsupportedControl()
-            LocalControlChange(
-                id = control.dataPointId,
-                kind = LocalDataPointKind.STRING,
-                value = action.mode.wireValue,
-            )
-        }
-        is LocalLightControlAction.SetWhiteBrightness -> integerLightChange(
-            control = controls.whiteBrightness,
-            dataPointId = action.dataPointId,
-            value = action.value,
-        )
-        is LocalLightControlAction.SetColorTemperature -> integerLightChange(
-            control = controls.colorTemperature,
-            dataPointId = action.dataPointId,
-            value = action.value,
-        )
-        is LocalLightControlAction.SetColor -> {
-            val control = controls.color
-                ?.takeIf { candidate -> candidate.dataPointId == action.dataPointId }
-                ?: throw unsupportedControl()
-            val color = action.color
-            if (
-                color.hue !in 0..MAX_LIGHT_HUE ||
-                color.saturation !in 0..MAX_LIGHT_COLOR_COMPONENT ||
-                color.brightness !in 0..MAX_LIGHT_COLOR_COMPONENT
-            ) {
-                throw unsupportedControl()
-            }
-            LocalControlChange(
-                id = control.dataPointId,
-                kind = LocalDataPointKind.STRING,
-                value = "%04x%04x%04x".format(
-                    Locale.ROOT,
-                    color.hue,
-                    color.saturation,
-                    color.brightness,
-                ),
-            )
-        }
-    }
-
-    private fun integerLightChange(
-        control: LocalLightIntegerControl?,
-        dataPointId: String,
-        value: Int,
-    ): LocalControlChange {
-        val verified = control
-            ?.takeIf { candidate ->
-                candidate.dataPointId == dataPointId &&
-                    value in candidate.minimum..candidate.maximum &&
-                    (value - candidate.minimum) % candidate.step == 0
-            }
-            ?: throw unsupportedControl()
-        return LocalControlChange(
-            id = verified.dataPointId,
-            kind = LocalDataPointKind.INTEGER,
-            value = value.toString(),
-        )
-    }
-
     private fun refreshRequired() = controlError(
         code = "LOCAL_CONTROL_REFRESH_REQUIRED",
         message = "Refresh status before controlling this device.",
@@ -297,7 +195,5 @@ class DefaultLocalControlCoordinator(
 
     private companion object {
         val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")
-        const val MAX_LIGHT_HUE = 360
-        const val MAX_LIGHT_COLOR_COMPONENT = 1_000
     }
 }

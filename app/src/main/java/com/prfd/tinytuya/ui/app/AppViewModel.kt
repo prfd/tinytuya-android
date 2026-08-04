@@ -12,7 +12,6 @@ import com.prfd.tinytuya.data.lan.LanNetworkObservation
 import com.prfd.tinytuya.data.lan.LanNetworkObserver
 import com.prfd.tinytuya.data.lan.LocalControlCoordinator
 import com.prfd.tinytuya.data.lan.LocalControlException
-import com.prfd.tinytuya.data.lan.LocalLightControlAction
 import com.prfd.tinytuya.data.lan.LocalRefreshDiagnostics
 import com.prfd.tinytuya.data.lan.LocalRefreshMode
 import com.prfd.tinytuya.data.lan.LocalRefreshTrigger
@@ -34,6 +33,8 @@ import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
 import com.prfd.tinytuya.data.python.PythonBridgeException
 import com.prfd.tinytuya.data.python.PythonRuntimeHealth
+import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,43 +66,36 @@ sealed interface LocalControlUiState {
     data object Ready : LocalControlUiState
 
     data class Sending(
-        val deviceId: String,
-        val dataPointId: String,
-        val operation: LocalControlOperation,
+        val intent: DeviceIntent,
     ) : LocalControlUiState {
+        val deviceId: String get() = intent.deviceId
+        val capabilityId: CapabilityId get() = intent.capabilityId
+
         override fun toString(): String =
-            "Sending(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation)"
+            "Sending(intent=$intent)"
     }
 
     data class Confirmed(
-        val deviceId: String,
-        val dataPointId: String,
-        val operation: LocalControlOperation,
+        val intent: DeviceIntent,
     ) : LocalControlUiState {
+        val deviceId: String get() = intent.deviceId
+        val capabilityId: CapabilityId get() = intent.capabilityId
+
         override fun toString(): String =
-            "Confirmed(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation)"
+            "Confirmed(intent=$intent)"
     }
 
     data class Error(
-        val deviceId: String,
-        val dataPointId: String,
-        val operation: LocalControlOperation,
+        val intent: DeviceIntent,
         val code: String,
         val message: String,
     ) : LocalControlUiState {
-        override fun toString(): String =
-            "Error(deviceId=[REDACTED], dataPointId=$dataPointId, operation=$operation, " +
-                "code=$code, message=$message)"
-    }
-}
+        val deviceId: String get() = intent.deviceId
+        val capabilityId: CapabilityId get() = intent.capabilityId
 
-enum class LocalControlOperation {
-    TURN_ON,
-    TURN_OFF,
-    LIGHT_MODE,
-    LIGHT_WHITE_BRIGHTNESS,
-    LIGHT_COLOR_TEMPERATURE,
-    LIGHT_COLOR,
+        override fun toString(): String =
+            "Error(intent=$intent, code=$code, message=$message)"
+    }
 }
 
 sealed interface LanDiscoveryUiState {
@@ -695,53 +689,7 @@ class AppViewModel(
         }
     }
 
-    fun setBooleanControl(
-        deviceId: String,
-        dataPointId: String,
-        value: Boolean,
-    ) = submitControl(
-        deviceId = deviceId,
-        dataPointId = dataPointId,
-        operation = if (value) LocalControlOperation.TURN_ON else LocalControlOperation.TURN_OFF,
-    ) { catalog, network ->
-        localControlCoordinator.setBoolean(
-            catalog = catalog,
-            expectedNetwork = network,
-            deviceId = deviceId,
-            dataPointId = dataPointId,
-            value = value,
-        )
-    }
-
-    fun setLightControl(
-        deviceId: String,
-        action: LocalLightControlAction,
-    ) = submitControl(
-        deviceId = deviceId,
-        dataPointId = action.dataPointId,
-        operation = when (action) {
-            is LocalLightControlAction.SetMode -> LocalControlOperation.LIGHT_MODE
-            is LocalLightControlAction.SetWhiteBrightness ->
-                LocalControlOperation.LIGHT_WHITE_BRIGHTNESS
-            is LocalLightControlAction.SetColorTemperature ->
-                LocalControlOperation.LIGHT_COLOR_TEMPERATURE
-            is LocalLightControlAction.SetColor -> LocalControlOperation.LIGHT_COLOR
-        },
-    ) { catalog, network ->
-        localControlCoordinator.setLight(
-            catalog = catalog,
-            expectedNetwork = network,
-            deviceId = deviceId,
-            action = action,
-        )
-    }
-
-    private fun submitControl(
-        deviceId: String,
-        dataPointId: String,
-        operation: LocalControlOperation,
-        request: suspend (DeviceCatalog, LanNetworkContext) -> DeviceCatalog,
-    ) {
+    fun submitControl(intent: DeviceIntent) {
         val current = mutableState.value as? AppUiState.Inventory ?: return
         if (
             current.discovery is LanDiscoveryUiState.Scanning ||
@@ -759,11 +707,15 @@ class AppViewModel(
         val sessionVersion = controlSessionVersion
 
         mutableState.value = current.copy(
-            control = LocalControlUiState.Sending(deviceId, dataPointId, operation)
+            control = LocalControlUiState.Sending(intent)
         )
         viewModelScope.launch {
             try {
-                val updated = request(current.catalog, network)
+                val updated = localControlCoordinator.execute(
+                    expectedNetwork = network,
+                    expectedDiscoveryAtEpochMillis = discoveryAt,
+                    intent = intent,
+                )
                 val live = activeControlInventory(
                     sessionVersion = sessionVersion,
                     network = network,
@@ -775,7 +727,7 @@ class AppViewModel(
                 }
                 mutableState.value = live.copy(
                     catalog = updated,
-                    control = LocalControlUiState.Confirmed(deviceId, dataPointId, operation),
+                    control = LocalControlUiState.Confirmed(intent),
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -793,9 +745,7 @@ class AppViewModel(
                 mutableState.value = live.copy(
                     catalog = observedCatalog ?: live.catalog,
                     control = LocalControlUiState.Error(
-                        deviceId = deviceId,
-                        dataPointId = dataPointId,
-                        operation = operation,
+                        intent = intent,
                         code = error.code,
                         message = error.message ?: "The local command could not be confirmed safely.",
                     ),
@@ -808,9 +758,7 @@ class AppViewModel(
                 ) ?: return@launch
                 mutableState.value = live.copy(
                     control = LocalControlUiState.Error(
-                        deviceId = deviceId,
-                        dataPointId = dataPointId,
-                        operation = operation,
+                        intent = intent,
                         code = error.code,
                         message = error.message ?: "The confirmed state could not be stored safely.",
                     ),
@@ -823,9 +771,7 @@ class AppViewModel(
                 ) ?: return@launch
                 mutableState.value = live.copy(
                     control = LocalControlUiState.Error(
-                        deviceId = deviceId,
-                        dataPointId = dataPointId,
-                        operation = operation,
+                        intent = intent,
                         code = "LOCAL_CONTROL_FAILED",
                         message = "The local command could not be confirmed safely.",
                     ),

@@ -26,30 +26,6 @@ data class LocalControlChange(
     val value: String,
 )
 
-sealed interface LocalLightControlAction {
-    val dataPointId: String
-
-    data class SetMode(
-        override val dataPointId: String,
-        val mode: LocalLightMode,
-    ) : LocalLightControlAction
-
-    data class SetWhiteBrightness(
-        override val dataPointId: String,
-        val value: Int,
-    ) : LocalLightControlAction
-
-    data class SetColorTemperature(
-        override val dataPointId: String,
-        val value: Int,
-    ) : LocalLightControlAction
-
-    data class SetColor(
-        override val dataPointId: String,
-        val color: LocalLightHsv,
-    ) : LocalLightControlAction
-}
-
 data class LocalControlRequest(
     val network: LanNetworkContext,
     val device: LocalControlDevice,

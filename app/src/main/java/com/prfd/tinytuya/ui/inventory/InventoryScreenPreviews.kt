@@ -286,8 +286,7 @@ private fun PreviewDeviceCard(
                 ),
                 discovery = LanDiscoveryUiState.Idle,
                 control = LocalControlUiState.Ready,
-                onSetBooleanControl = { _, _, _ -> },
-                onSetLightControl = { _, _ -> },
+                onIntent = {},
             )
         }
     }

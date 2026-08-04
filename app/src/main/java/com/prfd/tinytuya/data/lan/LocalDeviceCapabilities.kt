@@ -3,6 +3,7 @@ package com.prfd.tinytuya.data.lan
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.device.core.capability.CapabilityAccess
+import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.CapabilityResolver
 import com.prfd.tinytuya.device.core.capability.DeviceObservation
 import com.prfd.tinytuya.device.core.capability.ObservedDataPointInput
@@ -25,6 +26,7 @@ import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 
 data class LocalBooleanControl(
+    val capabilityId: CapabilityId,
     val dataPointId: String,
     val code: String,
     val label: String,
@@ -43,11 +45,13 @@ data class LocalLightHsv(
 )
 
 data class LocalLightModeControl(
+    val capabilityId: CapabilityId,
     val dataPointId: String,
     val currentMode: LocalLightMode?,
 )
 
 data class LocalLightIntegerControl(
+    val capabilityId: CapabilityId,
     val dataPointId: String,
     val code: String,
     val minimum: Int,
@@ -57,6 +61,7 @@ data class LocalLightIntegerControl(
 )
 
 data class LocalLightColorControl(
+    val capabilityId: CapabilityId,
     val dataPointId: String,
     val currentColor: LocalLightHsv,
 )
@@ -98,8 +103,8 @@ enum class LocalDeviceAccessKind {
 /**
  * Compatibility view consumed by the current inventory UI and command coordinator.
  *
- * [capabilities] is the canonical Phase 3 model. The Boolean/light fields are temporary adapters
- * and can be removed when the command path moves to capability commands in Phase 4.
+ * [capabilities] is canonical. The Boolean/light fields are temporary presentation adapters; Phase
+ * 4 command authorization consumes only semantic intents and freshly resolved capabilities.
  */
 data class LocalDeviceProfile(
     val kind: LocalDeviceProfileKind,
@@ -134,6 +139,7 @@ object LocalDeviceCapabilityRegistry {
             .filter(ResolvedToggle::writable)
             .map { capability ->
                 LocalBooleanControl(
+                    capabilityId = capability.id,
                     dataPointId = capability.dataPointId,
                     code = capability.code,
                     label = capability.label,
@@ -237,6 +243,7 @@ object LocalDeviceCapabilityRegistry {
             .firstOrNull { capability -> capability.id.value == "light.mode" && capability.writable }
             ?.let { capability ->
                 LocalLightModeControl(
+                    capabilityId = capability.id,
                     dataPointId = capability.dataPointId,
                     currentMode = LocalLightMode.entries.firstOrNull { mode ->
                         mode.wireValue == capability.currentWireValue
@@ -247,6 +254,7 @@ object LocalDeviceCapabilityRegistry {
             .firstOrNull { capability -> capability.id.value == id && capability.writable }
             ?.let { capability ->
                 LocalLightIntegerControl(
+                    capabilityId = capability.id,
                     dataPointId = capability.dataPointId,
                     code = capability.code,
                     minimum = capability.minimum,
@@ -259,6 +267,7 @@ object LocalDeviceCapabilityRegistry {
             .firstOrNull { capability -> capability.id.value == "light.color" && capability.writable }
             ?.let { capability ->
                 LocalLightColorControl(
+                    capabilityId = capability.id,
                     dataPointId = capability.dataPointId,
                     currentColor = LocalLightHsv(
                         hue = capability.currentColor.hue,

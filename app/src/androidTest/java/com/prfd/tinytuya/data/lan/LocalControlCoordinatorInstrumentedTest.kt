@@ -12,6 +12,9 @@ import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.data.python.TuyaPythonGateway
+import com.prfd.tinytuya.device.core.capability.CapabilityId
+import com.prfd.tinytuya.device.core.capability.DeviceIntent
+import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,12 +35,9 @@ class LocalControlCoordinatorInstrumentedTest {
             networkResolver = FakeNetworkResolver(NETWORK),
         )
 
-        val updated = coordinator.setBoolean(
-            catalog = catalog,
+        val updated = coordinator.execute(
             expectedNetwork = NETWORK,
-            deviceId = DEVICE_ID,
-            dataPointId = "1",
-            value = false,
+            intent = toggleIntent(false),
         )
 
         assertNotNull(gateway.request)
@@ -54,22 +54,21 @@ class LocalControlCoordinatorInstrumentedTest {
     fun verifiedLightWritesUseTypedValuesAndTheObservedHsvEncoding() = runBlocking {
         val catalog = lightCatalog()
         val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
-        val coordinator = DefaultLocalControlCoordinator(
-            gateway = gateway,
-            catalogStore = FakeStore(catalog),
-            networkResolver = FakeNetworkResolver(NETWORK),
-        )
-
-        listOf(
-            LocalLightControlAction.SetMode("21", LocalLightMode.COLOR),
-            LocalLightControlAction.SetWhiteBrightness("22", 500),
-            LocalLightControlAction.SetColorTemperature("23", 400),
-            LocalLightControlAction.SetColor(
-                "24",
-                LocalLightHsv(hue = 300, saturation = 700, brightness = 500),
+        listOf<DeviceIntent>(
+            DeviceIntent.SetChoice(DEVICE_ID, CapabilityId("light.mode"), "colour"),
+            DeviceIntent.SetRange(DEVICE_ID, CapabilityId("light.brightness"), 500),
+            DeviceIntent.SetRange(DEVICE_ID, CapabilityId("light.temperature"), 400),
+            DeviceIntent.SetColor(
+                DEVICE_ID,
+                CapabilityId("light.color"),
+                TuyaHsvColor(hue = 300, saturation = 700, brightness = 500),
             ),
-        ).forEach { action ->
-            coordinator.setLight(catalog, NETWORK, DEVICE_ID, action)
+        ).forEach { intent ->
+            DefaultLocalControlCoordinator(
+                gateway = gateway,
+                catalogStore = FakeStore(catalog),
+                networkResolver = FakeNetworkResolver(NETWORK),
+            ).execute(NETWORK, intent)
         }
 
         assertEquals(
@@ -94,13 +93,12 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setLight(
-                catalog,
+            coordinator.execute(
                 NETWORK,
-                DEVICE_ID,
-                LocalLightControlAction.SetColor(
-                    dataPointId = "24",
-                    color = LocalLightHsv(hue = 361, saturation = 700, brightness = 500),
+                DeviceIntent.SetColor(
+                    deviceId = DEVICE_ID,
+                    capabilityId = CapabilityId("light.color"),
+                    color = TuyaHsvColor(hue = 361, saturation = 700, brightness = 500),
                 ),
             )
             throw AssertionError("Expected an invalid light value to be rejected")
@@ -125,11 +123,9 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setLight(
-                catalog,
+            coordinator.execute(
                 NETWORK,
-                DEVICE_ID,
-                LocalLightControlAction.SetMode("21", LocalLightMode.COLOR),
+                DeviceIntent.SetChoice(DEVICE_ID, CapabilityId("light.mode"), "colour"),
             )
             throw AssertionError("Expected stale light status to be rejected")
         } catch (error: LocalControlException) {
@@ -151,7 +147,7 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
+            coordinator.execute(NETWORK, toggleIntent(false))
             throw AssertionError("Expected changed Wi-Fi to reject local control")
         } catch (error: LocalControlException) {
             assertEquals("LOCAL_CONTROL_NETWORK_CHANGED", error.code)
@@ -172,10 +168,38 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
+            coordinator.execute(NETWORK, toggleIntent(false))
             throw AssertionError("Expected a different Android network to reject local control")
         } catch (error: LocalControlException) {
             assertEquals("LOCAL_CONTROL_NETWORK_CHANGED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
+    fun changedDiscoveryGenerationRejectsAQueuedIntent() = runBlocking {
+        val original = sampleCatalog()
+        val rediscovered = original.copy(
+            lastDiscoveryAtEpochMillis = 11L,
+            lanDevices = listOf(
+                original.lanDevices.single().copy(lastSeenAtEpochMillis = 11L)
+            ),
+            localStatus = listOf(
+                original.localStatus.single().copy(polledAtEpochMillis = 11L)
+            ),
+        )
+        val gateway = FakeGateway { confirmedResult(false) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(rediscovered),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        try {
+            coordinator.execute(NETWORK, toggleIntent(false))
+            throw AssertionError("Expected a new discovery generation to invalidate the intent")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_REFRESH_REQUIRED", error.code)
         }
         assertEquals(0, gateway.callCount)
     }
@@ -193,8 +217,80 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
+            coordinator.execute(NETWORK, toggleIntent(false))
             throw AssertionError("Expected an unverified mapping to reject local control")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
+    fun forgedCapabilityIdCannotReachThePythonBridge() = runBlocking {
+        val catalog = sampleCatalog()
+        val gateway = FakeGateway { confirmedResult(false) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(catalog),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        try {
+            coordinator.execute(
+                NETWORK,
+                DeviceIntent.SetToggle(DEVICE_ID, CapabilityId("forged.power"), false),
+            )
+            throw AssertionError("Expected a forged capability ID to be rejected")
+        } catch (error: LocalControlException) {
+            assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+        }
+        assertEquals(0, gateway.callCount)
+    }
+
+    @Test
+    fun semanticIntentRebindsAgainstTheLatestPersistedDps() = runBlocking {
+        val latest = sampleCatalog().copy(
+            devices = listOf(
+                sampleCatalog().devices.single().copy(
+                    mappingJson = "{\"9\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}"
+                )
+            ),
+            localStatus = listOf(
+                sampleCatalog().localStatus.single().copy(
+                    dataPoints = listOf(
+                        LocalDataPoint("9", LocalDataPointKind.BOOLEAN, "true")
+                    )
+                )
+            ),
+        )
+        val gateway = FakeGateway { request -> confirmedResult(request.changes.single()) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(latest),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        coordinator.execute(NETWORK, toggleIntent(false))
+
+        assertEquals("9", gateway.request?.changes?.single()?.id)
+    }
+
+    @Test
+    fun mappingChangedAfterIntentCreationCannotReachThePythonBridge() = runBlocking {
+        val intentFromOldUi = toggleIntent(false)
+        val latest = sampleCatalog(
+            mappingJson = "{\"1\":{\"code\":\"countdown_1\",\"type\":\"Boolean\"}}"
+        )
+        val gateway = FakeGateway { confirmedResult(false) }
+        val coordinator = DefaultLocalControlCoordinator(
+            gateway = gateway,
+            catalogStore = FakeStore(latest),
+            networkResolver = FakeNetworkResolver(NETWORK),
+        )
+
+        try {
+            coordinator.execute(NETWORK, intentFromOldUi)
+            throw AssertionError("Expected the changed mapping to invalidate the old intent")
         } catch (error: LocalControlException) {
             assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
         }
@@ -223,7 +319,7 @@ class LocalControlCoordinatorInstrumentedTest {
         )
 
         try {
-            coordinator.setBoolean(catalog, NETWORK, DEVICE_ID, "1", false)
+            coordinator.execute(NETWORK, toggleIntent(false))
             throw AssertionError("Expected the unconfirmed change to be rejected")
         } catch (error: LocalControlException) {
             assertEquals("LOCAL_CONTROL_NOT_APPLIED", error.code)
@@ -233,6 +329,15 @@ class LocalControlCoordinatorInstrumentedTest {
             )
         }
     }
+
+    private suspend fun LocalControlCoordinator.execute(
+        expectedNetwork: LanNetworkContext,
+        intent: DeviceIntent,
+    ): DeviceCatalog = execute(
+        expectedNetwork = expectedNetwork,
+        expectedDiscoveryAtEpochMillis = 10L,
+        intent = intent,
+    )
 
     private class FakeNetworkResolver(
         private val network: LanNetworkContext,
@@ -345,6 +450,7 @@ class LocalControlCoordinatorInstrumentedTest {
                 )
             ),
             lastDiscoveryAtEpochMillis = 10L,
+            lastDiscoveryNetwork = NETWORK,
             lanDevices = listOf(
                 LanDeviceRecord(
                     id = DEVICE_ID,
@@ -422,6 +528,12 @@ class LocalControlCoordinatorInstrumentedTest {
             dataPoints = listOf(
                 LocalDataPoint(change.id, change.kind, change.value)
             ),
+        )
+
+        fun toggleIntent(value: Boolean) = DeviceIntent.SetToggle(
+            deviceId = DEVICE_ID,
+            capabilityId = CapabilityId("switch.1"),
+            value = value,
         )
     }
 }

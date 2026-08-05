@@ -4,54 +4,60 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ProtectedDevicePolicyTest {
-    @Test
-    fun `normalizes the cloud category used for classification`() {
-        val identity = DeviceIdentity.normalize(
-            category = " DJ ",
-            isSubDevice = false,
-        )
+  @Test
+  fun `normalizes the cloud category used for classification`() {
+    val identity =
+      DeviceIdentity.normalize(
+        category = " DJ ",
+        isSubDevice = false,
+      )
 
-        assertEquals("dj", identity.category)
-    }
+    assertEquals("dj", identity.category)
+  }
 
-    @Test
-    fun `subdevice restriction takes priority over protected category`() {
-        val identity = identity(category = "sp", isSubDevice = true)
+  @Test
+  fun `subdevice restriction takes priority over protected category`() {
+    val identity = identity(category = "sp", isSubDevice = true)
 
-        assertEquals(
-            DeviceAccessRestriction.GATEWAY_CHILD,
-            ProtectedDevicePolicy.restrictionFor(identity),
-        )
-    }
+    assertEquals(
+      DeviceAccessRestriction.GATEWAY_CHILD,
+      ProtectedDevicePolicy.restrictionFor(identity),
+    )
+  }
 
-    @Test
-    fun `protected categories are centrally classified`() {
-        mapOf(
-            "wg2" to DeviceAccessRestriction.GATEWAY,
-            "wfcon" to DeviceAccessRestriction.GATEWAY,
-            "sp" to DeviceAccessRestriction.CAMERA,
-            "ms" to DeviceAccessRestriction.LOCK,
-            "videolock" to DeviceAccessRestriction.LOCK,
-            "dj" to DeviceAccessRestriction.NONE,
-        ).forEach { (category, restriction) ->
-            assertEquals(restriction, ProtectedDevicePolicy.restrictionFor(identity(category)))
-        }
-    }
+  @Test
+  fun `protected categories are centrally classified`() {
+    mapOf(
+        "wg2" to DeviceAccessRestriction.GATEWAY,
+        "wfcon" to DeviceAccessRestriction.GATEWAY,
+        "sp" to DeviceAccessRestriction.CAMERA,
+        "ms" to DeviceAccessRestriction.LOCK,
+        "videolock" to DeviceAccessRestriction.LOCK,
+        "dj" to DeviceAccessRestriction.NONE,
+      )
+      .forEach { (category, restriction) ->
+        assertEquals(restriction, ProtectedDevicePolicy.restrictionFor(identity(category)))
+      }
+  }
 
-    @Test
-    fun `invalid or oversized categories cannot impersonate protected categories`() {
-        assertEquals(DeviceAccessRestriction.NONE, ProtectedDevicePolicy.restrictionFor(identity(" sp! ")))
-        assertEquals(
-            DeviceAccessRestriction.NONE,
-            ProtectedDevicePolicy.restrictionFor(identity("s".repeat(65))),
-        )
-    }
+  @Test
+  fun `invalid or oversized categories cannot impersonate protected categories`() {
+    assertEquals(
+      DeviceAccessRestriction.NONE,
+      ProtectedDevicePolicy.restrictionFor(identity(" sp! ")),
+    )
+    assertEquals(
+      DeviceAccessRestriction.NONE,
+      ProtectedDevicePolicy.restrictionFor(identity("s".repeat(65))),
+    )
+  }
 
-    private fun identity(
-        category: String,
-        isSubDevice: Boolean = false,
-    ): DeviceIdentity = DeviceIdentity.normalize(
-        category = category,
-        isSubDevice = isSubDevice,
+  private fun identity(
+    category: String,
+    isSubDevice: Boolean = false,
+  ): DeviceIdentity =
+    DeviceIdentity.normalize(
+      category = category,
+      isSubDevice = isSubDevice,
     )
 }

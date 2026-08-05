@@ -20,144 +20,147 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TuyaPythonGatewayInstrumentedTest {
-    @Test
-    fun healthReportsPinnedRuntimeAndWorkingCrypto() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val health = ChaquopyTuyaPythonGateway(context).health()
+  @Test
+  fun healthReportsPinnedRuntimeAndWorkingCrypto() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val health = ChaquopyTuyaPythonGateway(context).health()
 
-        assertEquals(1, health.contractVersion)
-        assertTrue(health.pythonVersion.startsWith("3.11."))
-        assertEquals("1.20.0", health.tinytuyaVersion)
-        assertTrue(health.crypto.gcmAvailable)
-        assertTrue(health.crypto.selfTestPassed)
-        assertTrue("3.5" in health.supportedProtocols)
+    assertEquals(1, health.contractVersion)
+    assertTrue(health.pythonVersion.startsWith("3.11."))
+    assertEquals("1.20.0", health.tinytuyaVersion)
+    assertTrue(health.crypto.gcmAvailable)
+    assertTrue(health.crypto.selfTestPassed)
+    assertTrue("3.5" in health.supportedProtocols)
+  }
+
+  @Test
+  fun cloudImportRejectsBlankCredentialsBeforeNetworkAccess() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val gateway = ChaquopyTuyaPythonGateway(context)
+
+    try {
+      gateway.importCloud(
+        CloudCredentials(
+          region = TuyaCloudRegion.WESTERN_AMERICA,
+          clientId = "",
+          clientSecret = SensitiveString.of("not-a-real-secret"),
+        )
+      )
+      fail("Expected blank cloud credentials to be rejected")
+    } catch (error: PythonBridgeException) {
+      assertEquals("CLOUD_CREDENTIALS_REQUIRED", error.code)
     }
+  }
 
-    @Test
-    fun cloudImportRejectsBlankCredentialsBeforeNetworkAccess() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val gateway = ChaquopyTuyaPythonGateway(context)
+  @Test
+  fun lanDiscoveryRejectsInconsistentBroadcastBeforeOpeningSockets() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val gateway = ChaquopyTuyaPythonGateway(context)
 
-        try {
-            gateway.importCloud(
-                CloudCredentials(
-                    region = TuyaCloudRegion.WESTERN_AMERICA,
-                    clientId = "",
-                    clientSecret = SensitiveString.of("not-a-real-secret"),
-                )
-            )
-            fail("Expected blank cloud credentials to be rejected")
-        } catch (error: PythonBridgeException) {
-            assertEquals("CLOUD_CREDENTIALS_REQUIRED", error.code)
-        }
+    try {
+      gateway.discoverLan(
+        LanDiscoveryRequest(
+          network =
+            LanNetworkContext(
+              interfaceName = "wlan0",
+              localIpv4 = "192.168.10.25",
+              prefixLength = 24,
+              broadcastIpv4 = "192.168.11.255",
+            ),
+          knownDevices = listOf(LanKnownDevice(id = "known-device", name = "Lamp", mac = "")),
+          timeoutSeconds = 6,
+        )
+      )
+      fail("Expected an inconsistent broadcast address to be rejected")
+    } catch (error: PythonBridgeException) {
+      assertEquals("LAN_NETWORK_INVALID", error.code)
     }
+  }
 
-    @Test
-    fun lanDiscoveryRejectsInconsistentBroadcastBeforeOpeningSockets() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val gateway = ChaquopyTuyaPythonGateway(context)
+  @Test
+  fun localPollRejectsAddressOutsideSelectedWifiBeforeOpeningSocket() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val gateway = ChaquopyTuyaPythonGateway(context)
 
-        try {
-            gateway.discoverLan(
-                LanDiscoveryRequest(
-                    network = LanNetworkContext(
-                        interfaceName = "wlan0",
-                        localIpv4 = "192.168.10.25",
-                        prefixLength = 24,
-                        broadcastIpv4 = "192.168.11.255",
-                    ),
-                    knownDevices = listOf(
-                        LanKnownDevice(id = "known-device", name = "Lamp", mac = "")
-                    ),
-                    timeoutSeconds = 6,
-                )
-            )
-            fail("Expected an inconsistent broadcast address to be rejected")
-        } catch (error: PythonBridgeException) {
-            assertEquals("LAN_NETWORK_INVALID", error.code)
-        }
+    try {
+      gateway.pollLocal(
+        LocalPollRequest(
+          network =
+            LanNetworkContext(
+              interfaceName = "wlan0",
+              localIpv4 = "192.168.10.25",
+              prefixLength = 24,
+              broadcastIpv4 = "192.168.10.255",
+            ),
+          devices =
+            listOf(
+              LocalPollDevice(
+                id = "known-device",
+                ip = "192.168.11.42",
+                localKey = SensitiveString.of("0123456789abcdef"),
+                protocolVersion = "3.5",
+              )
+            ),
+        )
+      )
+      fail("Expected an out-of-subnet poll address to be rejected")
+    } catch (error: PythonBridgeException) {
+      assertEquals("LOCAL_POLL_DEVICES_INVALID", error.code)
     }
+  }
 
-    @Test
-    fun localPollRejectsAddressOutsideSelectedWifiBeforeOpeningSocket() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val gateway = ChaquopyTuyaPythonGateway(context)
+  @Test
+  fun localPollResponseRejectsAttemptCountOutsideRetryBudget() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
 
-        try {
-            gateway.pollLocal(
-                LocalPollRequest(
-                    network = LanNetworkContext(
-                        interfaceName = "wlan0",
-                        localIpv4 = "192.168.10.25",
-                        prefixLength = 24,
-                        broadcastIpv4 = "192.168.10.255",
-                    ),
-                    devices = listOf(
-                        LocalPollDevice(
-                            id = "known-device",
-                            ip = "192.168.11.42",
-                            localKey = SensitiveString.of("0123456789abcdef"),
-                            protocolVersion = "3.5",
-                        )
-                    ),
-                )
-            )
-            fail("Expected an out-of-subnet poll address to be rejected")
-        } catch (error: PythonBridgeException) {
-            assertEquals("LOCAL_POLL_DEVICES_INVALID", error.code)
-        }
+    try {
+      ChaquopyTuyaPythonGateway(context).parseLocalPoll(localPollResponse(attemptCount = 4))
+      fail("Expected an out-of-budget attempt count to be rejected")
+    } catch (error: PythonBridgeException) {
+      assertEquals("BRIDGE_RESPONSE_INVALID", error.code)
     }
+  }
 
-    @Test
-    fun localPollResponseRejectsAttemptCountOutsideRetryBudget() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+  @Test
+  fun localControlRejectsAddressOutsideSelectedWifiBeforeWriting() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val gateway = ChaquopyTuyaPythonGateway(context)
 
-        try {
-            ChaquopyTuyaPythonGateway(context).parseLocalPoll(
-                localPollResponse(attemptCount = 4)
-            )
-            fail("Expected an out-of-budget attempt count to be rejected")
-        } catch (error: PythonBridgeException) {
-            assertEquals("BRIDGE_RESPONSE_INVALID", error.code)
-        }
+    try {
+      gateway.setLocalValues(
+        LocalControlRequest(
+          network =
+            LanNetworkContext(
+              interfaceName = "wlan0",
+              localIpv4 = "192.168.10.25",
+              prefixLength = 24,
+              broadcastIpv4 = "192.168.10.255",
+            ),
+          device =
+            LocalControlDevice(
+              id = "known-device",
+              ip = "192.168.11.42",
+              localKey = SensitiveString.of("0123456789abcdef"),
+              protocolVersion = "3.5",
+            ),
+          changes =
+            listOf(
+              LocalControlChange(
+                id = "1",
+                kind = LocalDataPointKind.BOOLEAN,
+                value = "false",
+              )
+            ),
+        )
+      )
+      fail("Expected an out-of-subnet control target to be rejected")
+    } catch (error: PythonBridgeException) {
+      assertEquals("LOCAL_CONTROL_DEVICE_INVALID", error.code)
     }
+  }
 
-    @Test
-    fun localControlRejectsAddressOutsideSelectedWifiBeforeWriting() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val gateway = ChaquopyTuyaPythonGateway(context)
-
-        try {
-            gateway.setLocalValues(
-                LocalControlRequest(
-                    network = LanNetworkContext(
-                        interfaceName = "wlan0",
-                        localIpv4 = "192.168.10.25",
-                        prefixLength = 24,
-                        broadcastIpv4 = "192.168.10.255",
-                    ),
-                    device = LocalControlDevice(
-                        id = "known-device",
-                        ip = "192.168.11.42",
-                        localKey = SensitiveString.of("0123456789abcdef"),
-                        protocolVersion = "3.5",
-                    ),
-                    changes = listOf(
-                        LocalControlChange(
-                            id = "1",
-                            kind = LocalDataPointKind.BOOLEAN,
-                            value = "false",
-                        )
-                    ),
-                )
-            )
-            fail("Expected an out-of-subnet control target to be rejected")
-        } catch (error: PythonBridgeException) {
-            assertEquals("LOCAL_CONTROL_DEVICE_INVALID", error.code)
-        }
-    }
-
-    private fun localPollResponse(attemptCount: Int) = """
+  private fun localPollResponse(attemptCount: Int) =
+    """
         {
           "ok": true,
           "contract_version": 1,
@@ -180,5 +183,6 @@ class TuyaPythonGatewayInstrumentedTest {
             ]
           }
         }
-    """.trimIndent()
+    """
+      .trimIndent()
 }

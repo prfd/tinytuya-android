@@ -23,442 +23,489 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class LocalDeviceCapabilitiesInstrumentedTest {
-    @Test
-    fun multiGangControlsAreSortedAndBoundToVerifiedBooleanMappings() {
-        val device = sampleDevice(
-            category = "kg",
-            mappingJson = """
-                {
-                  "3":{"code":"switch_3","type":"Boolean"},
-                  "1":{"code":"switch_1","type":"Boolean"},
-                  "100":{"code":"switch_100","type":"Boolean"},
-                  "2":{"code":"switch_2","type":"Boolean"}
-                }
-            """.trimIndent(),
-        )
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("3", LocalDataPointKind.BOOLEAN, "true"),
-                LocalDataPoint("100", LocalDataPointKind.BOOLEAN, "true"),
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "false"),
-                LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "true"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
+  @Test
+  fun multiGangControlsAreSortedAndBoundToVerifiedBooleanMappings() {
+    val device =
+      sampleDevice(
+        category = "kg",
+        mappingJson =
+          """
+          {
+            "3":{"code":"switch_3","type":"Boolean"},
+            "1":{"code":"switch_1","type":"Boolean"},
+            "100":{"code":"switch_100","type":"Boolean"},
+            "2":{"code":"switch_2","type":"Boolean"}
+          }
+          """
+            .trimIndent(),
+      )
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status =
+          respondedStatus(
+            LocalDataPoint("3", LocalDataPointKind.BOOLEAN, "true"),
+            LocalDataPoint("100", LocalDataPointKind.BOOLEAN, "true"),
+            LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "false"),
+            LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "true"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
 
-        assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, profile.familyId)
-        assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
-        assertEquals(3, profile.mappedSwitchCount)
-        val toggles = profile.capabilities.ofType<ResolvedToggle>()
-        assertEquals(listOf("1", "2", "3"), toggles.map { it.dataPointId })
-        assertEquals(listOf("Switch 1", "Switch 2", "Switch 3"), toggles.map { it.label })
-        assertEquals(listOf(false, true, true), toggles.map { it.currentValue })
-    }
+    assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, profile.familyId)
+    assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
+    assertEquals(3, profile.mappedSwitchCount)
+    val toggles = profile.capabilities.ofType<ResolvedToggle>()
+    assertEquals(listOf("1", "2", "3"), toggles.map { it.dataPointId })
+    assertEquals(listOf("Switch 1", "Switch 2", "Switch 3"), toggles.map { it.label })
+    assertEquals(listOf(false, true, true), toggles.map { it.currentValue })
+  }
 
-    @Test
-    fun lightProfileExposesControlsFromTheVerifiedBulbMappingAndFreshStatus() {
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(
-                category = "dj",
-                mappingJson = LIGHT_MAPPING,
-            ),
-            status = respondedStatus(
-                LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
-                LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
-                LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
-                LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
-                LocalDataPoint("24", LocalDataPointKind.STRING, "012c02bc01f4"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
+  @Test
+  fun lightProfileExposesControlsFromTheVerifiedBulbMappingAndFreshStatus() {
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device =
+          sampleDevice(
+            category = "dj",
+            mappingJson = LIGHT_MAPPING,
+          ),
+        status =
+          respondedStatus(
+            LocalDataPoint("20", LocalDataPointKind.BOOLEAN, "true"),
+            LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+            LocalDataPoint("22", LocalDataPointKind.INTEGER, "730"),
+            LocalDataPoint("23", LocalDataPointKind.INTEGER, "420"),
+            LocalDataPoint("24", LocalDataPointKind.STRING, "012c02bc01f4"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
 
-        assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
-        assertEquals(1, profile.mappedSwitchCount)
-        assertEquals(listOf("20"), profile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId })
-        assertEquals("Power", profile.capabilities.ofType<ResolvedToggle>().single().label)
-        val mode = profile.capabilities.ofType<ResolvedChoice>().single()
-        assertEquals("21", mode.dataPointId)
-        assertEquals("white", mode.currentWireValue)
-        val ranges = profile.capabilities.ofType<ResolvedRange>().associateBy { it.id }
-        assertEquals("22", ranges.getValue(CapabilityId("light.brightness")).dataPointId)
-        assertEquals(730, ranges.getValue(CapabilityId("light.brightness")).currentValue)
-        assertEquals("23", ranges.getValue(CapabilityId("light.temperature")).dataPointId)
-        assertEquals(420, ranges.getValue(CapabilityId("light.temperature")).currentValue)
-        assertEquals(
-            TuyaHsvColor(hue = 300, saturation = 700, brightness = 500),
-            profile.capabilities.ofType<ResolvedColor>().single().currentColor,
-        )
-    }
+    assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
+    assertEquals(1, profile.mappedSwitchCount)
+    assertEquals(listOf("20"), profile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId })
+    assertEquals("Power", profile.capabilities.ofType<ResolvedToggle>().single().label)
+    val mode = profile.capabilities.ofType<ResolvedChoice>().single()
+    assertEquals("21", mode.dataPointId)
+    assertEquals("white", mode.currentWireValue)
+    val ranges = profile.capabilities.ofType<ResolvedRange>().associateBy { it.id }
+    assertEquals("22", ranges.getValue(CapabilityId("light.brightness")).dataPointId)
+    assertEquals(730, ranges.getValue(CapabilityId("light.brightness")).currentValue)
+    assertEquals("23", ranges.getValue(CapabilityId("light.temperature")).dataPointId)
+    assertEquals(420, ranges.getValue(CapabilityId("light.temperature")).currentValue)
+    assertEquals(
+      TuyaHsvColor(hue = 300, saturation = 700, brightness = 500),
+      profile.capabilities.ofType<ResolvedColor>().single().currentColor,
+    )
+  }
 
-    @Test
-    fun malformedOrStaleLightDataCannotBecomeWritable() {
-        val device = sampleDevice(category = "dj", mappingJson = LIGHT_MAPPING)
-        val stale = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
-                LocalDataPoint("22", LocalDataPointKind.INTEGER, "500"),
-                LocalDataPoint("23", LocalDataPointKind.INTEGER, "500"),
-                LocalDataPoint("24", LocalDataPointKind.STRING, "000003e803e8"),
-                polledAtEpochMillis = DISCOVERED_AT - 1,
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-        val malformed = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("21", LocalDataPointKind.STRING, "unsupported"),
-                LocalDataPoint("22", LocalDataPointKind.INTEGER, "1001"),
-                LocalDataPoint("23", LocalDataPointKind.STRING, "500"),
-                LocalDataPoint("24", LocalDataPointKind.STRING, "016903e903e8"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertTrue(stale.capabilities.capabilities.isEmpty())
-        assertTrue(malformed.capabilities.capabilities.isEmpty())
-    }
-
-    @Test
-    fun decimalEncodedIntegerConstraintsRemainReadOnly() {
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(
-                category = "dj",
-                mappingJson = """
-                    {
-                      "22":{
-                        "code":"bright_value_v2",
-                        "type":"Integer",
-                        "values":{"min":10.0,"max":1000,"step":1,"scale":0}
-                      }
-                    }
-                """.trimIndent(),
-            ),
-            status = respondedStatus(
-                LocalDataPoint("22", LocalDataPointKind.INTEGER, "500")
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertTrue(profile.capabilities.ofType<ResolvedRange>().isEmpty())
-    }
-
-    @Test
-    fun staleStatusAndSubdevicesNeverExposeLocalControls() {
-        val device = sampleDevice(
-            category = "kg",
-            mappingJson = SWITCH_MAPPING,
-        )
-        val staleStatus = respondedStatus(
-            LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+  @Test
+  fun malformedOrStaleLightDataCannotBecomeWritable() {
+    val device = sampleDevice(category = "dj", mappingJson = LIGHT_MAPPING)
+    val stale =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status =
+          respondedStatus(
+            LocalDataPoint("21", LocalDataPointKind.STRING, "white"),
+            LocalDataPoint("22", LocalDataPointKind.INTEGER, "500"),
+            LocalDataPoint("23", LocalDataPointKind.INTEGER, "500"),
+            LocalDataPoint("24", LocalDataPointKind.STRING, "000003e803e8"),
             polledAtEpochMillis = DISCOVERED_AT - 1,
-        )
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+    val malformed =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status =
+          respondedStatus(
+            LocalDataPoint("21", LocalDataPointKind.STRING, "unsupported"),
+            LocalDataPoint("22", LocalDataPointKind.INTEGER, "1001"),
+            LocalDataPoint("23", LocalDataPointKind.STRING, "500"),
+            LocalDataPoint("24", LocalDataPointKind.STRING, "016903e903e8"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
 
-        assertTrue(
-            LocalDeviceCapabilityRegistry.profile(
-                device = device,
-                status = staleStatus,
-                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            ).capabilities.ofType<ResolvedToggle>().isEmpty()
-        )
-        assertTrue(
-            LocalDeviceCapabilityRegistry.profile(
-                device = device.copy(isSubDevice = true),
-                status = respondedStatus(
-                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-                ),
-                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            ).capabilities.ofType<ResolvedToggle>().isEmpty()
-        )
-    }
+    assertTrue(stale.capabilities.capabilities.isEmpty())
+    assertTrue(malformed.capabilities.capabilities.isEmpty())
+  }
 
-    @Test
-    fun mismatchedAndCustomBooleanMappingsRemainReadOnly() {
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(
-                category = "kg",
-                mappingJson = """
-                    {
-                      "1":{"code":"switch_1","type":"Integer"},
-                      "2":{"code":"custom_toggle","type":"Boolean"}
-                    }
-                """.trimIndent(),
-            ),
-            status = respondedStatus(
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
-                LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "true"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
-    }
-
-    @Test
-    fun protectedDeviceFamiliesNeverPollOrExposeSwitchControls() {
-        val protectedCategories = listOf(
-            "wg2" to DeviceAccessRestriction.GATEWAY,
-            "sp" to DeviceAccessRestriction.CAMERA,
-            "ms" to DeviceAccessRestriction.LOCK,
-            "videolock" to DeviceAccessRestriction.LOCK,
-        )
-
-        protectedCategories.forEach { (category, expectedAccess) ->
-            val device = sampleDevice(category = category, mappingJson = SWITCH_MAPPING)
-            val profile = LocalDeviceCapabilityRegistry.profile(
-                device = device,
-                status = respondedStatus(
-                    LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-                ),
-                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            )
-
-            assertEquals(expectedAccess, profile.restriction)
-            assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
-            assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
-            assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
-        }
-    }
-
-    @Test
-    fun gatewayChildTakesPriorityOverItsUnderlyingProfile() {
-        val device = sampleDevice(category = "dj", mappingJson = SWITCH_MAPPING)
-            .copy(isSubDevice = true, gatewayId = "gateway-id")
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
-        assertEquals(DeviceAccessRestriction.GATEWAY_CHILD, profile.restriction)
-        assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
-        assertTrue(profile.capabilities.capabilities.isEmpty())
-        assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
-    }
-
-    @Test
-    fun standardSensorCategoriesArePollableReadOnlyProfiles() {
-        val categories = listOf(
-            "wsdcg" to BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
-            "mcs" to BuiltinDeviceFamilyIds.CONTACT_SENSOR,
-            "pir" to BuiltinDeviceFamilyIds.MOTION_SENSOR,
-            "hps" to BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
-            "sj" to BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
-            "ywbj" to BuiltinDeviceFamilyIds.SMOKE_SENSOR,
-            "rqbj" to BuiltinDeviceFamilyIds.GAS_SENSOR,
-        )
-
-        categories.forEach { (category, expectedSensorKind) ->
-            val device = sampleDevice(
-                category = category,
-                mappingJson = "{\"4\":{\"code\":\"battery_percentage\",\"type\":\"Integer\"}}",
-            )
-            val profile = LocalDeviceCapabilityRegistry.profile(
-                device = device,
-                status = respondedStatus(
-                    LocalDataPoint("4", LocalDataPointKind.INTEGER, "82")
-                ),
-                lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-            )
-
-            assertEquals(expectedSensorKind, profile.familyId)
-            assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
-            assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
-            assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
-        }
-    }
-
-    @Test
-    fun coverUsesFreshMappedActionsAndPositionWithoutTypeSpecificTransport() {
-        val device = sampleDevice(
-            category = "cl",
-            mappingJson = """
-                {
-                  "7":{"code":"control_2","type":"Enum","values":{"range":["up","stop","down"]}},
-                  "8":{"code":"percent_control_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
-                  "9":{"code":"percent_state_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
+  @Test
+  fun decimalEncodedIntegerConstraintsRemainReadOnly() {
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device =
+          sampleDevice(
+            category = "dj",
+            mappingJson =
+              """
+              {
+                "22":{
+                  "code":"bright_value_v2",
+                  "type":"Integer",
+                  "values":{"min":10.0,"max":1000,"step":1,"scale":0}
                 }
-            """.trimIndent(),
+              }
+              """
+                .trimIndent(),
+          ),
+        status = respondedStatus(LocalDataPoint("22", LocalDataPointKind.INTEGER, "500")),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertTrue(profile.capabilities.ofType<ResolvedRange>().isEmpty())
+  }
+
+  @Test
+  fun staleStatusAndSubdevicesNeverExposeLocalControls() {
+    val device =
+      sampleDevice(
+        category = "kg",
+        mappingJson = SWITCH_MAPPING,
+      )
+    val staleStatus =
+      respondedStatus(
+        LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+        polledAtEpochMillis = DISCOVERED_AT - 1,
+      )
+
+    assertTrue(
+      LocalDeviceCapabilityRegistry.profile(
+          device = device,
+          status = staleStatus,
+          lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("7", LocalDataPointKind.STRING, "stop"),
-                LocalDataPoint("8", LocalDataPointKind.INTEGER, "45"),
-                LocalDataPoint("9", LocalDataPointKind.INTEGER, "48"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        .capabilities
+        .ofType<ResolvedToggle>()
+        .isEmpty()
+    )
+    assertTrue(
+      LocalDeviceCapabilityRegistry.profile(
+          device = device.copy(isSubDevice = true),
+          status = respondedStatus(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
+          lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+        .capabilities
+        .ofType<ResolvedToggle>()
+        .isEmpty()
+    )
+  }
+
+  @Test
+  fun mismatchedAndCustomBooleanMappingsRemainReadOnly() {
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device =
+          sampleDevice(
+            category = "kg",
+            mappingJson =
+              """
+              {
+                "1":{"code":"switch_1","type":"Integer"},
+                "2":{"code":"custom_toggle","type":"Boolean"}
+              }
+              """
+                .trimIndent(),
+          ),
+        status =
+          respondedStatus(
+            LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+            LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "true"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+  }
+
+  @Test
+  fun protectedDeviceFamiliesNeverPollOrExposeSwitchControls() {
+    val protectedCategories =
+      listOf(
+        "wg2" to DeviceAccessRestriction.GATEWAY,
+        "sp" to DeviceAccessRestriction.CAMERA,
+        "ms" to DeviceAccessRestriction.LOCK,
+        "videolock" to DeviceAccessRestriction.LOCK,
+      )
+
+    protectedCategories.forEach { (category, expectedAccess) ->
+      val device = sampleDevice(category = category, mappingJson = SWITCH_MAPPING)
+      val profile =
+        LocalDeviceCapabilityRegistry.profile(
+          device = device,
+          status = respondedStatus(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
+          lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(BuiltinDeviceFamilyIds.COVER, profile.familyId)
-        assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
-        val actions = profile.capabilities.ofType<ResolvedActionGroup>().single()
-        assertEquals("7", actions.dataPointId)
-        assertEquals(listOf("up", "stop", "down"), actions.actions.map { it.wireValue })
-        assertTrue(actions.writable)
-        assertEquals("8", profile.capabilities.ofType<ResolvedRange>().single().dataPointId)
-        assertEquals("48%", profile.capabilities.ofType<ResolvedMeasurement>().single().displayValue)
-        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+      assertEquals(expectedAccess, profile.restriction)
+      assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
+      assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+      assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
     }
+  }
 
-    @Test
-    fun climateCategoryCannotGainControlsFromAmbiguousSwitchAndBrightnessCodes() {
-        val device = sampleDevice(
-            category = "wsdcg",
-            mappingJson = """
-                {
-                  "1":{"code":"switch","type":"Boolean"},
-                  "2":{"code":"bright_value","type":"Integer"},
-                  "3":{"code":"temp_current","type":"Integer"}
-                }
-            """.trimIndent(),
+  @Test
+  fun gatewayChildTakesPriorityOverItsUnderlyingProfile() {
+    val device =
+      sampleDevice(category = "dj", mappingJson = SWITCH_MAPPING)
+        .copy(isSubDevice = true, gatewayId = "gateway-id")
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status = respondedStatus(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
+    assertEquals(DeviceAccessRestriction.GATEWAY_CHILD, profile.restriction)
+    assertEquals(CapabilityAccess.DENIED, profile.capabilityAccess)
+    assertTrue(profile.capabilities.capabilities.isEmpty())
+    assertFalse(LocalDeviceCapabilityRegistry.canPollStatus(device))
+  }
+
+  @Test
+  fun standardSensorCategoriesArePollableReadOnlyProfiles() {
+    val categories =
+      listOf(
+        "wsdcg" to BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
+        "mcs" to BuiltinDeviceFamilyIds.CONTACT_SENSOR,
+        "pir" to BuiltinDeviceFamilyIds.MOTION_SENSOR,
+        "hps" to BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
+        "sj" to BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
+        "ywbj" to BuiltinDeviceFamilyIds.SMOKE_SENSOR,
+        "rqbj" to BuiltinDeviceFamilyIds.GAS_SENSOR,
+      )
+
+    categories.forEach { (category, expectedSensorKind) ->
+      val device =
+        sampleDevice(
+          category = category,
+          mappingJson = "{\"4\":{\"code\":\"battery_percentage\",\"type\":\"Integer\"}}",
         )
-        val status = respondedStatus(
+      val profile =
+        LocalDeviceCapabilityRegistry.profile(
+          device = device,
+          status = respondedStatus(LocalDataPoint("4", LocalDataPointKind.INTEGER, "82")),
+          lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+        )
+
+      assertEquals(expectedSensorKind, profile.familyId)
+      assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+      assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+      assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
+    }
+  }
+
+  @Test
+  fun coverUsesFreshMappedActionsAndPositionWithoutTypeSpecificTransport() {
+    val device =
+      sampleDevice(
+        category = "cl",
+        mappingJson =
+          """
+          {
+            "7":{"code":"control_2","type":"Enum","values":{"range":["up","stop","down"]}},
+            "8":{"code":"percent_control_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}},
+            "9":{"code":"percent_state_2","type":"Integer","values":{"min":0,"max":100,"step":1,"scale":0}}
+          }
+          """
+            .trimIndent(),
+      )
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status =
+          respondedStatus(
+            LocalDataPoint("7", LocalDataPointKind.STRING, "stop"),
+            LocalDataPoint("8", LocalDataPointKind.INTEGER, "45"),
+            LocalDataPoint("9", LocalDataPointKind.INTEGER, "48"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertEquals(BuiltinDeviceFamilyIds.COVER, profile.familyId)
+    assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
+    val actions = profile.capabilities.ofType<ResolvedActionGroup>().single()
+    assertEquals("7", actions.dataPointId)
+    assertEquals(listOf("up", "stop", "down"), actions.actions.map { it.wireValue })
+    assertTrue(actions.writable)
+    assertEquals("8", profile.capabilities.ofType<ResolvedRange>().single().dataPointId)
+    assertEquals("48%", profile.capabilities.ofType<ResolvedMeasurement>().single().displayValue)
+    assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+  }
+
+  @Test
+  fun climateCategoryCannotGainControlsFromAmbiguousSwitchAndBrightnessCodes() {
+    val device =
+      sampleDevice(
+        category = "wsdcg",
+        mappingJson =
+          """
+          {
+            "1":{"code":"switch","type":"Boolean"},
+            "2":{"code":"bright_value","type":"Integer"},
+            "3":{"code":"temp_current","type":"Integer"}
+          }
+          """
+            .trimIndent(),
+      )
+    val status =
+      respondedStatus(
+        LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+        LocalDataPoint("2", LocalDataPointKind.INTEGER, "500"),
+        LocalDataPoint("3", LocalDataPointKind.INTEGER, "215"),
+      )
+
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status = status,
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertEquals(BuiltinDeviceFamilyIds.CLIMATE_SENSOR, profile.familyId)
+    assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+    assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
+  }
+
+  @Test
+  fun unknownCategoryRemainsUnsupportedDespiteKnownMappingCodes() {
+    val mapping =
+      """
+      {
+        "1":{"code":"switch_1","type":"Boolean"},
+        "7":{"code":"watersensor_state","type":"Enum","values":{"range":["alarm","normal"]}}
+      }
+      """
+        .trimIndent()
+    val unknownProfile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = sampleDevice(category = "custom", mappingJson = mapping),
+        status = null,
+        lastDiscoveryAtEpochMillis = null,
+      )
+    val switchProfile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = sampleDevice(category = "cz", mappingJson = mapping),
+        status = respondedStatus(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
+
+    assertEquals(null, unknownProfile.familyId)
+    assertEquals(CapabilityAccess.READ_ONLY, unknownProfile.capabilityAccess)
+    assertTrue(unknownProfile.capabilities.capabilities.isEmpty())
+    assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, switchProfile.familyId)
+    assertEquals(
+      listOf("1"),
+      switchProfile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId },
+    )
+  }
+
+  @Test
+  fun mixedKnownMappingsCannotClassifyAnUnknownCategory() {
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device =
+          sampleDevice(
+            category = "custom",
+            mappingJson =
+              """
+              {
+                "1":{"code":"switch_1","type":"Boolean"},
+                "2":{"code":"bright_value_v2","type":"Integer"},
+                "3":{"code":"percent_state","type":"Integer"}
+              }
+              """
+                .trimIndent(),
+          ),
+        status =
+          respondedStatus(
             LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
             LocalDataPoint("2", LocalDataPointKind.INTEGER, "500"),
-            LocalDataPoint("3", LocalDataPointKind.INTEGER, "215"),
-        )
+            LocalDataPoint("3", LocalDataPointKind.INTEGER, "50"),
+          ),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
 
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = status,
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
+    assertEquals(null, profile.familyId)
+    assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+    assertTrue(profile.capabilities.capabilities.isEmpty())
+  }
 
-        assertEquals(BuiltinDeviceFamilyIds.CLIMATE_SENSOR, profile.familyId)
-        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
-        assertTrue(profile.capabilities.ofType<ResolvedToggle>().isEmpty())
-    }
+  @Test
+  fun genericDirectDeviceIsPollableButStatusOnly() {
+    val device =
+      sampleDevice(
+        category = "custom_sensor",
+        mappingJson = "{\"1\":{\"code\":\"presence\",\"type\":\"Boolean\"}}",
+      )
+    val profile =
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status = respondedStatus(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
+        lastDiscoveryAtEpochMillis = DISCOVERED_AT,
+      )
 
-    @Test
-    fun unknownCategoryRemainsUnsupportedDespiteKnownMappingCodes() {
-        val mapping = """
-            {
-              "1":{"code":"switch_1","type":"Boolean"},
-              "7":{"code":"watersensor_state","type":"Enum","values":{"range":["alarm","normal"]}}
-            }
-        """.trimIndent()
-        val unknownProfile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(category = "custom", mappingJson = mapping),
-            status = null,
-            lastDiscoveryAtEpochMillis = null,
-        )
-        val switchProfile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(category = "cz", mappingJson = mapping),
-            status = respondedStatus(
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
+    assertEquals(null, profile.familyId)
+    assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
+    assertTrue(profile.capabilities.capabilities.isEmpty())
+    assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
+  }
 
-        assertEquals(null, unknownProfile.familyId)
-        assertEquals(CapabilityAccess.READ_ONLY, unknownProfile.capabilityAccess)
-        assertTrue(unknownProfile.capabilities.capabilities.isEmpty())
-        assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, switchProfile.familyId)
-        assertEquals(
-            listOf("1"),
-            switchProfile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId },
-        )
-    }
-
-    @Test
-    fun mixedKnownMappingsCannotClassifyAnUnknownCategory() {
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = sampleDevice(
-                category = "custom",
-                mappingJson = """
-                    {
-                      "1":{"code":"switch_1","type":"Boolean"},
-                      "2":{"code":"bright_value_v2","type":"Integer"},
-                      "3":{"code":"percent_state","type":"Integer"}
-                    }
-                """.trimIndent(),
-            ),
-            status = respondedStatus(
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
-                LocalDataPoint("2", LocalDataPointKind.INTEGER, "500"),
-                LocalDataPoint("3", LocalDataPointKind.INTEGER, "50"),
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertEquals(null, profile.familyId)
-        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
-        assertTrue(profile.capabilities.capabilities.isEmpty())
-    }
-
-    @Test
-    fun genericDirectDeviceIsPollableButStatusOnly() {
-        val device = sampleDevice(
-            category = "custom_sensor",
-            mappingJson = "{\"1\":{\"code\":\"presence\",\"type\":\"Boolean\"}}",
-        )
-        val profile = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = respondedStatus(
-                LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")
-            ),
-            lastDiscoveryAtEpochMillis = DISCOVERED_AT,
-        )
-
-        assertEquals(null, profile.familyId)
-        assertEquals(CapabilityAccess.READ_ONLY, profile.capabilityAccess)
-        assertTrue(profile.capabilities.capabilities.isEmpty())
-        assertTrue(LocalDeviceCapabilityRegistry.canPollStatus(device))
-    }
-
-    private fun sampleDevice(
-        category: String,
-        mappingJson: String,
-    ) = CloudImportedDevice(
-        id = "profile-fixture",
-        name = "Profile fixture",
-        localKey = SensitiveString.of("fixture-key"),
-        category = category,
-        productId = "product-id",
-        productName = "Fixture",
-        model = "Model",
-        mac = "",
-        uuid = "",
-        isSubDevice = false,
-        gatewayId = "",
-        nodeId = "",
-        protocolVersion = "3.5",
-        lastIp = "",
-        mappingJson = mappingJson,
+  private fun sampleDevice(
+    category: String,
+    mappingJson: String,
+  ) =
+    CloudImportedDevice(
+      id = "profile-fixture",
+      name = "Profile fixture",
+      localKey = SensitiveString.of("fixture-key"),
+      category = category,
+      productId = "product-id",
+      productName = "Fixture",
+      model = "Model",
+      mac = "",
+      uuid = "",
+      isSubDevice = false,
+      gatewayId = "",
+      nodeId = "",
+      protocolVersion = "3.5",
+      lastIp = "",
+      mappingJson = mappingJson,
     )
 
-    private fun respondedStatus(
-        vararg dataPoints: LocalDataPoint,
-        polledAtEpochMillis: Long = POLLED_AT,
-    ) = LocalStatusRecord(
-        id = "profile-fixture",
-        state = LocalPollDeviceState.RESPONDED,
-        errorCode = "",
-        durationMillis = 12L,
-        dataPoints = dataPoints.toList(),
-        polledAtEpochMillis = polledAtEpochMillis,
+  private fun respondedStatus(
+    vararg dataPoints: LocalDataPoint,
+    polledAtEpochMillis: Long = POLLED_AT,
+  ) =
+    LocalStatusRecord(
+      id = "profile-fixture",
+      state = LocalPollDeviceState.RESPONDED,
+      errorCode = "",
+      durationMillis = 12L,
+      dataPoints = dataPoints.toList(),
+      polledAtEpochMillis = polledAtEpochMillis,
     )
 
-    private val LocalDeviceProfile.capabilities
-        get() = resolvedDevice.capabilities
+  private val LocalDeviceProfile.capabilities
+    get() = resolvedDevice.capabilities
 
-    private companion object {
-        const val DISCOVERED_AT = 9L
-        const val POLLED_AT = 10L
-        const val SWITCH_MAPPING = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}"
-        val LIGHT_MAPPING = """
-            {
-              "20":{"code":"switch_led","type":"Boolean"},
-              "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
-              "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
-              "23":{"code":"temp_value_v2","type":"Integer","values":"{\"min\":0,\"max\":1000,\"step\":1,\"scale\":0}"},
-              "24":{"code":"colour_data_v2","type":"Json"}
-            }
-        """.trimIndent()
-    }
+  private companion object {
+    const val DISCOVERED_AT = 9L
+    const val POLLED_AT = 10L
+    const val SWITCH_MAPPING = "{\"1\":{\"code\":\"switch_1\",\"type\":\"Boolean\"}}"
+    val LIGHT_MAPPING =
+      """
+      {
+        "20":{"code":"switch_led","type":"Boolean"},
+        "21":{"code":"work_mode","type":"Enum","values":{"range":["white","colour","scene","music"]}},
+        "22":{"code":"bright_value_v2","type":"Integer","values":{"min":10,"max":1000,"step":1,"scale":0}},
+        "23":{"code":"temp_value_v2","type":"Integer","values":"{\"min\":0,\"max\":1000,\"step\":1,\"scale\":0}"},
+        "24":{"code":"colour_data_v2","type":"Json"}
+      }
+      """
+        .trimIndent()
+  }
 }

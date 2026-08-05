@@ -6,8 +6,8 @@ package com.prfd.tinytuya.device.core.profile
  * A layout ID selects arrangement only. It grants no capability, access, or write authority.
  */
 object StandardDeviceLayoutIds {
-    val GENERIC_CONTROLS = DeviceLayoutId("generic.controls")
-    val LIGHT = DeviceLayoutId("light")
-    val SENSOR_SUMMARY = DeviceLayoutId("sensor.summary")
-    val COVER = DeviceLayoutId("cover")
+  val GENERIC_CONTROLS = DeviceLayoutId("generic.controls")
+  val LIGHT = DeviceLayoutId("light")
+  val SENSOR_SUMMARY = DeviceLayoutId("sensor.summary")
+  val COVER = DeviceLayoutId("cover")
 }

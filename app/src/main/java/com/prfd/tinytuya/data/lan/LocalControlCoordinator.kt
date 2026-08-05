@@ -13,187 +13,211 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 interface LocalControlCoordinator {
-    suspend fun execute(
-        expectedNetwork: LanNetworkContext,
-        expectedDiscoveryAtEpochMillis: Long,
-        intent: DeviceIntent,
-    ): DeviceCatalog
+  suspend fun execute(
+    expectedNetwork: LanNetworkContext,
+    expectedDiscoveryAtEpochMillis: Long,
+    intent: DeviceIntent,
+  ): DeviceCatalog
 }
 
 class DefaultLocalControlCoordinator(
-    private val gateway: TuyaPythonGateway,
-    private val catalogStore: DeviceCatalogStore,
-    private val networkResolver: LanNetworkResolver,
+  private val gateway: TuyaPythonGateway,
+  private val catalogStore: DeviceCatalogStore,
+  private val networkResolver: LanNetworkResolver,
 ) : LocalControlCoordinator {
-    private val deviceLocks = ConcurrentHashMap<String, Mutex>()
+  private val deviceLocks = ConcurrentHashMap<String, Mutex>()
 
-    override suspend fun execute(
-        expectedNetwork: LanNetworkContext,
-        expectedDiscoveryAtEpochMillis: Long,
-        intent: DeviceIntent,
-    ): DeviceCatalog = deviceLocks.getOrPut(intent.deviceId) { Mutex() }.withLock {
-        val currentNetwork = try {
+  override suspend fun execute(
+    expectedNetwork: LanNetworkContext,
+    expectedDiscoveryAtEpochMillis: Long,
+    intent: DeviceIntent,
+  ): DeviceCatalog =
+    deviceLocks
+      .getOrPut(intent.deviceId) { Mutex() }
+      .withLock {
+        val currentNetwork =
+          try {
             networkResolver.resolve()
-        } catch (error: CancellationException) {
+          } catch (error: CancellationException) {
             throw error
-        } catch (error: LanDiscoveryException) {
+          } catch (error: LanDiscoveryException) {
             throw LocalControlException(
-                code = error.code,
-                message = error.message ?: "The active Wi-Fi network is unavailable.",
+              code = error.code,
+              message = error.message ?: "The active Wi-Fi network is unavailable.",
             )
-        }
+          }
         if (currentNetwork != expectedNetwork) {
-            throw controlError(
-                code = "LOCAL_CONTROL_NETWORK_CHANGED",
-                message = "Wi-Fi changed after the last refresh. Find devices again before controlling them.",
-            )
+          throw controlError(
+            code = "LOCAL_CONTROL_NETWORK_CHANGED",
+            message =
+              "Wi-Fi changed after the last refresh. Find devices again before controlling them.",
+          )
         }
 
-        // Load inside the per-device lock: a UI snapshot or queued intent is never write authority.
+        // Load inside the per-device lock: a UI snapshot or queued intent is never
+        // write authority.
         val catalog = catalogStore.load() ?: throw refreshRequired()
         if (catalog.lastDiscoveryNetwork != expectedNetwork) throw refreshRequired()
         val lastDiscoveryAt = catalog.lastDiscoveryAtEpochMillis ?: throw refreshRequired()
         if (lastDiscoveryAt != expectedDiscoveryAtEpochMillis) throw refreshRequired()
-        val device = catalog.devices.singleOrNull { it.id == intent.deviceId }
-            ?: throw unsupportedControl()
-        val lanRecord = catalog.lanDevices.singleOrNull {
+        val device =
+          catalog.devices.singleOrNull { it.id == intent.deviceId } ?: throw unsupportedControl()
+        val lanRecord =
+          catalog.lanDevices.singleOrNull {
             it.id == intent.deviceId && it.lastSeenAtEpochMillis == lastDiscoveryAt
-        } ?: throw refreshRequired()
-        val localStatus = catalog.localStatus.singleOrNull { it.id == intent.deviceId }
-            ?: throw refreshRequired()
+          } ?: throw refreshRequired()
+        val localStatus =
+          catalog.localStatus.singleOrNull { it.id == intent.deviceId } ?: throw refreshRequired()
 
-        val capabilities = LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = localStatus,
-            lastDiscoveryAtEpochMillis = lastDiscoveryAt,
-        ).resolvedDevice.capabilities
-        val command = CapabilityCommandAuthorizer.authorize(capabilities, intent)
-            ?: throw unsupportedControl()
-        val changes = command.writes.map { write ->
-            LocalControlChange(
-                id = write.dataPointId,
-                kind = when (write.kind) {
-                    PrimitiveWriteKind.BOOLEAN -> LocalDataPointKind.BOOLEAN
-                    PrimitiveWriteKind.INTEGER -> LocalDataPointKind.INTEGER
-                    PrimitiveWriteKind.STRING -> LocalDataPointKind.STRING
-                },
-                value = write.value,
+        val capabilities =
+          LocalDeviceCapabilityRegistry.profile(
+              device = device,
+              status = localStatus,
+              lastDiscoveryAtEpochMillis = lastDiscoveryAt,
             )
-        }
+            .resolvedDevice
+            .capabilities
+        val command =
+          CapabilityCommandAuthorizer.authorize(capabilities, intent) ?: throw unsupportedControl()
+        val changes =
+          command.writes.map { write ->
+            LocalControlChange(
+              id = write.dataPointId,
+              kind =
+                when (write.kind) {
+                  PrimitiveWriteKind.BOOLEAN -> LocalDataPointKind.BOOLEAN
+                  PrimitiveWriteKind.INTEGER -> LocalDataPointKind.INTEGER
+                  PrimitiveWriteKind.STRING -> LocalDataPointKind.STRING
+                },
+              value = write.value,
+            )
+          }
         if (changes.isEmpty()) throw unsupportedControl()
         val observedById = localStatus.dataPoints.associateBy { dataPoint -> dataPoint.id }
-        if (changes.all { change ->
-                observedById[change.id]?.let { observed ->
-                    observed.kind == change.kind && observed.value == change.value
-                } == true
-            }
+        if (
+          changes.all { change ->
+            observedById[change.id]?.let { observed ->
+              observed.kind == change.kind && observed.value == change.value
+            } == true
+          }
         ) {
-            return@withLock catalog
+          return@withLock catalog
         }
 
         val protocolVersion = lanRecord.protocolVersion.ifBlank { device.protocolVersion }
         if (
-            device.isSubDevice ||
+          device.isSubDevice ||
             device.localKey.isBlank ||
             protocolVersion !in SUPPORTED_LOCAL_PROTOCOLS
         ) {
-            throw unsupportedControl()
+          throw unsupportedControl()
         }
 
-        val result = try {
+        val result =
+          try {
             gateway.setLocalValues(
-                LocalControlRequest(
-                    network = currentNetwork,
-                    device = LocalControlDevice(
-                        id = device.id,
-                        ip = lanRecord.ip,
-                        localKey = device.localKey,
-                        protocolVersion = protocolVersion,
-                    ),
-                    changes = changes,
-                )
+              LocalControlRequest(
+                network = currentNetwork,
+                device =
+                  LocalControlDevice(
+                    id = device.id,
+                    ip = lanRecord.ip,
+                    localKey = device.localKey,
+                    protocolVersion = protocolVersion,
+                  ),
+                changes = changes,
+              )
             )
-        } catch (error: CancellationException) {
+          } catch (error: CancellationException) {
             throw error
-        } catch (error: PythonBridgeException) {
+          } catch (error: PythonBridgeException) {
             throw LocalControlException(
-                code = error.code,
-                message = error.message ?: "The local command could not be sent safely.",
+              code = error.code,
+              message = error.message ?: "The local command could not be sent safely.",
             )
-        }
+          }
 
-        val statusState = when {
+        val statusState =
+          when {
             result.state == LocalControlState.CONFIRMED -> LocalPollDeviceState.RESPONDED
             result.dataPoints.isNotEmpty() -> LocalPollDeviceState.RESPONDED
             result.state == LocalControlState.OFFLINE -> LocalPollDeviceState.OFFLINE
             else -> LocalPollDeviceState.ERROR
-        }
-        val statusErrorCode = if (statusState == LocalPollDeviceState.RESPONDED) {
+          }
+        val statusErrorCode =
+          if (statusState == LocalPollDeviceState.RESPONDED) {
             ""
-        } else {
+          } else {
             result.errorCode.ifBlank { "LOCAL_CONTROL_FAILED" }
-        }
-        val updatedCatalog = catalogStore.mergeLocalPoll(
+          }
+        val updatedCatalog =
+          catalogStore.mergeLocalPoll(
             LocalPollResult(
-                contractVersion = result.contractVersion,
-                deviceCount = 1,
-                respondedDeviceCount = if (statusState == LocalPollDeviceState.RESPONDED) 1 else 0,
-                offlineDeviceCount = if (statusState == LocalPollDeviceState.OFFLINE) 1 else 0,
-                errorDeviceCount = if (statusState == LocalPollDeviceState.ERROR) 1 else 0,
-                durationMillis = result.durationMillis,
-                warnings = emptyList(),
-                devices = listOf(
-                    LocalPolledDevice(
-                        id = result.id,
-                        state = statusState,
-                        errorCode = statusErrorCode,
-                        durationMillis = result.durationMillis,
-                        dataPoints = if (statusState == LocalPollDeviceState.RESPONDED) {
-                            result.dataPoints
-                        } else {
-                            emptyList()
-                        },
-                    )
+              contractVersion = result.contractVersion,
+              deviceCount = 1,
+              respondedDeviceCount = if (statusState == LocalPollDeviceState.RESPONDED) 1 else 0,
+              offlineDeviceCount = if (statusState == LocalPollDeviceState.OFFLINE) 1 else 0,
+              errorDeviceCount = if (statusState == LocalPollDeviceState.ERROR) 1 else 0,
+              durationMillis = result.durationMillis,
+              warnings = emptyList(),
+              devices =
+                listOf(
+                  LocalPolledDevice(
+                    id = result.id,
+                    state = statusState,
+                    errorCode = statusErrorCode,
+                    durationMillis = result.durationMillis,
+                    dataPoints =
+                      if (statusState == LocalPollDeviceState.RESPONDED) {
+                        result.dataPoints
+                      } else {
+                        emptyList()
+                      },
+                  )
                 ),
             )
-        )
+          )
 
         if (result.state != LocalControlState.CONFIRMED) {
-            throw LocalControlException(
-                code = result.errorCode.ifBlank { "LOCAL_CONTROL_FAILED" },
-                message = localControlMessage(result.errorCode),
-                updatedCatalog = updatedCatalog,
-            )
+          throw LocalControlException(
+            code = result.errorCode.ifBlank { "LOCAL_CONTROL_FAILED" },
+            message = localControlMessage(result.errorCode),
+            updatedCatalog = updatedCatalog,
+          )
         }
         updatedCatalog
-    }
+      }
 
-    private fun refreshRequired() = controlError(
-        code = "LOCAL_CONTROL_REFRESH_REQUIRED",
-        message = "Refresh status before controlling this device.",
+  private fun refreshRequired() =
+    controlError(
+      code = "LOCAL_CONTROL_REFRESH_REQUIRED",
+      message = "Refresh status before controlling this device.",
     )
 
-    private fun unsupportedControl() = controlError(
-        code = "LOCAL_CONTROL_UNSUPPORTED",
-        message = "This control is not supported by the verified local device profile.",
+  private fun unsupportedControl() =
+    controlError(
+      code = "LOCAL_CONTROL_UNSUPPORTED",
+      message = "This control is not supported by the verified local device profile.",
     )
 
-    private fun controlError(code: String, message: String) =
-        LocalControlException(code = code, message = message)
+  private fun controlError(code: String, message: String) =
+    LocalControlException(code = code, message = message)
 
-    private fun localControlMessage(code: String): String = when (code) {
-        "LOCAL_DEVICE_OFFLINE" -> "The device went offline before the command was confirmed."
-        "LOCAL_DEVICE_TIMEOUT", "LOCAL_CONTROL_UNCONFIRMED" ->
-            "The device did not confirm its new state. Refresh before trying again."
-        "LOCAL_KEY_OR_VERSION_INVALID" ->
-            "The device rejected the saved local key or protocol version."
-        "LOCAL_CONTROL_NOT_APPLIED" ->
-            "The device answered, but its state did not change to the requested value."
-        "LOCAL_PROTOCOL_ERROR" -> "The device response could not be decoded safely."
-        else -> "The local command could not be confirmed safely."
+  private fun localControlMessage(code: String): String =
+    when (code) {
+      "LOCAL_DEVICE_OFFLINE" -> "The device went offline before the command was confirmed."
+      "LOCAL_DEVICE_TIMEOUT",
+      "LOCAL_CONTROL_UNCONFIRMED" ->
+        "The device did not confirm its new state. Refresh before trying again."
+      "LOCAL_KEY_OR_VERSION_INVALID" ->
+        "The device rejected the saved local key or protocol version."
+      "LOCAL_CONTROL_NOT_APPLIED" ->
+        "The device answered, but its state did not change to the requested value."
+      "LOCAL_PROTOCOL_ERROR" -> "The device response could not be decoded safely."
+      else -> "The local command could not be confirmed safely."
     }
 
-    private companion object {
-        val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")
-    }
+  private companion object {
+    val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")
+  }
 }

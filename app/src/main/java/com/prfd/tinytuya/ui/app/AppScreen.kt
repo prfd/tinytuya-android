@@ -44,218 +44,204 @@ import com.prfd.tinytuya.ui.settings.SettingsScreen
 
 @Composable
 fun AppRoute(
-    appViewModel: AppViewModel,
-    onboardingViewModel: OnboardingViewModel,
+  appViewModel: AppViewModel,
+  onboardingViewModel: OnboardingViewModel,
 ) {
-    val state by appViewModel.state.collectAsState()
-    val settingsState by appViewModel.settingsState.collectAsState()
-    val settingsInventory = state as? AppUiState.Inventory
-    var showSettings by rememberSaveable { mutableStateOf(false) }
+  val state by appViewModel.state.collectAsState()
+  val settingsState by appViewModel.settingsState.collectAsState()
+  val settingsInventory = state as? AppUiState.Inventory
+  var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(state is AppUiState.Inventory) {
-        if (state !is AppUiState.Inventory) showSettings = false
-    }
+  LaunchedEffect(state is AppUiState.Inventory) {
+    if (state !is AppUiState.Inventory) showSettings = false
+  }
 
-    LaunchedEffect(showSettings) {
-        if (showSettings) appViewModel.checkPythonHealth()
-    }
+  LaunchedEffect(showSettings) { if (showSettings) appViewModel.checkPythonHealth() }
 
-    BackHandler(enabled = showSettings) {
+  BackHandler(enabled = showSettings) { showSettings = false }
+
+  if (showSettings && settingsInventory != null) {
+    SettingsScreen(
+      state = settingsState,
+      onRefreshWhenAppOpensChanged = appViewModel::setRefreshWhenAppOpens,
+      onSyncFromCloud = {
         showSettings = false
-    }
+        onboardingViewModel.prepareForCloudSync(settingsInventory.catalog.region)
+        appViewModel.showOnboarding()
+      },
+      onUpdateCredentials = {
+        showSettings = false
+        onboardingViewModel.prepareForCredentialUpdate(settingsInventory.catalog.region)
+        appViewModel.showOnboarding()
+      },
+      onForgetCredentials = appViewModel::forgetCloudCredentials,
+      onDismissError = appViewModel::dismissSettingsError,
+      onBack = { showSettings = false },
+    )
+    return
+  }
 
-    if (showSettings && settingsInventory != null) {
-        SettingsScreen(
-            state = settingsState,
-            onRefreshWhenAppOpensChanged = appViewModel::setRefreshWhenAppOpens,
-            onSyncFromCloud = {
-                showSettings = false
-                onboardingViewModel.prepareForCloudSync(settingsInventory.catalog.region)
-                appViewModel.showOnboarding()
-            },
-            onUpdateCredentials = {
-                showSettings = false
-                onboardingViewModel.prepareForCredentialUpdate(settingsInventory.catalog.region)
-                appViewModel.showOnboarding()
-            },
-            onForgetCredentials = appViewModel::forgetCloudCredentials,
-            onDismissError = appViewModel::dismissSettingsError,
-            onBack = { showSettings = false },
+  AnimatedContent(
+    targetState = state,
+    contentKey = { destination -> destination::class },
+    transitionSpec = { fadeIn() togetherWith fadeOut() },
+    label = "app destination",
+  ) { destination ->
+    when (destination) {
+      AppUiState.Loading -> AppLoadingScreen()
+      AppUiState.Onboarding ->
+        OnboardingRoute(
+          viewModel = onboardingViewModel,
+          onOpenInventory = {
+            onboardingViewModel.clearSession()
+            appViewModel.refreshCatalog()
+          },
         )
-        return
+      is AppUiState.Inventory ->
+        InventoryScreen(
+          catalog = destination.catalog,
+          discovery = destination.discovery,
+          control = destination.control,
+          isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
+          onRefreshKnownDevices = appViewModel::refreshKnownDevices,
+          onDiscoverLan = appViewModel::discoverLan,
+          onIntent = appViewModel::submitControl,
+          onOpenSettings = { showSettings = true },
+          onImportFromCloud = {
+            onboardingViewModel.prepareForCloudSync(destination.catalog.region)
+            appViewModel.showOnboarding()
+          },
+          onDeleteAllLocalData = {
+            onboardingViewModel.clearSession()
+            appViewModel.deleteAllLocalData()
+          },
+        )
+      is AppUiState.Recovery ->
+        CatalogRecoveryScreen(
+          error = destination,
+          onRetry = appViewModel::refreshCatalog,
+          onDeleteAllLocalData = {
+            onboardingViewModel.clearSession()
+            appViewModel.deleteAllLocalData()
+          },
+        )
     }
-
-    AnimatedContent(
-        targetState = state,
-        contentKey = { destination -> destination::class },
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
-        label = "app destination",
-    ) { destination ->
-        when (destination) {
-            AppUiState.Loading -> AppLoadingScreen()
-            AppUiState.Onboarding -> OnboardingRoute(
-                viewModel = onboardingViewModel,
-                onOpenInventory = {
-                    onboardingViewModel.clearSession()
-                    appViewModel.refreshCatalog()
-                },
-            )
-            is AppUiState.Inventory -> InventoryScreen(
-                catalog = destination.catalog,
-                discovery = destination.discovery,
-                control = destination.control,
-                isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
-                onRefreshKnownDevices = appViewModel::refreshKnownDevices,
-                onDiscoverLan = appViewModel::discoverLan,
-                onIntent = appViewModel::submitControl,
-                onOpenSettings = { showSettings = true },
-                onImportFromCloud = {
-                    onboardingViewModel.prepareForCloudSync(destination.catalog.region)
-                    appViewModel.showOnboarding()
-                },
-                onDeleteAllLocalData = {
-                    onboardingViewModel.clearSession()
-                    appViewModel.deleteAllLocalData()
-                },
-            )
-            is AppUiState.Recovery -> CatalogRecoveryScreen(
-                error = destination,
-                onRetry = appViewModel::refreshCatalog,
-                onDeleteAllLocalData = {
-                    onboardingViewModel.clearSession()
-                    appViewModel.deleteAllLocalData()
-                },
-            )
-        }
-    }
+  }
 }
 
 @Composable
 private fun AppLoadingScreen() {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
+  Surface(
+    modifier = Modifier.fillMaxSize(),
+    color = MaterialTheme.colorScheme.background,
+  ) {
+    Column(
+      modifier = Modifier.fillMaxSize().padding(32.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.Center,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
-                BrandMark(Modifier.size(64.dp))
-                CircularProgressIndicator(Modifier.size(88.dp), strokeWidth = 3.dp)
-            }
-            Text(
-                text = "Opening your local home…",
-                style = MaterialTheme.typography.titleLarge,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 22.dp),
-            )
-        }
+      Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
+        BrandMark(Modifier.size(64.dp))
+        CircularProgressIndicator(Modifier.size(88.dp), strokeWidth = 3.dp)
+      }
+      Text(
+        text = "Opening your local home…",
+        style = MaterialTheme.typography.titleLarge,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 22.dp),
+      )
     }
+  }
 }
 
 @Composable
 private fun CatalogRecoveryScreen(
-    error: AppUiState.Recovery,
-    onRetry: () -> Unit,
-    onDeleteAllLocalData: () -> Unit,
+  error: AppUiState.Recovery,
+  onRetry: () -> Unit,
+  onDeleteAllLocalData: () -> Unit,
 ) {
-    var confirmDelete by remember { mutableStateOf(false) }
+  var confirmDelete by remember { mutableStateOf(false) }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
+  Surface(
+    modifier = Modifier.fillMaxSize(),
+    color = MaterialTheme.colorScheme.background,
+  ) {
+    Box(
+      modifier = Modifier.fillMaxSize(),
+      contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
+      Column(
+        modifier = Modifier.fillMaxWidth().widthIn(max = 600.dp).padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Surface(
+          shape = CircleShape,
+          color = MaterialTheme.colorScheme.errorContainer,
+          contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 600.dp)
-                    .padding(28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ) {
-                    Box(Modifier.size(82.dp), contentAlignment = Alignment.Center) {
-                        Text("!", style = MaterialTheme.typography.headlineMedium)
-                    }
-                }
-                Text(
-                    text = "Encrypted storage needs attention",
-                    style = MaterialTheme.typography.headlineMedium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 24.dp),
-                )
-                Text(
-                    text = error.message,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
-                Text(
-                    text = "TinyTuya will not bypass a failed integrity check or silently replace your data. Reference · ${error.code}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 14.dp),
-                )
-                Spacer(Modifier.height(28.dp))
-                Button(
-                    onClick = onRetry,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp),
-                ) {
-                    Text("Try again")
-                }
-                OutlinedButton(
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .padding(top = 8.dp),
-                ) {
-                    Text("Delete unreadable local data")
-                }
-            }
+          Box(Modifier.size(82.dp), contentAlignment = Alignment.Center) {
+            Text("!", style = MaterialTheme.typography.headlineMedium)
+          }
         }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Start over with an empty catalog?") },
-            text = {
-                Text(
-                    "This permanently removes the encrypted catalog and Keystore key. " +
-                        "You will need to import from Tuya again."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        confirmDelete = false
-                        onDeleteAllLocalData()
-                    }
-                ) {
-                    Text("Delete and start over")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("Cancel")
-                }
-            },
+        Text(
+          text = "Encrypted storage needs attention",
+          style = MaterialTheme.typography.headlineMedium,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.padding(top = 24.dp),
         )
+        Text(
+          text = error.message,
+          style = MaterialTheme.typography.bodyLarge,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.padding(top = 10.dp),
+        )
+        Text(
+          text =
+            "TinyTuya will not bypass a failed integrity check or silently replace your data. Reference · ${error.code}",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.padding(top = 14.dp),
+        )
+        Spacer(Modifier.height(28.dp))
+        Button(
+          onClick = onRetry,
+          modifier = Modifier.fillMaxWidth().height(54.dp),
+        ) {
+          Text("Try again")
+        }
+        OutlinedButton(
+          onClick = { confirmDelete = true },
+          modifier = Modifier.fillMaxWidth().height(54.dp).padding(top = 8.dp),
+        ) {
+          Text("Delete unreadable local data")
+        }
+      }
     }
+  }
+
+  if (confirmDelete) {
+    AlertDialog(
+      onDismissRequest = { confirmDelete = false },
+      title = { Text("Start over with an empty catalog?") },
+      text = {
+        Text(
+          "This permanently removes the encrypted catalog and Keystore key. " +
+            "You will need to import from Tuya again."
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            confirmDelete = false
+            onDeleteAllLocalData()
+          }
+        ) {
+          Text("Delete and start over")
+        }
+      },
+      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    )
+  }
 }

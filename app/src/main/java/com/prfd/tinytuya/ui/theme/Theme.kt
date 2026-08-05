@@ -1,16 +1,17 @@
 package com.prfd.tinytuya.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-private val DarkColorScheme = darkColorScheme(
+private val DarkColorScheme =
+  darkColorScheme(
     primary = Teal90,
     onPrimary = Teal30,
     primaryContainer = Teal30,
@@ -35,9 +36,10 @@ private val DarkColorScheme = darkColorScheme(
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF93000A),
     onErrorContainer = Color(0xFFFFDAD6),
-)
+  )
 
-private val LightColorScheme = lightColorScheme(
+private val LightColorScheme =
+  lightColorScheme(
     primary = Teal40,
     onPrimary = Color.White,
     primaryContainer = Mint95,
@@ -62,25 +64,26 @@ private val LightColorScheme = lightColorScheme(
     onError = Color.White,
     errorContainer = Color(0xFFFFDAD6),
     onErrorContainer = Color(0xFF410002),
-)
+  )
 
-private val TinyTuyaShapes = Shapes(
+private val TinyTuyaShapes =
+  Shapes(
     extraSmall = RoundedCornerShape(10.dp),
     small = RoundedCornerShape(14.dp),
     medium = RoundedCornerShape(20.dp),
     large = RoundedCornerShape(28.dp),
     extraLarge = RoundedCornerShape(36.dp),
-)
+  )
 
 @Composable
 fun TinytuyaTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
+  darkTheme: Boolean = isSystemInDarkTheme(),
+  content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
-        typography = Typography,
-        shapes = TinyTuyaShapes,
-        content = content
-    )
+  MaterialTheme(
+    colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+    typography = Typography,
+    shapes = TinyTuyaShapes,
+    content = content,
+  )
 }

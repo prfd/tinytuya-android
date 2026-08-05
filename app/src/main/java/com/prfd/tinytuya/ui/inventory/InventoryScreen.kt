@@ -52,15 +52,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.prfd.tinytuya.data.local.DeviceCatalog
-import com.prfd.tinytuya.data.local.LanDeviceRecord
-import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.lan.LocalDataPointInspection
 import com.prfd.tinytuya.data.lan.LocalDeviceCapabilityRegistry
 import com.prfd.tinytuya.data.lan.LocalDeviceProfile
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.lan.inspectLocalDataPoints
+import com.prfd.tinytuya.data.local.DeviceCatalog
+import com.prfd.tinytuya.data.local.LanDeviceRecord
+import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
@@ -87,1211 +87,1193 @@ import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import java.text.DateFormat
 import java.util.Date
 
-private val inventoryDeviceLayoutRegistry = DeviceLayoutRendererRegistry(
+private val inventoryDeviceLayoutRegistry =
+  DeviceLayoutRendererRegistry(
     listOf(
-        CoverDeviceLayoutRenderer,
-        LightDeviceLayoutRenderer,
-        SensorSummaryLayoutRenderer,
+      CoverDeviceLayoutRenderer,
+      LightDeviceLayoutRenderer,
+      SensorSummaryLayoutRenderer,
     )
-)
+  )
 
 @Composable
 fun InventoryScreen(
-    catalog: DeviceCatalog,
-    discovery: LanDiscoveryUiState,
-    control: LocalControlUiState,
-    isLanSnapshotCurrent: Boolean = true,
-    onRefreshKnownDevices: () -> Unit,
-    onDiscoverLan: () -> Unit,
-    onIntent: (DeviceIntent) -> Unit,
-    onOpenSettings: () -> Unit,
-    onImportFromCloud: () -> Unit,
-    onDeleteAllLocalData: () -> Unit,
+  catalog: DeviceCatalog,
+  discovery: LanDiscoveryUiState,
+  control: LocalControlUiState,
+  isLanSnapshotCurrent: Boolean = true,
+  onRefreshKnownDevices: () -> Unit,
+  onDiscoverLan: () -> Unit,
+  onIntent: (DeviceIntent) -> Unit,
+  onOpenSettings: () -> Unit,
+  onImportFromCloud: () -> Unit,
+  onDeleteAllLocalData: () -> Unit,
 ) {
-    var confirmDelete by remember { mutableStateOf(false) }
-    val currentDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis
-        .takeIf { isLanSnapshotCurrent }
-    val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
-    val unmatchedLanDevices = remember(
-        catalog.devices,
-        catalog.lanDevices,
-        currentDiscoveryAtEpochMillis,
+  var confirmDelete by remember { mutableStateOf(false) }
+  val currentDiscoveryAtEpochMillis =
+    catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
+  val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
+  val unmatchedLanDevices =
+    remember(
+      catalog.devices,
+      catalog.lanDevices,
+      currentDiscoveryAtEpochMillis,
     ) {
-        catalog.lanDevices.filter { record ->
-            record.id !in knownIds &&
-                record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
-        }
+      catalog.lanDevices.filter { record ->
+        record.id !in knownIds && record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
+      }
     }
-    val isBusy = discovery is LanDiscoveryUiState.Scanning ||
-        discovery is LanDiscoveryUiState.ReadingStatus ||
-        control is LocalControlUiState.Sending
+  val isBusy =
+    discovery is LanDiscoveryUiState.Scanning ||
+      discovery is LanDiscoveryUiState.ReadingStatus ||
+      control is LocalControlUiState.Sending
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
+  Surface(
+    modifier = Modifier.fillMaxSize(),
+    color = MaterialTheme.colorScheme.background,
+  ) {
+    Box(
+      modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+      contentAlignment = Alignment.TopCenter,
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .widthIn(max = 680.dp)
-                    .testTag("inventory_list"),
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item {
-                    InventoryHeader(
-                        catalog = catalog,
-                        onOpenSettings = onOpenSettings,
-                    )
-                }
-                item {
-                    FindDevicesCard(
-                        catalog = catalog,
-                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
-                        discovery = discovery,
-                        onDiscoverLan = onDiscoverLan,
-                        isControlBusy = control is LocalControlUiState.Sending,
-                    )
-                }
-                item {
-                    DeviceInventoryHeader(
-                        catalog = catalog,
-                        currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
-                        discovery = discovery,
-                        isControlBusy = control is LocalControlUiState.Sending,
-                        onRefreshKnownDevices = onRefreshKnownDevices,
-                    )
-                }
-                items(
-                    items = catalog.devices,
-                    key = { it.id },
-                ) { device ->
-                    InventoryDeviceCard(
-                        device = device,
-                        lastDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
-                        lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
-                        localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
-                        discovery = discovery,
-                        control = control,
-                        onIntent = onIntent,
-                    )
-                }
-                if (unmatchedLanDevices.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "DISCOVERED WITHOUT CLOUD KEY",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.5.sp,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
-                        )
-                    }
-                    items(
-                        items = unmatchedLanDevices,
-                        key = { "unmatched-${it.id}" },
-                    ) { device ->
-                        UnmatchedLanDeviceCard(device)
-                    }
-                }
-                item {
-                    DataControls(
-                        enabled = !isBusy,
-                        onImportFromCloud = onImportFromCloud,
-                        onDeleteAllLocalData = { confirmDelete = true },
-                    )
-                }
-                item {
-                    LocalSecurityCard(catalog)
-                }
-            }
+      LazyColumn(
+        modifier = Modifier.fillMaxSize().widthIn(max = 680.dp).testTag("inventory_list"),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        item {
+          InventoryHeader(
+            catalog = catalog,
+            onOpenSettings = onOpenSettings,
+          )
         }
+        item {
+          FindDevicesCard(
+            catalog = catalog,
+            currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+            discovery = discovery,
+            onDiscoverLan = onDiscoverLan,
+            isControlBusy = control is LocalControlUiState.Sending,
+          )
+        }
+        item {
+          DeviceInventoryHeader(
+            catalog = catalog,
+            currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+            discovery = discovery,
+            isControlBusy = control is LocalControlUiState.Sending,
+            onRefreshKnownDevices = onRefreshKnownDevices,
+          )
+        }
+        items(
+          items = catalog.devices,
+          key = { it.id },
+        ) { device ->
+          InventoryDeviceCard(
+            device = device,
+            lastDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+            lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
+            localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
+            discovery = discovery,
+            control = control,
+            onIntent = onIntent,
+          )
+        }
+        if (unmatchedLanDevices.isNotEmpty()) {
+          item {
+            Text(
+              text = "DISCOVERED WITHOUT CLOUD KEY",
+              style = MaterialTheme.typography.labelLarge,
+              fontSize = 11.sp,
+              letterSpacing = 1.5.sp,
+              color = MaterialTheme.colorScheme.tertiary,
+              modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+            )
+          }
+          items(
+            items = unmatchedLanDevices,
+            key = { "unmatched-${it.id}" },
+          ) { device ->
+            UnmatchedLanDeviceCard(device)
+          }
+        }
+        item {
+          DataControls(
+            enabled = !isBusy,
+            onImportFromCloud = onImportFromCloud,
+            onDeleteAllLocalData = { confirmDelete = true },
+          )
+        }
+        item { LocalSecurityCard(catalog) }
+      }
     }
+  }
 
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete all local data?") },
-            text = {
-                Text(
-                    "This removes the encrypted device catalog and its Android Keystore key. " +
-                        "You will need to import from Tuya again."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        confirmDelete = false
-                        onDeleteAllLocalData()
-                    }
-                ) {
-                    Text("Delete data")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("Cancel")
-                }
-            },
+  if (confirmDelete) {
+    AlertDialog(
+      onDismissRequest = { confirmDelete = false },
+      title = { Text("Delete all local data?") },
+      text = {
+        Text(
+          "This removes the encrypted device catalog and its Android Keystore key. " +
+            "You will need to import from Tuya again."
         )
-    }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            confirmDelete = false
+            onDeleteAllLocalData()
+          }
+        ) {
+          Text("Delete data")
+        }
+      },
+      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    )
+  }
 }
 
 @Composable
 private fun InventoryHeader(
-    catalog: DeviceCatalog,
-    onOpenSettings: () -> Unit,
+  catalog: DeviceCatalog,
+  onOpenSettings: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BrandMark(Modifier.size(44.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("TinyTuya", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "LOCAL HOME",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.7.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            TextButton(
-                onClick = onOpenSettings,
-                modifier = Modifier.testTag("open_settings_button"),
-            ) {
-                Text("Settings")
-            }
-        }
-        Spacer(Modifier.height(28.dp))
+  Column(modifier = Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      BrandMark(Modifier.size(44.dp))
+      Spacer(Modifier.width(12.dp))
+      Column(Modifier.weight(1f)) {
+        Text("TinyTuya", style = MaterialTheme.typography.titleLarge)
         Text(
-            text = "Your local home",
-            style = MaterialTheme.typography.headlineMedium,
+          "LOCAL HOME",
+          style = MaterialTheme.typography.labelLarge,
+          fontSize = 10.sp,
+          letterSpacing = 1.7.sp,
+          color = MaterialTheme.colorScheme.primary,
         )
-        Text(
-            text = when {
-                catalog.devices.size == 1 ->
-                    "1 secured device is stored for private local control."
-                else ->
-                    "${catalog.devices.size} secured devices are stored for private local control."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp),
-        )
+      }
+      TextButton(
+        onClick = onOpenSettings,
+        modifier = Modifier.testTag("open_settings_button"),
+      ) {
+        Text("Settings")
+      }
     }
+    Spacer(Modifier.height(28.dp))
+    Text(
+      text = "Your local home",
+      style = MaterialTheme.typography.headlineMedium,
+    )
+    Text(
+      text =
+        when {
+          catalog.devices.size == 1 -> "1 secured device is stored for private local control."
+          else -> "${catalog.devices.size} secured devices are stored for private local control."
+        },
+      style = MaterialTheme.typography.bodyLarge,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(top = 8.dp),
+    )
+  }
 }
 
 @Composable
 private fun LocalSecurityCard(catalog: DeviceCatalog) {
-    val importedAt = remember(catalog.importedAtEpochMillis) {
-        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-            .format(Date(catalog.importedAtEpochMillis))
+  val importedAt =
+    remember(catalog.importedAtEpochMillis) {
+      DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+        .format(Date(catalog.importedAtEpochMillis))
     }
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        shape = MaterialTheme.shapes.large,
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("local_security_card"),
-    ) {
-        Column(Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text("Encrypted on this device", style = MaterialTheme.typography.titleMedium)
-            }
-            Text(
-                text = "Local keys are protected by Android Keystore and excluded from backup. Cloud credentials were not saved.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
-                modifier = Modifier.padding(top = 7.dp),
-            )
-            Text(
-                text = "Imported $importedAt · ${catalog.region.displayName}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
-                modifier = Modifier.padding(top = 12.dp),
-            )
-        }
+  Surface(
+    color = MaterialTheme.colorScheme.primaryContainer,
+    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    shape = MaterialTheme.shapes.large,
+    modifier = Modifier.fillMaxWidth().testTag("local_security_card"),
+  ) {
+    Column(Modifier.padding(18.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+        Spacer(Modifier.width(10.dp))
+        Text(
+          "Encrypted on this device",
+          style = MaterialTheme.typography.titleMedium,
+        )
+      }
+      Text(
+        text =
+          "Local keys are protected by Android Keystore and excluded from backup. Cloud credentials were not saved.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+        modifier = Modifier.padding(top = 7.dp),
+      )
+      Text(
+        text = "Imported $importedAt · ${catalog.region.displayName}",
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+        modifier = Modifier.padding(top = 12.dp),
+      )
     }
+  }
 }
 
 @Composable
 private fun FindDevicesCard(
-    catalog: DeviceCatalog,
-    currentDiscoveryAtEpochMillis: Long?,
-    discovery: LanDiscoveryUiState,
-    onDiscoverLan: () -> Unit,
-    isControlBusy: Boolean,
+  catalog: DeviceCatalog,
+  currentDiscoveryAtEpochMillis: Long?,
+  discovery: LanDiscoveryUiState,
+  onDiscoverLan: () -> Unit,
+  isControlBusy: Boolean,
 ) {
-    val lastScan = remember(catalog.lastDiscoveryAtEpochMillis) {
-        catalog.lastDiscoveryAtEpochMillis?.let { timestamp ->
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(timestamp))
-        }
+  val lastScan =
+    remember(catalog.lastDiscoveryAtEpochMillis) {
+      catalog.lastDiscoveryAtEpochMillis?.let { timestamp ->
+        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+      }
     }
-    val currentDeviceCount = catalog.lanDevices.count {
-        it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
-    }
-    val isScanning = discovery is LanDiscoveryUiState.Scanning
-    val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
-    val isBusy = isScanning || isReadingStatus || isControlBusy
-    val error = (discovery as? LanDiscoveryUiState.Error)
-        ?.takeIf { it.phase == LocalRefreshPhase.DISCOVERY }
+  val currentDeviceCount =
+    catalog.lanDevices.count { it.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
+  val isScanning = discovery is LanDiscoveryUiState.Scanning
+  val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
+  val isBusy = isScanning || isReadingStatus || isControlBusy
+  val error =
+    (discovery as? LanDiscoveryUiState.Error)?.takeIf { it.phase == LocalRefreshPhase.DISCOVERY }
 
-    OutlinedCard(
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("find_devices_card"),
-    ) {
-        Column(Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                ) {
-                    Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-                        if (isScanning) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(22.dp),
-                                strokeWidth = 2.5.dp,
-                            )
-                        } else {
-                            Text("LAN", style = MaterialTheme.typography.labelLarge, fontSize = 10.sp)
-                        }
-                    }
-                }
-                Spacer(Modifier.width(13.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = when {
-                            isScanning -> "Listening for Tuya devices"
-                            error != null -> lanErrorTitle(error.code)
-                            currentDiscoveryAtEpochMillis == null && lastScan != null ->
-                                "Find devices on this Wi-Fi"
-                            lastScan != null && currentDeviceCount == 0 ->
-                                "No devices found in the last search"
-                            lastScan != null && currentDeviceCount == 1 ->
-                                "1 Tuya device found"
-                            lastScan != null -> "$currentDeviceCount Tuya devices found"
-                            else -> "Find devices on this Wi-Fi"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = when {
-                            isScanning ->
-                                "Listening on UDP 6666, 6667, and 7000 for up to twelve seconds."
-                            error != null -> error.message
-                            currentDiscoveryAtEpochMillis == null && lastScan != null ->
-                                "The previous local snapshot is not verified on the active Wi-Fi."
-                            lastScan != null ->
-                                "Last searched $lastScan. Search again after a device or Wi-Fi address changes."
-                            else ->
-                                "Match the encrypted cloud inventory to devices broadcasting on the phone's current Wi-Fi."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (error != null) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                    if (error != null) {
-                        Text(
-                            text = "Reference · ${error.code}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 7.dp),
-                        )
-                    }
-                }
+  OutlinedCard(
+    colors =
+      CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    modifier = Modifier.fillMaxWidth().testTag("find_devices_card"),
+  ) {
+    Column(Modifier.padding(18.dp)) {
+      Row(verticalAlignment = Alignment.Top) {
+        Surface(
+          shape = CircleShape,
+          color = MaterialTheme.colorScheme.tertiaryContainer,
+          contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        ) {
+          Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+            if (isScanning) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.5.dp,
+              )
+            } else {
+              Text(
+                "LAN",
+                style = MaterialTheme.typography.labelLarge,
+                fontSize = 10.sp,
+              )
             }
-            OutlinedButton(
-                onClick = onDiscoverLan,
-                enabled = !isBusy,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 14.dp)
-                    .height(50.dp)
-                    .testTag("lan_scan_button"),
-            ) {
-                Text("Find devices")
-            }
-            Text(
-                text = "Discovery · listens locally for new or changed addresses",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp),
-            )
+          }
         }
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+          Text(
+            text =
+              when {
+                isScanning -> "Listening for Tuya devices"
+                error != null -> lanErrorTitle(error.code)
+                currentDiscoveryAtEpochMillis == null && lastScan != null ->
+                  "Find devices on this Wi-Fi"
+                lastScan != null && currentDeviceCount == 0 -> "No devices found in the last search"
+                lastScan != null && currentDeviceCount == 1 -> "1 Tuya device found"
+                lastScan != null -> "$currentDeviceCount Tuya devices found"
+                else -> "Find devices on this Wi-Fi"
+              },
+            style = MaterialTheme.typography.titleMedium,
+          )
+          Text(
+            text =
+              when {
+                isScanning -> "Listening on UDP 6666, 6667, and 7000 for up to twelve seconds."
+                error != null -> error.message
+                currentDiscoveryAtEpochMillis == null && lastScan != null ->
+                  "The previous local snapshot is not verified on the active Wi-Fi."
+                lastScan != null ->
+                  "Last searched $lastScan. Search again after a device or Wi-Fi address changes."
+                else ->
+                  "Match the encrypted cloud inventory to devices broadcasting on the phone's current Wi-Fi."
+              },
+            style = MaterialTheme.typography.bodyMedium,
+            color =
+              if (error != null) {
+                MaterialTheme.colorScheme.error
+              } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+              },
+            modifier = Modifier.padding(top = 5.dp),
+          )
+          if (error != null) {
+            Text(
+              text = "Reference · ${error.code}",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(top = 7.dp),
+            )
+          }
+        }
+      }
+      OutlinedButton(
+        onClick = onDiscoverLan,
+        enabled = !isBusy,
+        modifier =
+          Modifier.fillMaxWidth().padding(top = 14.dp).height(50.dp).testTag("lan_scan_button"),
+      ) {
+        Text("Find devices")
+      }
+      Text(
+        text = "Discovery · listens locally for new or changed addresses",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+      )
     }
+  }
 }
 
 @Composable
 private fun DeviceInventoryHeader(
-    catalog: DeviceCatalog,
-    currentDiscoveryAtEpochMillis: Long?,
-    discovery: LanDiscoveryUiState,
-    isControlBusy: Boolean,
-    onRefreshKnownDevices: () -> Unit,
+  catalog: DeviceCatalog,
+  currentDiscoveryAtEpochMillis: Long?,
+  discovery: LanDiscoveryUiState,
+  isControlBusy: Boolean,
+  onRefreshKnownDevices: () -> Unit,
 ) {
-    val currentLanIds = remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
-        catalog.lanDevices
-            .asSequence()
-            .filter { record -> record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
-            .mapTo(mutableSetOf()) { record -> record.id }
+  val currentLanIds =
+    remember(catalog.lanDevices, currentDiscoveryAtEpochMillis) {
+      catalog.lanDevices
+        .asSequence()
+        .filter { record -> record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis }
+        .mapTo(mutableSetOf()) { record -> record.id }
     }
-    val matchedCount = catalog.devices.count { device -> device.id in currentLanIds }
-    val currentResponseCount = catalog.localStatus.count { status ->
-        status.id in currentLanIds &&
-            status.state == LocalPollDeviceState.RESPONDED &&
-            status.polledAtEpochMillis >=
-            (currentDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+  val matchedCount = catalog.devices.count { device -> device.id in currentLanIds }
+  val currentResponseCount =
+    catalog.localStatus.count { status ->
+      status.id in currentLanIds &&
+        status.state == LocalPollDeviceState.RESPONDED &&
+        status.polledAtEpochMillis >= (currentDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
     }
-    val currentStatusReadAt = catalog.lastLocalPollAtEpochMillis?.takeIf { timestamp ->
+  val currentStatusReadAt =
+    catalog.lastLocalPollAtEpochMillis
+      ?.takeIf { timestamp ->
         currentDiscoveryAtEpochMillis != null && timestamp >= currentDiscoveryAtEpochMillis
-    }?.let { timestamp ->
-        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-            .format(Date(timestamp))
-    }
-    val canRefreshKnownDevices = currentDiscoveryAtEpochMillis != null &&
-        catalog.hasCurrentKnownStatusTargets()
-    val isScanning = discovery is LanDiscoveryUiState.Scanning
-    val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
-    val statusError = (discovery as? LanDiscoveryUiState.Error)
-        ?.takeIf { it.phase == LocalRefreshPhase.STATUS }
+      }
+      ?.let { timestamp ->
+        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+      }
+  val canRefreshKnownDevices =
+    currentDiscoveryAtEpochMillis != null && catalog.hasCurrentKnownStatusTargets()
+  val isScanning = discovery is LanDiscoveryUiState.Scanning
+  val isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus
+  val statusError =
+    (discovery as? LanDiscoveryUiState.Error)?.takeIf { it.phase == LocalRefreshPhase.STATUS }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 2.dp)
-            .testTag("device_inventory_header"),
+  Column(
+    modifier =
+      Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp).testTag("device_inventory_header")
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+      Column(Modifier.weight(1f)) {
+        Text(
+          text = "DEVICE INVENTORY",
+          style = MaterialTheme.typography.labelLarge,
+          fontSize = 11.sp,
+          letterSpacing = 1.5.sp,
+          color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+          text =
+            when {
+              isReadingStatus -> "Reading saved devices directly on this Wi-Fi…"
+              currentDiscoveryAtEpochMillis == null ->
+                "Find devices to match their current local addresses."
+              matchedCount == 0 -> "No secured devices matched in the last search."
+              currentStatusReadAt != null && matchedCount == 1 ->
+                "$currentResponseCount of 1 device answered · $currentStatusReadAt"
+              currentStatusReadAt != null ->
+                "$currentResponseCount of $matchedCount devices answered · $currentStatusReadAt"
+              matchedCount == 1 -> "1 device matched · Refresh to read its current status."
+              else -> "$matchedCount devices matched · Refresh to read their current status."
+            },
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(top = 4.dp),
+        )
+      }
+      if (canRefreshKnownDevices) {
+        Spacer(Modifier.width(12.dp))
+        OutlinedButton(
+          onClick = onRefreshKnownDevices,
+          enabled = !isScanning && !isReadingStatus && !isControlBusy,
+          contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp),
+          modifier = Modifier.height(42.dp).testTag("inventory_refresh_button"),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "DEVICE INVENTORY",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontSize = 11.sp,
-                    letterSpacing = 1.5.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    text = when {
-                        isReadingStatus ->
-                            "Reading saved devices directly on this Wi-Fi…"
-                        currentDiscoveryAtEpochMillis == null ->
-                            "Find devices to match their current local addresses."
-                        matchedCount == 0 ->
-                            "No secured devices matched in the last search."
-                        currentStatusReadAt != null && matchedCount == 1 ->
-                            "$currentResponseCount of 1 device answered · $currentStatusReadAt"
-                        currentStatusReadAt != null ->
-                            "$currentResponseCount of $matchedCount devices answered · $currentStatusReadAt"
-                        matchedCount == 1 ->
-                            "1 device matched · Refresh to read its current status."
-                        else ->
-                            "$matchedCount devices matched · Refresh to read their current status."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            if (canRefreshKnownDevices) {
-                Spacer(Modifier.width(12.dp))
-                OutlinedButton(
-                    onClick = onRefreshKnownDevices,
-                    enabled = !isScanning && !isReadingStatus && !isControlBusy,
-                    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp),
-                    modifier = Modifier
-                        .height(42.dp)
-                        .testTag("inventory_refresh_button"),
-                ) {
-                    if (isReadingStatus) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(if (isReadingStatus) "Refreshing" else "Refresh status")
-                }
-            }
+          if (isReadingStatus) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(16.dp),
+              strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.width(8.dp))
+          }
+          Text(if (isReadingStatus) "Refreshing" else "Refresh status")
         }
-        if (statusError != null) {
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp)
-                    .testTag("status_refresh_error"),
-            ) {
-                Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
-                    Text(
-                        text = lanErrorTitle(statusError.code),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Text(
-                        text = statusError.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                    Text(
-                        text = "Reference · ${statusError.code}",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                }
-            }
-        }
+      }
     }
+    if (statusError != null) {
+      Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("status_refresh_error"),
+      ) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
+          Text(
+            text = lanErrorTitle(statusError.code),
+            style = MaterialTheme.typography.labelLarge,
+          )
+          Text(
+            text = statusError.message,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 2.dp),
+          )
+          Text(
+            text = "Reference · ${statusError.code}",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(top = 5.dp),
+          )
+        }
+      }
+    }
+  }
 }
 
 @Composable
 internal fun InventoryDeviceCard(
-    device: CloudImportedDevice,
-    lastDiscoveryAtEpochMillis: Long?,
-    lanRecord: LanDeviceRecord?,
-    localStatus: LocalStatusRecord?,
-    discovery: LanDiscoveryUiState,
-    control: LocalControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
+  device: CloudImportedDevice,
+  lastDiscoveryAtEpochMillis: Long?,
+  lanRecord: LanDeviceRecord?,
+  localStatus: LocalStatusRecord?,
+  discovery: LanDiscoveryUiState,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
 ) {
-    val discoveryAt = lastDiscoveryAtEpochMillis
-    val isOnCurrentLan = discoveryAt != null &&
-        lanRecord?.lastSeenAtEpochMillis == discoveryAt
-    val isCurrentStatus = discoveryAt != null &&
-        isOnCurrentLan &&
-        localStatus != null &&
-        localStatus.polledAtEpochMillis >= discoveryAt
-    val profile = remember(device, localStatus, lastDiscoveryAtEpochMillis) {
-        LocalDeviceCapabilityRegistry.profile(
-            device = device,
-            status = localStatus,
-            lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+  val discoveryAt = lastDiscoveryAtEpochMillis
+  val isOnCurrentLan = discoveryAt != null && lanRecord?.lastSeenAtEpochMillis == discoveryAt
+  val isCurrentStatus =
+    discoveryAt != null &&
+      isOnCurrentLan &&
+      localStatus != null &&
+      localStatus.polledAtEpochMillis >= discoveryAt
+  val profile =
+    remember(device, localStatus, lastDiscoveryAtEpochMillis) {
+      LocalDeviceCapabilityRegistry.profile(
+        device = device,
+        status = localStatus,
+        lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+      )
+    }
+  val deviceUiModel =
+    remember(profile.resolvedDevice) { DeviceUiMapper.map(profile.resolvedDevice) }
+  val summaryTone =
+    deviceUiModel.capabilities.filterIsInstance<BinaryStateUiModel>().firstOrNull()?.tone
+  val hasActiveSensor = summaryTone == CapabilityTone.ACTIVE || summaryTone == CapabilityTone.ALERT
+  val isProfileActive =
+    isCurrentStatus &&
+      (deviceUiModel.capabilities
+        .filterIsInstance<ToggleUiModel>()
+        .any(ToggleUiModel::currentValue) || hasActiveSensor)
+  val localAvailability =
+    when {
+      lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
+      isOnCurrentLan -> LocalAvailability("Local", true)
+      else -> LocalAvailability("Not found", false)
+    }
+  OutlinedCard(
+    colors =
+      CardDefaults.outlinedCardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+      ),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(Modifier.padding(horizontal = 18.dp, vertical = 17.dp)) {
+      Row(verticalAlignment = Alignment.Top) {
+        DeviceProfileMark(
+          profile = profile,
+          tone = summaryTone,
+          active = isProfileActive,
         )
-    }
-    val deviceUiModel = remember(profile.resolvedDevice) {
-        DeviceUiMapper.map(profile.resolvedDevice)
-    }
-    val summaryTone = deviceUiModel.capabilities
-        .filterIsInstance<BinaryStateUiModel>()
-        .firstOrNull()
-        ?.tone
-    val hasActiveSensor = summaryTone == CapabilityTone.ACTIVE ||
-        summaryTone == CapabilityTone.ALERT
-    val isProfileActive = isCurrentStatus &&
-        (
-            deviceUiModel.capabilities
-                .filterIsInstance<ToggleUiModel>()
-                .any(ToggleUiModel::currentValue) ||
-                hasActiveSensor
-        )
-    val localAvailability = when {
-        lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
-        isOnCurrentLan -> LocalAvailability("Local", true)
-        else -> LocalAvailability("Not found", false)
-    }
-    OutlinedCard(
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 17.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                DeviceProfileMark(
-                    profile = profile,
-                    tone = summaryTone,
-                    active = isProfileActive,
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = device.name.ifBlank { "Unnamed Tuya device" },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = deviceDescription(device, profile),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    LocalAvailabilityLabel(localAvailability)
-                    when {
-                        profile.capabilityAccess == CapabilityAccess.READ_ONLY -> Text(
-                            text = "Read only",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 5.dp),
-                        )
-                        profile.capabilityAccess == CapabilityAccess.READ_WRITE &&
-                            device.localKey.isBlank -> Text(
-                            text = "Key missing",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 5.dp),
-                        )
-                        profile.capabilityAccess == CapabilityAccess.DENIED -> Text(
-                            text = "Unsupported",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 5.dp),
-                        )
-                    }
-                }
-            }
-            if (
-                profile.capabilityAccess != CapabilityAccess.READ_WRITE &&
-                !(profile.capabilityAccess == CapabilityAccess.READ_ONLY && profile.isSensor)
-            ) {
-                LocalAccessNotice(profile)
-            }
-            LocalStatusPanel(
-                device = device,
-                profile = profile,
-                deviceUiModel = deviceUiModel,
-                status = localStatus,
-                isCurrentStatus = isCurrentStatus,
-                isOnCurrentLan = isOnCurrentLan,
-                isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
-                control = control,
-                onIntent = onIntent,
-            )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+          Text(
+            text = device.name.ifBlank { "Unnamed Tuya device" },
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = deviceDescription(device, profile),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
         }
+        Spacer(Modifier.width(12.dp))
+        Column(horizontalAlignment = Alignment.End) {
+          LocalAvailabilityLabel(localAvailability)
+          when {
+            profile.capabilityAccess == CapabilityAccess.READ_ONLY ->
+              Text(
+                text = "Read only",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 5.dp),
+              )
+            profile.capabilityAccess == CapabilityAccess.READ_WRITE && device.localKey.isBlank ->
+              Text(
+                text = "Key missing",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 5.dp),
+              )
+            profile.capabilityAccess == CapabilityAccess.DENIED ->
+              Text(
+                text = "Unsupported",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 5.dp),
+              )
+          }
+        }
+      }
+      if (
+        profile.capabilityAccess != CapabilityAccess.READ_WRITE &&
+          !(profile.capabilityAccess == CapabilityAccess.READ_ONLY && profile.isSensor)
+      ) {
+        LocalAccessNotice(profile)
+      }
+      LocalStatusPanel(
+        device = device,
+        profile = profile,
+        deviceUiModel = deviceUiModel,
+        status = localStatus,
+        isCurrentStatus = isCurrentStatus,
+        isOnCurrentLan = isOnCurrentLan,
+        isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
+        control = control,
+        onIntent = onIntent,
+      )
     }
+  }
 }
 
 @Composable
 private fun LocalStatusPanel(
-    device: CloudImportedDevice,
-    profile: LocalDeviceProfile,
-    deviceUiModel: DeviceUiModel,
-    status: LocalStatusRecord?,
-    isCurrentStatus: Boolean,
-    isOnCurrentLan: Boolean,
-    isReadingStatus: Boolean,
-    control: LocalControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
+  device: CloudImportedDevice,
+  profile: LocalDeviceProfile,
+  deviceUiModel: DeviceUiModel,
+  status: LocalStatusRecord?,
+  isCurrentStatus: Boolean,
+  isOnCurrentLan: Boolean,
+  isReadingStatus: Boolean,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
 ) {
-    if (!isOnCurrentLan || !profile.canReadLocalStatus) return
-    val updatedAt = remember(status?.polledAtEpochMillis) {
-        status?.polledAtEpochMillis?.let { timestamp ->
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(timestamp))
-        }
+  if (!isOnCurrentLan || !profile.canReadLocalStatus) return
+  val updatedAt =
+    remember(status?.polledAtEpochMillis) {
+      status?.polledAtEpochMillis?.let { timestamp ->
+        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+      }
     }
-    val inspection = remember(device.mappingJson, status?.dataPoints, status?.state) {
-        status
-            ?.takeIf { currentStatus -> currentStatus.state == LocalPollDeviceState.RESPONDED }
-            ?.let { currentStatus -> inspectLocalDataPoints(device, currentStatus.dataPoints) }
+  val inspection =
+    remember(device.mappingJson, status?.dataPoints, status?.state) {
+      status
+        ?.takeIf { currentStatus -> currentStatus.state == LocalPollDeviceState.RESPONDED }
+        ?.let { currentStatus -> inspectLocalDataPoints(device, currentStatus.dataPoints) }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-    ) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.padding(top = 14.dp)) {
-            val statusTitle = when {
-                isReadingStatus -> "Reading status…"
-                !isCurrentStatus -> "Local status not read yet"
-                status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
-                    "Could not confirm the requested state"
-                status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
-                status?.state != LocalPollDeviceState.RESPONDED ->
-                    "Status could not be decoded"
-                else -> null
-            }
-            statusTitle?.let { title ->
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            when {
-                isReadingStatus -> Text(
-                    text = "Using the encrypted local key directly on this Wi-Fi.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                !isCurrentStatus -> Text(
-                    text = "Refresh status to read its current data points.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                status?.state == LocalPollDeviceState.RESPONDED -> {
-                    DeviceLayoutHost(
-                        device = deviceUiModel,
-                        registry = inventoryDeviceLayoutRegistry,
-                        controlState = control,
-                        onIntent = onIntent,
-                    )
-                    updatedAt?.let {
-                        Text(
-                            text = "Updated locally · $it",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 14.dp),
-                        )
-                    }
-                    inspection?.takeIf { it.totalCount > 0 }?.let { localInspection ->
-                        LocalDpsInspector(localInspection)
-                    }
-                }
-                else -> Text(
-                    text = localStatusMessage(status?.errorCode.orEmpty()),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+  Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Column(Modifier.padding(top = 14.dp)) {
+      val statusTitle =
+        when {
+          isReadingStatus -> "Reading status…"
+          !isCurrentStatus -> "Local status not read yet"
+          status?.errorCode == "LOCAL_CONTROL_UNCONFIRMED" ->
+            "Could not confirm the requested state"
+          status?.state == LocalPollDeviceState.OFFLINE -> "Status request timed out"
+          status?.state != LocalPollDeviceState.RESPONDED -> "Status could not be decoded"
+          else -> null
         }
+      statusTitle?.let { title ->
+        Text(
+          text = title,
+          style = MaterialTheme.typography.labelLarge,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      when {
+        isReadingStatus ->
+          Text(
+            text = "Using the encrypted local key directly on this Wi-Fi.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+        !isCurrentStatus ->
+          Text(
+            text = "Refresh status to read its current data points.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+        status?.state == LocalPollDeviceState.RESPONDED -> {
+          DeviceLayoutHost(
+            device = deviceUiModel,
+            registry = inventoryDeviceLayoutRegistry,
+            controlState = control,
+            onIntent = onIntent,
+          )
+          updatedAt?.let {
+            Text(
+              text = "Updated locally · $it",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(top = 14.dp),
+            )
+          }
+          inspection
+            ?.takeIf { it.totalCount > 0 }
+            ?.let { localInspection -> LocalDpsInspector(localInspection) }
+        }
+        else ->
+          Text(
+            text = localStatusMessage(status?.errorCode.orEmpty()),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+      }
     }
+  }
 }
 
 @Composable
 private fun LocalAccessNotice(profile: LocalDeviceProfile) {
-    val isStatusOnly = profile.capabilityAccess == CapabilityAccess.READ_ONLY
-    val title = when (profile.restriction) {
-        DeviceAccessRestriction.NONE -> if (isStatusOnly && profile.isSensor) {
-            "Read-only sensor"
+  val isStatusOnly = profile.capabilityAccess == CapabilityAccess.READ_ONLY
+  val title =
+    when (profile.restriction) {
+      DeviceAccessRestriction.NONE ->
+        if (isStatusOnly && profile.isSensor) {
+          "Read-only sensor"
         } else if (isStatusOnly) {
-            "Status-only profile"
+          "Status-only profile"
         } else return
-        DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
-        DeviceAccessRestriction.GATEWAY -> "Gateway controls unavailable"
-        DeviceAccessRestriction.CAMERA -> "Camera controls disabled"
-        DeviceAccessRestriction.LOCK -> "Lock controls disabled"
+      DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
+      DeviceAccessRestriction.GATEWAY -> "Gateway controls unavailable"
+      DeviceAccessRestriction.CAMERA -> "Camera controls disabled"
+      DeviceAccessRestriction.LOCK -> "Lock controls disabled"
     }
-    val message = when (profile.restriction) {
-        DeviceAccessRestriction.NONE -> when {
-            profile.isSensor ->
-                "Fresh readings come directly from the device. This profile never sends commands."
-            else ->
-                "No verified control profile matches this device. Local DPS stays read-only."
+  val message =
+    when (profile.restriction) {
+      DeviceAccessRestriction.NONE ->
+        when {
+          profile.isSensor ->
+            "Fresh readings come directly from the device. This profile never sends commands."
+          else -> "No verified control profile matches this device. Local DPS stays read-only."
         }
-        DeviceAccessRestriction.GATEWAY_CHILD ->
-            "This device communicates through a Tuya gateway, not directly over Wi-Fi."
-        DeviceAccessRestriction.GATEWAY ->
-            "Gateway management and child-device routing are not supported yet."
-        DeviceAccessRestriction.CAMERA ->
-            "Camera streams and camera commands are intentionally unavailable."
-        DeviceAccessRestriction.LOCK ->
-            "Lock and access-control commands are intentionally unavailable for safety."
+      DeviceAccessRestriction.GATEWAY_CHILD ->
+        "This device communicates through a Tuya gateway, not directly over Wi-Fi."
+      DeviceAccessRestriction.GATEWAY ->
+        "Gateway management and child-device routing are not supported yet."
+      DeviceAccessRestriction.CAMERA ->
+        "Camera streams and camera commands are intentionally unavailable."
+      DeviceAccessRestriction.LOCK ->
+        "Lock and access-control commands are intentionally unavailable for safety."
     }
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = if (isStatusOnly) {
-            MaterialTheme.colorScheme.surfaceVariant
-        } else {
-            MaterialTheme.colorScheme.tertiaryContainer
-        },
-        contentColor = if (isStatusOnly) {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        } else {
-            MaterialTheme.colorScheme.onTertiaryContainer
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .testTag("local_access_notice"),
+  Surface(
+    shape = MaterialTheme.shapes.medium,
+    color =
+      if (isStatusOnly) {
+        MaterialTheme.colorScheme.surfaceVariant
+      } else {
+        MaterialTheme.colorScheme.tertiaryContainer
+      },
+    contentColor =
+      if (isStatusOnly) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+      } else {
+        MaterialTheme.colorScheme.onTertiaryContainer
+      },
+    modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("local_access_notice"),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+      verticalAlignment = Alignment.Top,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = if (isStatusOnly) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.tertiary
-                },
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .size(7.dp),
-                content = {},
-            )
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(text = title, style = MaterialTheme.typography.labelLarge)
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-        }
+      Surface(
+        shape = CircleShape,
+        color =
+          if (isStatusOnly) {
+            MaterialTheme.colorScheme.primary
+          } else {
+            MaterialTheme.colorScheme.tertiary
+          },
+        modifier = Modifier.padding(top = 6.dp).size(7.dp),
+        content = {},
+      )
+      Spacer(Modifier.width(10.dp))
+      Column {
+        Text(text = title, style = MaterialTheme.typography.labelLarge)
+        Text(
+          text = message,
+          style = MaterialTheme.typography.bodySmall,
+          modifier = Modifier.padding(top = 2.dp),
+        )
+      }
     }
+  }
 }
 
 @Composable
 private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
-    var expanded by remember(inspection) { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp),
+  var expanded by remember(inspection) { mutableStateOf(false) }
+  Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+    TextButton(
+      onClick = { expanded = !expanded },
+      modifier = Modifier.fillMaxWidth().testTag("dps_inspector_toggle"),
     ) {
-        TextButton(
-            onClick = { expanded = !expanded },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("dps_inspector_toggle"),
-        ) {
-            Text(
-                if (expanded) {
-                    "Hide device data"
-                } else {
-                    "Show all device data · ${inspection.totalCount}"
-                }
-            )
-        }
+      Text(
         if (expanded) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                shape = MaterialTheme.shapes.small,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("dps_inspector_panel"),
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        text = "ALL LOCAL DEVICE DATA · READ ONLY",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontSize = 10.sp,
-                        letterSpacing = 1.3.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        text = "Boolean, numeric, enum, and safe mapped text values are shown. " +
-                            "Structured and potentially sensitive values stay hidden.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                    inspection.dataPoints.forEach { dataPoint ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    text = "DP ${dataPoint.id} · ${dataPoint.kindLabel}",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                dataPoint.code?.let { code ->
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        text = code,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.widthIn(max = 140.dp),
-                                    )
-                                }
-                            }
-                            Text(
-                                text = dataPoint.safeValue,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-                }
-            }
+          "Hide device data"
+        } else {
+          "Show all device data · ${inspection.totalCount}"
         }
+      )
     }
+    if (expanded) {
+      Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().testTag("dps_inspector_panel"),
+      ) {
+        Column(Modifier.padding(12.dp)) {
+          Text(
+            text = "ALL LOCAL DEVICE DATA · READ ONLY",
+            style = MaterialTheme.typography.labelLarge,
+            fontSize = 10.sp,
+            letterSpacing = 1.3.sp,
+            color = MaterialTheme.colorScheme.primary,
+          )
+          Text(
+            text =
+              "Boolean, numeric, enum, and safe mapped text values are shown. " +
+                "Structured and potentially sensitive values stay hidden.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+          inspection.dataPoints.forEach { dataPoint ->
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Text(
+                  text = "DP ${dataPoint.id} · ${dataPoint.kindLabel}",
+                  style = MaterialTheme.typography.labelLarge,
+                  modifier = Modifier.weight(1f),
+                )
+                dataPoint.code?.let { code ->
+                  Spacer(Modifier.width(10.dp))
+                  Text(
+                    text = code,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 140.dp),
+                  )
+                }
+              }
+              Text(
+                text = dataPoint.safeValue,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 @Composable
 private fun UnmatchedLanDeviceCard(device: LanDeviceRecord) {
-    OutlinedCard(
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(17.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                ) {
-                    Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
-                        Text("TU", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-                Spacer(Modifier.width(13.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Unlinked Tuya device",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = buildString {
-                            append("Found at ${device.ip}")
-                            if (device.protocolVersion.isNotBlank()) {
-                                append(" · protocol ${device.protocolVersion}")
-                            }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.padding(top = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                StatusPill(text = "Cloud key unavailable", positive = false)
-                StatusPill(text = "On local network", positive = true)
-            }
+  OutlinedCard(
+    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(Modifier.padding(17.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+          shape = MaterialTheme.shapes.small,
+          color = MaterialTheme.colorScheme.tertiaryContainer,
+          contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        ) {
+          Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+            Text("TU", style = MaterialTheme.typography.labelLarge)
+          }
         }
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+          Text(
+            text = "Unlinked Tuya device",
+            style = MaterialTheme.typography.titleMedium,
+          )
+          Text(
+            text =
+              buildString {
+                append("Found at ${device.ip}")
+                if (device.protocolVersion.isNotBlank()) {
+                  append(" · protocol ${device.protocolVersion}")
+                }
+              },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+      Row(
+        modifier = Modifier.padding(top = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        StatusPill(text = "Cloud key unavailable", positive = false)
+        StatusPill(text = "On local network", positive = true)
+      }
     }
+  }
 }
 
 @Composable
 private fun StatusPill(text: String, positive: Boolean) {
-    Surface(
-        shape = CircleShape,
-        color = if (positive) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
-        contentColor = if (positive) {
-            MaterialTheme.colorScheme.onPrimaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-        )
-    }
+  Surface(
+    shape = CircleShape,
+    color =
+      if (positive) {
+        MaterialTheme.colorScheme.primaryContainer
+      } else {
+        MaterialTheme.colorScheme.surfaceVariant
+      },
+    contentColor =
+      if (positive) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+      } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+      },
+  ) {
+    Text(
+      text = text,
+      style = MaterialTheme.typography.labelLarge,
+      fontSize = 11.sp,
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+    )
+  }
 }
 
 @Composable
 private fun DeviceProfileMark(
-    profile: LocalDeviceProfile,
-    tone: CapabilityTone?,
-    active: Boolean,
+  profile: LocalDeviceProfile,
+  tone: CapabilityTone?,
+  active: Boolean,
 ) {
-    val containerColor = when {
-        tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.errorContainer
-        tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
-        active -> MaterialTheme.colorScheme.primaryContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
+  val containerColor =
+    when {
+      tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.errorContainer
+      tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
+      active -> MaterialTheme.colorScheme.primaryContainer
+      else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val contentColor = when {
-        tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
-        tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
-        active -> MaterialTheme.colorScheme.onPrimaryContainer
-        else -> MaterialTheme.colorScheme.primary
+  val contentColor =
+    when {
+      tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
+      tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
+      active -> MaterialTheme.colorScheme.onPrimaryContainer
+      else -> MaterialTheme.colorScheme.primary
     }
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = containerColor,
-        contentColor = contentColor,
-        modifier = Modifier.testTag("device_profile_badge"),
-    ) {
-        Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
-            if (
-                profile.restriction == DeviceAccessRestriction.NONE &&
-                profile.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET
-            ) {
-                SwitchProfileIcon(
-                    color = contentColor,
-                    modifier = Modifier.size(27.dp),
-                )
-            } else {
-                Text(
-                    text = deviceProfileSymbol(profile),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
+  Surface(
+    shape = MaterialTheme.shapes.medium,
+    color = containerColor,
+    contentColor = contentColor,
+    modifier = Modifier.testTag("device_profile_badge"),
+  ) {
+    Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+      if (
+        profile.restriction == DeviceAccessRestriction.NONE &&
+          profile.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET
+      ) {
+        SwitchProfileIcon(
+          color = contentColor,
+          modifier = Modifier.size(27.dp),
+        )
+      } else {
+        Text(
+          text = deviceProfileSymbol(profile),
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+        )
+      }
     }
+  }
 }
 
 @Composable
 private fun SwitchProfileIcon(
-    color: androidx.compose.ui.graphics.Color,
-    modifier: Modifier = Modifier,
+  color: androidx.compose.ui.graphics.Color,
+  modifier: Modifier = Modifier,
 ) {
-    Canvas(modifier = modifier) {
-        val strokeWidth = size.minDimension * 0.09f
-        drawArc(
-            color = color,
-            startAngle = -40f,
-            sweepAngle = 260f,
-            useCenter = false,
-            topLeft = Offset(size.width * 0.12f, size.height * 0.18f),
-            size = Size(size.width * 0.76f, size.height * 0.76f),
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-        )
-        drawLine(
-            color = color,
-            start = Offset(size.width * 0.5f, size.height * 0.08f),
-            end = Offset(size.width * 0.5f, size.height * 0.48f),
-            strokeWidth = strokeWidth,
-            cap = StrokeCap.Round,
-        )
-    }
+  Canvas(modifier = modifier) {
+    val strokeWidth = size.minDimension * 0.09f
+    drawArc(
+      color = color,
+      startAngle = -40f,
+      sweepAngle = 260f,
+      useCenter = false,
+      topLeft = Offset(size.width * 0.12f, size.height * 0.18f),
+      size = Size(size.width * 0.76f, size.height * 0.76f),
+      style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+    )
+    drawLine(
+      color = color,
+      start = Offset(size.width * 0.5f, size.height * 0.08f),
+      end = Offset(size.width * 0.5f, size.height * 0.48f),
+      strokeWidth = strokeWidth,
+      cap = StrokeCap.Round,
+    )
+  }
 }
 
 @Composable
 private fun LocalAvailabilityLabel(availability: LocalAvailability) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(
-            shape = CircleShape,
-            color = if (availability.isLocal) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.outline
-            },
-            modifier = Modifier.size(7.dp),
-            content = {},
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = availability.label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (availability.isLocal) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Surface(
+      shape = CircleShape,
+      color =
+        if (availability.isLocal) {
+          MaterialTheme.colorScheme.primary
+        } else {
+          MaterialTheme.colorScheme.outline
+        },
+      modifier = Modifier.size(7.dp),
+      content = {},
+    )
+    Spacer(Modifier.width(6.dp))
+    Text(
+      text = availability.label,
+      style = MaterialTheme.typography.labelLarge,
+      color =
+        if (availability.isLocal) {
+          MaterialTheme.colorScheme.primary
+        } else {
+          MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
+  }
 }
 
 private data class LocalAvailability(
-    val label: String,
-    val isLocal: Boolean,
+  val label: String,
+  val isLocal: Boolean,
 )
 
 @Composable
 private fun DataControls(
-    enabled: Boolean,
-    onImportFromCloud: () -> Unit,
-    onDeleteAllLocalData: () -> Unit,
+  enabled: Boolean,
+  onImportFromCloud: () -> Unit,
+  onDeleteAllLocalData: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 14.dp, bottom = 18.dp),
+  Column(modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 18.dp)) {
+    Text("Data controls", style = MaterialTheme.typography.titleMedium)
+    Text(
+      text =
+        "Cloud access happens only when you choose this action. Saved credentials are reused when available; automatic local refresh never contacts Tuya Cloud.",
+      style = MaterialTheme.typography.bodyMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+    )
+    OutlinedButton(
+      onClick = onImportFromCloud,
+      enabled = enabled,
+      modifier = Modifier.fillMaxWidth().height(54.dp),
     ) {
-        Text("Data controls", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = "Cloud access happens only when you choose this action. Saved credentials are reused when available; automatic local refresh never contacts Tuya Cloud.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
-        )
-        OutlinedButton(
-            onClick = onImportFromCloud,
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
-        ) {
-            Text("Import or sync from Tuya")
-        }
-        TextButton(
-            onClick = onDeleteAllLocalData,
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-        ) {
-            Text(
-                "Delete all local data",
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
-            )
-        }
+      Text("Import or sync from Tuya")
     }
+    TextButton(
+      onClick = onDeleteAllLocalData,
+      enabled = enabled,
+      modifier = Modifier.fillMaxWidth().height(50.dp),
+    ) {
+      Text(
+        "Delete all local data",
+        color =
+          if (enabled) {
+            MaterialTheme.colorScheme.error
+          } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+          },
+      )
+    }
+  }
 }
 
-private fun lanErrorTitle(code: String): String = when (code) {
+private fun lanErrorTitle(code: String): String =
+  when (code) {
     "LAN_NETWORK_CHANGED" -> "Wi-Fi changed since refresh"
     "LOCAL_REFRESH_DISCOVERY_REQUIRED" -> "Find devices again"
     "LAN_WIFI_UNAVAILABLE" -> "Connect to your device Wi-Fi"
     "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
     "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"
     "LAN_NETWORK_UNAVAILABLE" -> "Wi-Fi changed during the scan"
-    "LOCAL_POLL_FAILED", "LOCAL_POLL_INPUT_INVALID", "LOCAL_POLL_NETWORK_INVALID",
+    "LOCAL_POLL_FAILED",
+    "LOCAL_POLL_INPUT_INVALID",
+    "LOCAL_POLL_NETWORK_INVALID",
     "LOCAL_POLL_DEVICES_INVALID" -> "Local status could not be read"
-    "CATALOG_MISSING", "CATALOG_WRITE_FAILED", "CATALOG_ENCRYPT_FAILED" ->
-        "Discovery could not be saved"
+    "CATALOG_MISSING",
+    "CATALOG_WRITE_FAILED",
+    "CATALOG_ENCRYPT_FAILED" -> "Discovery could not be saved"
     else -> "Local discovery did not complete"
-}
+  }
 
-private fun localStatusMessage(code: String): String = when (code) {
+private fun localStatusMessage(code: String): String =
+  when (code) {
     "LOCAL_DEVICE_OFFLINE" -> "The device was found but did not accept a local connection."
-    "LOCAL_DEVICE_TIMEOUT", "LOCAL_DEVICE_NO_RESPONSE" ->
-        "The device was found but did not answer before the local timeout."
+    "LOCAL_DEVICE_TIMEOUT",
+    "LOCAL_DEVICE_NO_RESPONSE" ->
+      "The device was found but did not answer before the local timeout."
     "LOCAL_CONTROL_UNCONFIRMED" ->
-        "No readable status came back after the command. Refresh to verify the device's actual state."
+      "No readable status came back after the command. Refresh to verify the device's actual state."
     "LOCAL_KEY_OR_VERSION_INVALID" ->
-        "The saved local key or protocol version was rejected. A cloud sync may refresh it."
+      "The saved local key or protocol version was rejected. A cloud sync may refresh it."
     "LOCAL_PROTOCOL_ERROR" ->
-        "The response could not be decoded safely with the detected Tuya protocol."
+      "The response could not be decoded safely with the detected Tuya protocol."
     else -> "The local status request did not complete safely."
-}
+  }
 
 private fun deviceDescription(
-    device: CloudImportedDevice,
-    profile: LocalDeviceProfile,
+  device: CloudImportedDevice,
+  profile: LocalDeviceProfile,
 ): String = buildList {
-    add(deviceProfileLabel(device, profile))
-    add(device.productName)
-    add(device.model)
-}.map { value -> value.trim() }
-    .filter { value -> value.isNotBlank() }
-    .distinctBy { value -> value.lowercase() }
-    .take(2)
-    .joinToString(" · ")
+  add(deviceProfileLabel(device, profile))
+  add(device.productName)
+  add(device.model)
+}
+  .map { value -> value.trim() }
+  .filter { value -> value.isNotBlank() }
+  .distinctBy { value -> value.lowercase() }
+  .take(2)
+  .joinToString(" · ")
 
 private fun deviceProfileLabel(
-    device: CloudImportedDevice,
-    profile: LocalDeviceProfile,
-): String = when (profile.restriction) {
+  device: CloudImportedDevice,
+  profile: LocalDeviceProfile,
+): String =
+  when (profile.restriction) {
     DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
     DeviceAccessRestriction.GATEWAY -> "Tuya gateway"
     DeviceAccessRestriction.CAMERA -> "Smart camera"
     DeviceAccessRestriction.LOCK -> "Smart lock or access control"
-    DeviceAccessRestriction.NONE -> when (profile.familyId) {
-        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> when {
+    DeviceAccessRestriction.NONE ->
+      when (profile.familyId) {
+        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET ->
+          when {
             profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
-                "${profile.mappedSwitchCount}-channel power strip"
+              "${profile.mappedSwitchCount}-channel power strip"
             profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
             device.category.lowercase() == "cz" -> "Smart outlet"
             device.category.lowercase() == "pc" -> "Power strip"
             else -> "Smart switch"
-        }
+          }
         else -> profile.presentation.typeLabel
-    }
-}
+      }
+  }
 
-private fun deviceProfileSymbol(profile: LocalDeviceProfile): String = when (profile.restriction) {
+private fun deviceProfileSymbol(profile: LocalDeviceProfile): String =
+  when (profile.restriction) {
     DeviceAccessRestriction.GATEWAY_CHILD -> "⌁"
     DeviceAccessRestriction.GATEWAY -> "⌂"
     DeviceAccessRestriction.CAMERA -> "◉"
     DeviceAccessRestriction.LOCK -> "◇"
     DeviceAccessRestriction.NONE -> profile.presentation.symbol
-}
+  }
 
 private val LocalDeviceProfile.isSensor: Boolean
-    get() = presentation.layoutId == StandardDeviceLayoutIds.SENSOR_SUMMARY
+  get() = presentation.layoutId == StandardDeviceLayoutIds.SENSOR_SUMMARY
 
 private val LocalDeviceProfile.canReadLocalStatus: Boolean
-    get() = restriction == DeviceAccessRestriction.NONE
+  get() = restriction == DeviceAccessRestriction.NONE
 
 private val TuyaCloudRegion.displayName: String
-    get() = when (this) {
-        TuyaCloudRegion.CHINA -> "Mainland China"
-        TuyaCloudRegion.WESTERN_AMERICA -> "Western America"
-        TuyaCloudRegion.EASTERN_AMERICA -> "Eastern America"
-        TuyaCloudRegion.CENTRAL_EUROPE -> "Central Europe"
-        TuyaCloudRegion.WESTERN_EUROPE -> "Western Europe"
-        TuyaCloudRegion.INDIA -> "India"
-        TuyaCloudRegion.SINGAPORE -> "Singapore"
+  get() =
+    when (this) {
+      TuyaCloudRegion.CHINA -> "Mainland China"
+      TuyaCloudRegion.WESTERN_AMERICA -> "Western America"
+      TuyaCloudRegion.EASTERN_AMERICA -> "Eastern America"
+      TuyaCloudRegion.CENTRAL_EUROPE -> "Central Europe"
+      TuyaCloudRegion.WESTERN_EUROPE -> "Western Europe"
+      TuyaCloudRegion.INDIA -> "India"
+      TuyaCloudRegion.SINGAPORE -> "Singapore"
     }
 
 @Preview(showBackground = true, heightDp = 900)
 @Composable
 private fun InventoryPreview() {
-    TinytuyaTheme(darkTheme = true) {
-        InventoryScreen(
-            catalog = DeviceCatalog(
-                schemaVersion = 2,
-                importedAtEpochMillis = 1_753_981_200_000L,
-                region = TuyaCloudRegion.WESTERN_AMERICA,
-                devices = listOf(
-                    CloudImportedDevice(
-                        id = "preview-device",
-                        name = "Reading lamp",
-                        localKey = SensitiveString.of("preview-secret"),
-                        category = "dj",
-                        productId = "",
-                        productName = "Wi-Fi lamp",
-                        model = "L1",
-                        mac = "",
-                        uuid = "",
-                        isSubDevice = false,
-                        gatewayId = "",
-                        nodeId = "",
-                        protocolVersion = "3.5",
-                        lastIp = "",
-                        mappingJson = "{}",
-                    )
-                ),
+  TinytuyaTheme(darkTheme = true) {
+    InventoryScreen(
+      catalog =
+        DeviceCatalog(
+          schemaVersion = 2,
+          importedAtEpochMillis = 1_753_981_200_000L,
+          region = TuyaCloudRegion.WESTERN_AMERICA,
+          devices =
+            listOf(
+              CloudImportedDevice(
+                id = "preview-device",
+                name = "Reading lamp",
+                localKey = SensitiveString.of("preview-secret"),
+                category = "dj",
+                productId = "",
+                productName = "Wi-Fi lamp",
+                model = "L1",
+                mac = "",
+                uuid = "",
+                isSubDevice = false,
+                gatewayId = "",
+                nodeId = "",
+                protocolVersion = "3.5",
+                lastIp = "",
+                mappingJson = "{}",
+              )
             ),
-            discovery = LanDiscoveryUiState.Idle,
-            control = LocalControlUiState.Unavailable,
-            onRefreshKnownDevices = {},
-            onDiscoverLan = {},
-            onIntent = {},
-            onOpenSettings = {},
-            onImportFromCloud = {},
-            onDeleteAllLocalData = {},
-        )
-    }
+        ),
+      discovery = LanDiscoveryUiState.Idle,
+      control = LocalControlUiState.Unavailable,
+      onRefreshKnownDevices = {},
+      onDiscoverLan = {},
+      onIntent = {},
+      onOpenSettings = {},
+      onImportFromCloud = {},
+      onDeleteAllLocalData = {},
+    )
+  }
 }

@@ -7,67 +7,68 @@ import com.prfd.tinytuya.data.python.TuyaPythonGateway
 import java.util.concurrent.CancellationException
 
 interface LocalStatusCoordinator {
-    suspend fun poll(
-        catalog: DeviceCatalog,
-        network: LanNetworkContext,
-    ): DeviceCatalog
+  suspend fun poll(
+    catalog: DeviceCatalog,
+    network: LanNetworkContext,
+  ): DeviceCatalog
 }
 
 class DefaultLocalStatusCoordinator(
-    private val gateway: TuyaPythonGateway,
-    private val catalogStore: DeviceCatalogStore,
+  private val gateway: TuyaPythonGateway,
+  private val catalogStore: DeviceCatalogStore,
 ) : LocalStatusCoordinator {
-    override suspend fun poll(
-        catalog: DeviceCatalog,
-        network: LanNetworkContext,
-    ): DeviceCatalog {
-        val lastDiscoveryAt = catalog.lastDiscoveryAtEpochMillis ?: return catalog
-        val currentLanById = catalog.lanDevices
-            .filter { it.lastSeenAtEpochMillis == lastDiscoveryAt }
-            .associateBy { it.id }
-        val devices = catalog.devices
-            .asSequence()
-            .filter { cloudDevice ->
-                LocalDeviceCapabilityRegistry.canPollStatus(cloudDevice) &&
-                    !cloudDevice.localKey.isBlank
-            }
-            .mapNotNull { cloudDevice ->
-                val lanDevice = currentLanById[cloudDevice.id] ?: return@mapNotNull null
-                val protocolVersion = lanDevice.protocolVersion
-                    .ifBlank { cloudDevice.protocolVersion }
-                if (!isSupportedLocalProtocol(protocolVersion)) return@mapNotNull null
-                LocalPollDevice(
-                    id = cloudDevice.id,
-                    ip = lanDevice.ip,
-                    localKey = cloudDevice.localKey,
-                    protocolVersion = protocolVersion,
-                )
-            }
-            .sortedBy { it.id }
-            .take(MAX_DEVICES_PER_REFRESH)
-            .toList()
-
-        if (devices.isEmpty()) return catalog
-
-        val result = try {
-            gateway.pollLocal(LocalPollRequest(network = network, devices = devices))
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: PythonBridgeException) {
-            throw LocalStatusException(
-                code = error.code,
-                message = error.message ?: "Local device status could not be read.",
-            )
+  override suspend fun poll(
+    catalog: DeviceCatalog,
+    network: LanNetworkContext,
+  ): DeviceCatalog {
+    val lastDiscoveryAt = catalog.lastDiscoveryAtEpochMillis ?: return catalog
+    val currentLanById =
+      catalog.lanDevices
+        .filter { it.lastSeenAtEpochMillis == lastDiscoveryAt }
+        .associateBy { it.id }
+    val devices =
+      catalog.devices
+        .asSequence()
+        .filter { cloudDevice ->
+          LocalDeviceCapabilityRegistry.canPollStatus(cloudDevice) && !cloudDevice.localKey.isBlank
         }
-        return catalogStore.mergeLocalPoll(result)
-    }
+        .mapNotNull { cloudDevice ->
+          val lanDevice = currentLanById[cloudDevice.id] ?: return@mapNotNull null
+          val protocolVersion = lanDevice.protocolVersion.ifBlank { cloudDevice.protocolVersion }
+          if (!isSupportedLocalProtocol(protocolVersion)) return@mapNotNull null
+          LocalPollDevice(
+            id = cloudDevice.id,
+            ip = lanDevice.ip,
+            localKey = cloudDevice.localKey,
+            protocolVersion = protocolVersion,
+          )
+        }
+        .sortedBy { it.id }
+        .take(MAX_DEVICES_PER_REFRESH)
+        .toList()
 
-    private companion object {
-        const val MAX_DEVICES_PER_REFRESH = 32
-    }
+    if (devices.isEmpty()) return catalog
+
+    val result =
+      try {
+        gateway.pollLocal(LocalPollRequest(network = network, devices = devices))
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: PythonBridgeException) {
+        throw LocalStatusException(
+          code = error.code,
+          message = error.message ?: "Local device status could not be read.",
+        )
+      }
+    return catalogStore.mergeLocalPoll(result)
+  }
+
+  private companion object {
+    const val MAX_DEVICES_PER_REFRESH = 32
+  }
 }
 
 internal fun isSupportedLocalProtocol(version: String): Boolean =
-    version in SUPPORTED_LOCAL_PROTOCOLS
+  version in SUPPORTED_LOCAL_PROTOCOLS
 
 private val SUPPORTED_LOCAL_PROTOCOLS = setOf("3.1", "3.2", "3.3", "3.4", "3.5")

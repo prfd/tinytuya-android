@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     id("com.chaquo.python")
+    id("com.ncorti.ktfmt.gradle") version "0.27.0"
 }
 
 android {
@@ -50,6 +51,12 @@ chaquopy {
             install("tinytuya==1.20.0")
         }
     }
+}
+
+ktfmt {
+    googleStyle()
+    maxWidth.set(100)
+    removeUnusedImports.set(false)
 }
 
 dependencies {

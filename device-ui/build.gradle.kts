@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.compose)
+    id("com.ncorti.ktfmt.gradle") version "0.27.0"
 }
 
 android {
@@ -23,6 +24,12 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+ktfmt {
+    googleStyle()
+    maxWidth.set(100)
+    removeUnusedImports.set(false)
 }
 
 dependencies {

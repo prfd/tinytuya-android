@@ -1,11 +1,11 @@
 package com.prfd.tinytuya.device.core.capability
 
 enum class DeviceIntentKind {
-    SET_TOGGLE,
-    SET_RANGE,
-    SET_CHOICE,
-    INVOKE_ACTION,
-    SET_COLOR,
+  SET_TOGGLE,
+  SET_RANGE,
+  SET_CHOICE,
+  INVOKE_ACTION,
+  SET_COLOR,
 }
 
 /**
@@ -14,93 +14,90 @@ enum class DeviceIntentKind {
  * Device IDs route the request in the app but are redacted from every string representation.
  */
 sealed interface DeviceIntent {
-    val deviceId: String
-    val capabilityId: CapabilityId
-    val kind: DeviceIntentKind
+  val deviceId: String
+  val capabilityId: CapabilityId
+  val kind: DeviceIntentKind
 
-    data class SetToggle(
-        override val deviceId: String,
-        override val capabilityId: CapabilityId,
-        val value: Boolean,
-    ) : DeviceIntent {
-        override val kind = DeviceIntentKind.SET_TOGGLE
+  data class SetToggle(
+    override val deviceId: String,
+    override val capabilityId: CapabilityId,
+    val value: Boolean,
+  ) : DeviceIntent {
+    override val kind = DeviceIntentKind.SET_TOGGLE
 
-        init {
-            requireValidDeviceId(deviceId)
-        }
-
-        override fun toString(): String =
-            "SetToggle(deviceId=[REDACTED], capabilityId=$capabilityId, value=$value)"
+    init {
+      requireValidDeviceId(deviceId)
     }
 
-    data class SetRange(
-        override val deviceId: String,
-        override val capabilityId: CapabilityId,
-        val value: Int,
-    ) : DeviceIntent {
-        override val kind = DeviceIntentKind.SET_RANGE
+    override fun toString(): String =
+      "SetToggle(deviceId=[REDACTED], capabilityId=$capabilityId, value=$value)"
+  }
 
-        init {
-            requireValidDeviceId(deviceId)
-        }
+  data class SetRange(
+    override val deviceId: String,
+    override val capabilityId: CapabilityId,
+    val value: Int,
+  ) : DeviceIntent {
+    override val kind = DeviceIntentKind.SET_RANGE
 
-        override fun toString(): String =
-            "SetRange(deviceId=[REDACTED], capabilityId=$capabilityId, value=$value)"
+    init {
+      requireValidDeviceId(deviceId)
     }
 
-    data class SetChoice(
-        override val deviceId: String,
-        override val capabilityId: CapabilityId,
-        val wireValue: String,
-    ) : DeviceIntent {
-        override val kind = DeviceIntentKind.SET_CHOICE
+    override fun toString(): String =
+      "SetRange(deviceId=[REDACTED], capabilityId=$capabilityId, value=$value)"
+  }
 
-        init {
-            requireValidDeviceId(deviceId)
-        }
+  data class SetChoice(
+    override val deviceId: String,
+    override val capabilityId: CapabilityId,
+    val wireValue: String,
+  ) : DeviceIntent {
+    override val kind = DeviceIntentKind.SET_CHOICE
 
-        override fun toString(): String =
-            "SetChoice(deviceId=[REDACTED], capabilityId=$capabilityId, wireValue=[REDACTED])"
+    init {
+      requireValidDeviceId(deviceId)
     }
 
-    data class InvokeAction(
-        override val deviceId: String,
-        override val capabilityId: CapabilityId,
-        val wireValue: String,
-    ) : DeviceIntent {
-        override val kind = DeviceIntentKind.INVOKE_ACTION
+    override fun toString(): String =
+      "SetChoice(deviceId=[REDACTED], capabilityId=$capabilityId, wireValue=[REDACTED])"
+  }
 
-        init {
-            requireValidDeviceId(deviceId)
-        }
+  data class InvokeAction(
+    override val deviceId: String,
+    override val capabilityId: CapabilityId,
+    val wireValue: String,
+  ) : DeviceIntent {
+    override val kind = DeviceIntentKind.INVOKE_ACTION
 
-        override fun toString(): String =
-            "InvokeAction(deviceId=[REDACTED], capabilityId=$capabilityId, wireValue=[REDACTED])"
+    init {
+      requireValidDeviceId(deviceId)
     }
 
-    data class SetColor(
-        override val deviceId: String,
-        override val capabilityId: CapabilityId,
-        val color: TuyaHsvColor,
-    ) : DeviceIntent {
-        override val kind = DeviceIntentKind.SET_COLOR
+    override fun toString(): String =
+      "InvokeAction(deviceId=[REDACTED], capabilityId=$capabilityId, wireValue=[REDACTED])"
+  }
 
-        init {
-            requireValidDeviceId(deviceId)
-        }
+  data class SetColor(
+    override val deviceId: String,
+    override val capabilityId: CapabilityId,
+    val color: TuyaHsvColor,
+  ) : DeviceIntent {
+    override val kind = DeviceIntentKind.SET_COLOR
 
-        override fun toString(): String =
-            "SetColor(deviceId=[REDACTED], capabilityId=$capabilityId, color=$color)"
+    init {
+      requireValidDeviceId(deviceId)
     }
+
+    override fun toString(): String =
+      "SetColor(deviceId=[REDACTED], capabilityId=$capabilityId, color=$color)"
+  }
 }
 
 private fun requireValidDeviceId(deviceId: String) {
-    require(
-        deviceId.length in 1..MAX_DEVICE_ID_LENGTH &&
-            deviceId.none(Char::isISOControl)
-    ) {
-        "Device intent IDs must be bounded single-line text."
-    }
+  require(deviceId.length in 1..MAX_DEVICE_ID_LENGTH && deviceId.none(Char::isISOControl)) {
+    "Device intent IDs must be bounded single-line text."
+  }
 }
 
 private const val MAX_DEVICE_ID_LENGTH = 128

@@ -210,7 +210,7 @@ Read:
 - `_parse_local_poll_input`, `_normalize_local_data_points`, `_poll_one_local_device`, and `poll_local` in [tuya_bridge.py](app/src/main/python/tuya_bridge.py).
 - `mergeLocalPoll` in [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt).
 
-The coordinator supplies local keys only to the bounded status operation after an address is proven current. Python retries short reads, normalizes primitive DPS values, closes the device, and clears TinyTuya's in-memory key fields in `finally`.
+The coordinator supplies local keys only to the bounded status operation after an address is proven current. Python gives slow session negotiation bounded latency headroom, backs off before retrying transient failures, normalizes primitive DPS values, closes the device, and clears TinyTuya's in-memory key fields in `finally`.
 
 ### Part C: reuse verified addresses without UDP
 

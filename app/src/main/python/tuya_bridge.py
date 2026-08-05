@@ -512,8 +512,16 @@ def discover_lan(network_json, known_devices_json):
 # local to these helpers to keep this boundary easy to package and test.
 LOCAL_POLL_MAX_DEVICE_COUNT = 32
 LOCAL_POLL_MAX_DATA_POINT_COUNT = 256
-LOCAL_POLL_SOCKET_TIMEOUT_SECONDS = 1.5
-LOCAL_POLL_ATTEMPT_DELAYS_SECONDS = (0.0, 0.25, 0.75)
+# Real devices can legitimately take longer than 1.5 seconds to finish a status
+# exchange, especially while negotiating a 3.4/3.5 session key. Keep well below
+# TinyTuya's five-second default, but leave enough margin that a slow response is
+# not turned into a false offline result.
+LOCAL_POLL_SOCKET_TIMEOUT_SECONDS = 2.5
+# A Tuya device accepts only one local TCP connection at a time, and aggressive
+# reconnects can prolong a transient busy period. These are delays after the
+# preceding attempt completes, not a polling cadence for devices which already
+# responded.
+LOCAL_POLL_ATTEMPT_DELAYS_SECONDS = (0.0, 2.0, 5.0)
 LOCAL_POLL_WORKER_COUNT = 4
 LOCAL_POLL_PROTOCOLS = frozenset(("3.1", "3.2", "3.3", "3.4", "3.5"))
 

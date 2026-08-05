@@ -1,7 +1,5 @@
 package com.prfd.tinytuya.device.core.profile
 
-import com.prfd.tinytuya.device.core.schema.DpSchema
-
 enum class DeviceAccessRestriction {
     NONE,
     GATEWAY_CHILD,
@@ -38,13 +36,13 @@ object ProtectedDevicePolicy {
 
 data class DeviceClassification(
     val restriction: DeviceAccessRestriction,
-    val family: DeviceFamilyResolution,
+    val family: DeviceFamilyDefinition?,
 )
 
 class DeviceClassifier(private val registry: DeviceFamilyRegistry) {
-    fun classify(identity: DeviceIdentity, schema: DpSchema): DeviceClassification =
+    fun classify(identity: DeviceIdentity): DeviceClassification =
         DeviceClassification(
             restriction = ProtectedDevicePolicy.restrictionFor(identity),
-            family = registry.resolve(identity, schema),
+            family = registry.familyFor(identity.category),
         )
 }

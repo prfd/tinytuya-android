@@ -12,7 +12,6 @@ import com.prfd.tinytuya.device.core.capability.ResolvedDevice
 import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
 import com.prfd.tinytuya.device.core.profile.DeviceClassification
 import com.prfd.tinytuya.device.core.profile.DeviceClassifier
-import com.prfd.tinytuya.device.core.profile.DeviceFamilyResolution
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
@@ -41,11 +40,11 @@ object LocalDeviceCapabilityRegistry {
         lastDiscoveryAtEpochMillis: Long?,
     ): LocalDeviceProfile {
         val schema = parseTuyaDpSchema(device.mappingJson)
-        val classification = classify(device, schema)
-        val definition = (classification.family as? DeviceFamilyResolution.Matched)?.definition
+        val classification = classify(device)
+        val definition = classification.family
         val specs = definition?.let { matched ->
             runCatching {
-                matched.capabilitySpecs(device.toDeviceIdentity(), schema)
+                matched.capabilitySpecs(schema)
             }.getOrDefault(emptyList())
         }.orEmpty()
         val capabilityAccess = capabilityAccess(classification.restriction, specs)
@@ -74,8 +73,8 @@ object LocalDeviceCapabilityRegistry {
         ProtectedDevicePolicy.restrictionFor(device.toDeviceIdentity()) ==
             DeviceAccessRestriction.NONE
 
-    private fun classify(device: CloudImportedDevice, schema: DpSchema): DeviceClassification =
-        deviceClassifier.classify(device.toDeviceIdentity(), schema)
+    private fun classify(device: CloudImportedDevice): DeviceClassification =
+        deviceClassifier.classify(device.toDeviceIdentity())
 
     private fun capabilityAccess(
         restriction: DeviceAccessRestriction,
@@ -128,9 +127,6 @@ private fun LocalDataPointKind.toObservedKind(): ObservedDataPointKind = when (t
 
 private fun CloudImportedDevice.toDeviceIdentity(): DeviceIdentity = DeviceIdentity.normalize(
     category = category,
-    productId = productId,
-    productName = productName,
-    model = model,
     isSubDevice = isSubDevice,
 )
 

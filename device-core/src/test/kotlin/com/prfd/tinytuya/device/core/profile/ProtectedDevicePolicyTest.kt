@@ -5,19 +5,13 @@ import org.junit.Test
 
 class ProtectedDevicePolicyTest {
     @Test
-    fun `normalizes bounded non-secret identity metadata`() {
+    fun `normalizes the cloud category used for classification`() {
         val identity = DeviceIdentity.normalize(
             category = " DJ ",
-            productId = " product-id ",
-            productName = " Bulb ",
-            model = " Model ",
             isSubDevice = false,
         )
 
         assertEquals("dj", identity.category)
-        assertEquals("product-id", identity.productId)
-        assertEquals("Bulb", identity.productName)
-        assertEquals("Model", identity.model)
     }
 
     @Test
@@ -58,9 +52,6 @@ class ProtectedDevicePolicyTest {
         isSubDevice: Boolean = false,
     ): DeviceIdentity = DeviceIdentity.normalize(
         category = category,
-        productId = "",
-        productName = "",
-        model = "",
         isSubDevice = isSubDevice,
     )
 }

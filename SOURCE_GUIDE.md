@@ -32,7 +32,7 @@ The ownership boundary is:
 | Module | Owns | Must not own |
 | --- | --- | --- |
 | `:device-core` | Normalized DP schemas, family contracts, protected-device policy, semantic capability specs and intents, resolution, codecs, and command authorization | Android, Compose, app models, transport, persistence, Python, or secrets |
-| `:device-profiles` | Built-in family matching, presentation metadata, support evidence, and capability-spec assembly | Fresh observations, DPS writes, app models, UI, transport, persistence, Python, or secrets |
+| `:device-profiles` | Built-in category registration, presentation metadata, and capability-spec assembly | Fresh observations, DPS writes, app models, UI, transport, persistence, Python, or secrets |
 | `:device-ui` | Safe UI models, atomic controls, compound layout contracts, and reusable layouts | Catalog models, raw mapping JSON, DPS bindings, network state, local keys, persistence, or Python |
 | `:app` | Raw Tuya mapping adaptation, fresh observations, runtime policy application, explicit profile/layout composition, ViewModels, persistence, and transport | Device-specific copies of generic authorization or transport behavior |
 
@@ -236,13 +236,14 @@ version is unsupported, or `ProtectedDevicePolicy` denies direct local access.
 
 ## Pass 4: capability policy and device cards
 
-Cloud categories and DPS mappings are inconsistent across Tuya products, so the app separates presentation from permission:
+Cloud categories select families while DPS mappings authorize capabilities, so the app separates
+presentation from permission:
 
-- The matched `DeviceFamilyDefinition.presentation` supplies the stable layout, type label, and
-  symbol.
+- The category-selected `DeviceFamilyDefinition.presentation` supplies the stable layout, type
+  label, and symbol.
 - `DeviceAccessRestriction` is the final protected-device deny policy.
-- `CapabilityAccess` intersects that policy with the matched specs before any observed capability can
-  become writable.
+- `CapabilityAccess` intersects that policy with the selected family's specs before any observed
+  capability can become writable.
 
 Read the capability path in four pieces:
 
@@ -264,8 +265,8 @@ Read the capability path in four pieces:
 
 A Boolean control exists only when all of these agree:
 
-1. `ProtectedDevicePolicy` returns no restriction, and exactly one matched family declares the
-   semantic toggle writable.
+1. `ProtectedDevicePolicy` returns no restriction, and the explicitly registered category family
+   declares the semantic toggle writable.
 2. The cached cloud mapping uniquely declares a DP as Boolean with a recognized switch code.
 3. A successful status response at or after the current discovery generation independently reports
    that DP as Boolean.
@@ -274,9 +275,9 @@ Light mode, white brightness, color temperature, and HSV color follow the same r
 
 Profiles declaring writable semantics can receive `CapabilityAccess.READ_WRITE`; individual
 capabilities still become writable only after the complete schema/fresh-observation intersection.
-Families with only read-only specs and unmatched or ambiguous devices receive `READ_ONLY`; the latter
-resolve no semantic capabilities and use the generic presentation. Gateway children, gateways,
-cameras, and locks receive `DENIED` and do not reach local polling or writes.
+Families with only read-only specs and devices with unknown categories receive `READ_ONLY`; unknown
+categories resolve no semantic capabilities and use the generic presentation. Gateway children,
+gateways, cameras, and locks receive `DENIED` and do not reach local polling or writes.
 
 Cover actions deserve a close read in `BuiltinCapabilitySpecs.kt`. The profile accepts only an
 imported Enum which explicitly contains every value in one reviewed open/stop/close vocabulary.
@@ -308,7 +309,7 @@ Then read the presentation pipeline:
   the renderer registry and hosts the selected compound or complete generic atomic fallback.
 
 That is the complete ordinary extension seam. A product covered by existing primitives changes
-`:device-profiles`, sanitized host fixtures, support evidence, and one explicit family registry entry;
+`:device-profiles`, sanitized host fixtures, KDoc, and one explicit category registry entry;
 it does not add an app callback or transport operation. A genuinely different arrangement may add a
 safe `:device-ui` layout plus one explicit app registry entry, while the atomic fallback remains
 complete. Follow [DEVICE_CONTRIBUTING.md](DEVICE_CONTRIBUTING.md) for the contribution checklist.
@@ -480,7 +481,7 @@ After each production flow, read its nearest test instead of immediately reading
 | Write authorization and rollback | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt) |
 | Core schema, resolution, authorization, and protected policy | [DpSchemaTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/schema/DpSchemaTest.kt), [CapabilityResolverTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityResolverTest.kt), [CapabilityCommandAuthorizerTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityCommandAuthorizerTest.kt), and [ProtectedDevicePolicyTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/profile/ProtectedDevicePolicyTest.kt) |
 | Android profile adapter and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
-| Built-in profiles, cover fixtures, and public evidence | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt), [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt), and [BuiltinSupportDocumentationTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinSupportDocumentationTest.kt) |
+| Built-in category profiles and cover fixtures | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt) and [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt) |
 | Atomic controls | [DeviceCapabilityRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderersInstrumentedTest.kt) |
 | Layout registry and cover/light/sensor fallback | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt) |
 | Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
@@ -495,7 +496,7 @@ The opt-in [LightCapabilityProbeInstrumentedTest.kt](app/src/androidTest/java/co
 
 For a device contribution, follow [DEVICE_CONTRIBUTING.md](DEVICE_CONTRIBUTING.md). Its profile and
 fixture templates are the shortest intended path. [SUPPORTED_DEVICES.md](SUPPORTED_DEVICES.md) is the
-public evidence boundary; a host test verifies its generated block against built-in profile metadata.
+manually maintained public evidence boundary.
 
 ## Files to postpone
 
@@ -516,8 +517,8 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 - **Mapping** — cloud metadata which associates a numeric DP ID with a code, type, range, scale, unit, or allowed enum values.
 - **Local key** — the per-device secret TinyTuya needs to encrypt and authenticate local protocol traffic.
 - **Protocol version** — the Tuya local protocol generation, currently accepted from 3.1 through 3.5.
-- **Device family** — the matched profile definition whose metadata supplies capabilities and a
-  presentation layout; unmatched or ambiguous evidence stays generic.
+- **Device family** — the profile definition selected by an explicitly registered Tuya Cloud
+  category; unknown categories stay generic.
 - **Capability access** — the fail-closed `READ_WRITE`, `READ_ONLY`, or `DENIED` intersection applied
   before resolving observed capabilities.
 - **Gateway child** — a Zigbee/BLE-style child reached through a Tuya gateway, not a direct TCP 6668 device.

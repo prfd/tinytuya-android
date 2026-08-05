@@ -1,7 +1,7 @@
 # Contributing device support
 
 TinyTuya Android uses compile-time device profiles built from a small semantic capability vocabulary.
-Most products should require profile metadata, sanitized fixtures, and one explicit registry entry;
+Most products should require an explicit Cloud category, capability specs, and sanitized fixtures;
 they must not add a ViewModel callback, Python operation, socket path, or vendor-specific copy of a
 standard control.
 
@@ -30,8 +30,9 @@ ranges, command vocabularies, or side effects are never write authority.
 
 ## Profile template
 
-Add a stable ID and one entry to `BuiltinDeviceFamilies.definitions`. Prefer schema evidence over a
-broad category, and keep the support claim honest:
+Add a stable ID and one entry to `BuiltinDeviceFamilies.definitions`. A family must claim explicit
+normalized categories imported from Tuya Cloud; mapping codes never infer a family. Record the
+validation boundary in nearby KDoc and `SUPPORTED_DEVICES.md`:
 
 ```kotlin
 // In BuiltinDeviceFamilyIds:
@@ -39,17 +40,12 @@ val EXAMPLE_FAN = DeviceFamilyId("example_fan")
 
 DeclarativeDeviceFamily(
     id = BuiltinDeviceFamilyIds.EXAMPLE_FAN,
-    support = DeviceSupport(
-        DeviceSupportLevel.SYNTHETIC_ONLY,
-        "Example fan controls have synthetic coverage only.",
-    ),
     presentation = DevicePresentation(
         StandardDeviceLayoutIds.GENERIC_CONTROLS,
         typeLabel = "Example fan",
         symbol = "F",
     ),
     categories = setOf("sanitized_category"),
-    schemaMatcher = { definition -> definition.code in setOf("switch", "fan_speed") },
 )
 ```
 
@@ -78,13 +74,13 @@ private fun exampleFanSpecs(): List<CapabilitySpec> = listOf(
 
 Capability IDs are stable semantic identifiers. DPS IDs are selected from the imported mapping at
 runtime and must not appear in UI code or semantic intents. A writable declaration is only a request:
-central access policy, a unique trusted match, compatible schema, a fresh same-generation primitive
-observation, and codec validation all still have to agree.
+central access policy, an explicitly registered category, compatible schema, a fresh same-generation
+primitive observation, and codec validation all still have to agree.
 
 ## Sanitized fixture template
 
-Use pure host fixtures for matching, capability resolution, and authorization. Values below are
-invented and contain no device identity or secret:
+Use pure host fixtures for category selection, capability resolution, and authorization. Values
+below are invented and contain no device identity or secret:
 
 ```kotlin
 val schema = DpSchema.normalize(
@@ -130,12 +126,12 @@ rollback at the generic coordinator boundary without adding a device-specific ga
       reauthorized from the latest catalog immediately before the generic write.
 - [ ] UI extensions receive only safe UI models, emit only semantic intents, retain the atomic
       fallback, and include accessibility and fault/absence coverage.
-- [ ] Host tests cover matching/resolution/authorization; Android tests are added only for Android,
-      Compose, persistence, lifecycle, Python, or network behavior.
+- [ ] Host tests cover category registration/resolution/authorization; Android tests are added only
+      for Android, Compose, persistence, lifecycle, Python, or network behavior.
 - [ ] `verifyDeviceModuleBoundaries` passes, with no new app dependency or app-owned first-party
       import in a device module.
-- [ ] `SUPPORTED_DEVICES.md` matches profile metadata and distinguishes real hardware, synthetic-only,
-      experimental, and unsupported evidence.
+- [ ] `SUPPORTED_DEVICES.md` lists the registered categories and honestly distinguishes real hardware,
+      synthetic-only, experimental, and unsupported evidence.
 - [ ] A real-hardware claim names only behavior actually exercised on representative hardware. A
       screenshot proves presentation, not protocol compatibility.
 - [ ] Windows Gradle verification, in-place device installation, and the repository screenshot

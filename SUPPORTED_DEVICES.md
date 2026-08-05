@@ -1,30 +1,27 @@
 # Supported devices
 
-TinyTuya Android recognizes device families from imported, sanitized Tuya metadata and mapping
-schemas. A recognized family is not automatically writable: local control additionally requires a
-direct-Wi-Fi device, a current discovery generation, a fresh independent DPS observation, compatible
-mapping types and bounds, and confirmed read-back.
+TinyTuya Android selects a device family only from the category imported from Tuya Cloud. Unknown
+categories remain unsupported even if their mappings reuse familiar DP codes. A registered category
+is not automatically writable: local control additionally requires a direct-Wi-Fi device, a current
+discovery generation, a fresh independent DPS observation, compatible mapping types and bounds, and
+confirmed read-back.
 
 ## Profile evidence
 
-The following block is verified against `BuiltinDeviceFamilies.definitions` by a host JVM test. Edit
-the profile metadata first; the test will print the required documentation update if this table
-drifts.
+This table is maintained alongside the built-in category registry and its nearby KDoc.
 
-<!-- BEGIN GENERATED DEVICE SUPPORT -->
-| Profile | Family ID | Evidence | Profile claim |
+| Profile | Cloud categories | Evidence | Profile claim |
 | --- | --- | --- | --- |
-| Switch or outlet | `switch_or_outlet` | Real hardware | Switch and outlet control validated on representative local hardware. |
-| Smart light | `light` | Real hardware | Power and first-release light controls validated on a category dj bulb. |
-| Curtain or cover | `cover` | Synthetic only | Mapped open, stop, close, and optional position controls have synthetic coverage only. |
-| Temperature and humidity sensor | `sensor_climate` | Synthetic only | Temperature and humidity sensor presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Contact sensor | `sensor_contact` | Synthetic only | Contact sensor presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Motion sensor | `sensor_motion` | Synthetic only | Motion sensor presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Presence sensor | `sensor_presence` | Synthetic only | Presence sensor presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Water leak sensor | `sensor_water_leak` | Synthetic only | Water leak sensor presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Smoke alarm | `sensor_smoke` | Synthetic only | Smoke alarm presentation has synthetic coverage without a real-hardware compatibility claim. |
-| Gas alarm | `sensor_gas` | Synthetic only | Gas alarm presentation has synthetic coverage without a real-hardware compatibility claim. |
-<!-- END GENERATED DEVICE SUPPORT -->
+| Switch or outlet | `kg`, `cz`, `pc` | Real hardware | Switch and outlet control validated on representative local hardware. |
+| Smart light | `dj`, `xdd`, `fwd`, `dc`, `dd`, `gyd`, `fsd`, `tyndj` | Real hardware | Power and first-release light controls validated on a category `dj` bulb. |
+| Curtain or cover | `cl`, `clkg` | Synthetic only | Mapped open, stop, close, and optional position controls have synthetic coverage only. |
+| Temperature and humidity sensor | `wsdcg` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Contact sensor | `mcs` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Motion sensor | `pir` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Presence sensor | `hps` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Water leak sensor | `sj` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Smoke alarm | `ywbj` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
+| Gas alarm | `rqbj` | Synthetic only | Presentation has synthetic coverage without a real-hardware compatibility claim. |
 
 ## First-release behavior
 
@@ -41,7 +38,7 @@ unknown vocabularies, missing Stop support, malformed position bounds, stale obs
 gateway children stay unavailable or read-only. The app does not use TinyTuya's heuristic cover-type
 fallback as write authority.
 
-Support is intentionally narrower than category recognition. Firmware, protocol, vendor mapping,
+Support is intentionally narrower than category registration. Firmware, protocol, vendor mapping,
 gateway topology, and product revisions can differ under the same marketing name. Synthetic-only
 means automated behavior is covered without claiming successful operation on representative physical
 hardware.

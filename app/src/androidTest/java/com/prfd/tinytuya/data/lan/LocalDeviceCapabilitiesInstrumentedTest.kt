@@ -335,7 +335,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
-    fun strongSensorMappingIdentifiesAnUnknownProductWithoutOverridingASwitchCategory() {
+    fun unknownCategoryRemainsUnsupportedDespiteKnownMappingCodes() {
         val mapping = """
             {
               "1":{"code":"switch_1","type":"Boolean"},
@@ -355,8 +355,9 @@ class LocalDeviceCapabilitiesInstrumentedTest {
             lastDiscoveryAtEpochMillis = DISCOVERED_AT,
         )
 
-        assertEquals(BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR, unknownProfile.familyId)
+        assertEquals(null, unknownProfile.familyId)
         assertEquals(CapabilityAccess.READ_ONLY, unknownProfile.capabilityAccess)
+        assertTrue(unknownProfile.capabilities.capabilities.isEmpty())
         assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, switchProfile.familyId)
         assertEquals(
             listOf("1"),
@@ -365,7 +366,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
     }
 
     @Test
-    fun ambiguousDistinctiveMappingsFallBackToGenericReadOnlyAccess() {
+    fun mixedKnownMappingsCannotClassifyAnUnknownCategory() {
         val profile = LocalDeviceCapabilityRegistry.profile(
             device = sampleDevice(
                 category = "custom",

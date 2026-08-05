@@ -4,15 +4,8 @@ import com.prfd.tinytuya.device.core.capability.CapabilitySpec
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyDefinition
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyRegistry
-import com.prfd.tinytuya.device.core.profile.DeviceIdentity
-import com.prfd.tinytuya.device.core.profile.DeviceMatch
-import com.prfd.tinytuya.device.core.profile.DeviceMatchStrength
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
-import com.prfd.tinytuya.device.core.profile.DeviceSupport
-import com.prfd.tinytuya.device.core.profile.DeviceSupportLevel
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
-import com.prfd.tinytuya.device.core.schema.DpDeclaredType
-import com.prfd.tinytuya.device.core.schema.DpDefinition
 import com.prfd.tinytuya.device.core.schema.DpSchema
 
 object BuiltinDeviceFamilyIds {
@@ -28,102 +21,81 @@ object BuiltinDeviceFamilyIds {
     val GAS_SENSOR = DeviceFamilyId("sensor_gas")
 }
 
+/**
+ * Built-in device families selected exclusively by the normalized category imported from Tuya
+ * Cloud. Switches and lights have representative hardware evidence; covers and sensor families
+ * currently have synthetic coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
+ */
 object BuiltinDeviceFamilies {
     val definitions: List<DeviceFamilyDefinition> = listOf(
         DeclarativeDeviceFamily(
             id = BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
-            support = DeviceSupport(
-                DeviceSupportLevel.REAL_HARDWARE,
-                "Switch and outlet control validated on representative local hardware.",
-            ),
             presentation = DevicePresentation(
                 StandardDeviceLayoutIds.GENERIC_CONTROLS,
                 typeLabel = "Switch or outlet",
                 symbol = "⏻",
             ),
             categories = setOf("kg", "cz", "pc"),
-            schemaStrength = DeviceMatchStrength.HEURISTIC_SCHEMA,
-            schemaMatcher = { definition ->
-                definition.declaredType == DpDeclaredType.BOOLEAN &&
-                    definition.code.orEmpty().isSwitchCode()
-            },
         ),
         DeclarativeDeviceFamily(
             id = BuiltinDeviceFamilyIds.LIGHT,
-            support = DeviceSupport(
-                DeviceSupportLevel.REAL_HARDWARE,
-                "Power and first-release light controls validated on a category dj bulb.",
-            ),
             presentation = DevicePresentation(
                 StandardDeviceLayoutIds.LIGHT,
                 typeLabel = "Smart light",
                 symbol = "✦",
             ),
             categories = setOf("dj", "xdd", "fwd", "dc", "dd", "gyd", "fsd", "tyndj"),
-            schemaMatcher = { definition -> definition.code in LIGHT_PROFILE_CODES },
         ),
         DeclarativeDeviceFamily(
             id = BuiltinDeviceFamilyIds.COVER,
-            support = DeviceSupport(
-                DeviceSupportLevel.SYNTHETIC_ONLY,
-                "Mapped open, stop, close, and optional position controls have synthetic coverage only.",
-            ),
             presentation = DevicePresentation(
                 StandardDeviceLayoutIds.COVER,
                 typeLabel = "Curtain or cover",
                 symbol = "↕",
             ),
             categories = setOf("cl", "clkg"),
-            schemaMatcher = { definition -> definition.code in COVER_PROFILE_CODES },
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
             label = "Temperature and humidity sensor",
             symbol = "°",
             categories = setOf("wsdcg"),
-            codes = CLIMATE_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.CONTACT_SENSOR,
             label = "Contact sensor",
             symbol = "▯",
             categories = setOf("mcs"),
-            codes = CONTACT_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.MOTION_SENSOR,
             label = "Motion sensor",
             symbol = "⌁",
             categories = setOf("pir"),
-            codes = MOTION_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
             label = "Presence sensor",
             symbol = "◎",
             categories = setOf("hps"),
-            codes = PRESENCE_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
             label = "Water leak sensor",
             symbol = "≈",
             categories = setOf("sj"),
-            codes = WATER_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.SMOKE_SENSOR,
             label = "Smoke alarm",
             symbol = "≋",
             categories = setOf("ywbj"),
-            codes = SMOKE_SENSOR_CODES,
         ),
         sensorFamily(
             id = BuiltinDeviceFamilyIds.GAS_SENSOR,
             label = "Gas alarm",
             symbol = "◇",
             categories = setOf("rqbj"),
-            codes = GAS_SENSOR_CODES,
         ),
     )
 
@@ -132,22 +104,11 @@ object BuiltinDeviceFamilies {
 
 private class DeclarativeDeviceFamily(
     override val id: DeviceFamilyId,
-    override val support: DeviceSupport,
     override val presentation: DevicePresentation,
-    private val categories: Set<String>,
-    private val schemaStrength: DeviceMatchStrength = DeviceMatchStrength.DISTINCTIVE_SCHEMA,
-    private val schemaMatcher: (DpDefinition) -> Boolean,
+    override val categories: Set<String>,
 ) : DeviceFamilyDefinition {
-    override fun match(identity: DeviceIdentity, schema: DpSchema): DeviceMatch = when {
-        identity.category in categories -> DeviceMatch(DeviceMatchStrength.CATEGORY)
-        schema.definitions.any(schemaMatcher) -> DeviceMatch(schemaStrength)
-        else -> DeviceMatch.NONE
-    }
-
-    override fun capabilitySpecs(
-        identity: DeviceIdentity,
-        schema: DpSchema,
-    ): List<CapabilitySpec> = BuiltinCapabilitySpecs.forFamily(id, schema)
+    override fun capabilitySpecs(schema: DpSchema): List<CapabilitySpec> =
+        BuiltinCapabilitySpecs.forFamily(id, schema)
 }
 
 private fun sensorFamily(
@@ -155,61 +116,12 @@ private fun sensorFamily(
     label: String,
     symbol: String,
     categories: Set<String>,
-    codes: Set<String>,
 ): DeviceFamilyDefinition = DeclarativeDeviceFamily(
     id = id,
-    support = DeviceSupport(
-        DeviceSupportLevel.SYNTHETIC_ONLY,
-        "$label presentation has synthetic coverage without a real-hardware compatibility claim.",
-    ),
     presentation = DevicePresentation(
         StandardDeviceLayoutIds.SENSOR_SUMMARY,
         typeLabel = label,
         symbol = symbol,
     ),
     categories = categories,
-    schemaMatcher = { definition -> definition.code in codes },
-)
-
-private fun String.isSwitchCode(): Boolean =
-    this == "switch" || this == "switch_led" || SWITCH_NUMBER_CODE.matches(this)
-
-private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")
-private val LIGHT_PROFILE_CODES = setOf(
-    "switch_led",
-    "bright_value",
-    "bright_value_v2",
-    "temp_value",
-    "temp_value_v2",
-    "colour_data",
-    "colour_data_v2",
-    "work_mode",
-)
-private val COVER_PROFILE_CODES = setOf(
-    "control",
-    "control_2",
-    "percent_control",
-    "percent_control_2",
-    "percent_state",
-    "percent_state_2",
-)
-private val CLIMATE_SENSOR_CODES = setOf(
-    "temp_current",
-    "va_temperature",
-    "humidity_value",
-    "va_humidity",
-)
-private val CONTACT_SENSOR_CODES = setOf("doorcontact_state")
-private val MOTION_SENSOR_CODES = setOf("pir")
-private val PRESENCE_SENSOR_CODES = setOf("presence_state")
-private val WATER_SENSOR_CODES = setOf("watersensor_state")
-private val SMOKE_SENSOR_CODES = setOf(
-    "smoke_sensor_status",
-    "smoke_sensor_state",
-    "smoke_sensor_value",
-)
-private val GAS_SENSOR_CODES = setOf(
-    "gas_sensor_status",
-    "gas_sensor_state",
-    "gas_sensor_value",
 )

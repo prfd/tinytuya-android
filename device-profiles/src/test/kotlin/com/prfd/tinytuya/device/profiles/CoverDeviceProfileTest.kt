@@ -11,7 +11,6 @@ import com.prfd.tinytuya.device.core.capability.RangeCapabilitySpec
 import com.prfd.tinytuya.device.core.capability.ResolvedActionGroup
 import com.prfd.tinytuya.device.core.capability.ResolvedMeasurement
 import com.prfd.tinytuya.device.core.capability.ResolvedRange
-import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.schema.DpDefinitionInput
 import com.prfd.tinytuya.device.core.schema.DpSchema
 import org.junit.Assert.assertEquals
@@ -138,7 +137,7 @@ class CoverDeviceProfileTest {
         assertTrue(resolve(schema, observation, CapabilityAccess.DENIED).capabilities.isEmpty())
     }
 
-    private fun specs(schema: DpSchema) = coverDefinition.capabilitySpecs(IDENTITY, schema)
+    private fun specs(schema: DpSchema) = coverDefinition.capabilitySpecs(schema)
 
     private fun resolve(
         schema: DpSchema,
@@ -182,12 +181,5 @@ class CoverDeviceProfileTest {
         val coverDefinition = BuiltinDeviceFamilies.definitions.single { definition ->
             definition.id == BuiltinDeviceFamilyIds.COVER
         }
-        val IDENTITY = DeviceIdentity.normalize(
-            category = "cl",
-            productId = "sanitized-cover-fixture",
-            productName = "Fixture cover",
-            model = "Synthetic",
-            isSubDevice = false,
-        )
     }
 }

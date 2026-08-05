@@ -8,6 +8,5 @@ package com.prfd.tinytuya.device.core.profile
 object StandardDeviceLayoutIds {
   val GENERIC_CONTROLS = DeviceLayoutId("generic.controls")
   val LIGHT = DeviceLayoutId("light")
-  val SENSOR_SUMMARY = DeviceLayoutId("sensor.summary")
   val COVER = DeviceLayoutId("cover")
 }

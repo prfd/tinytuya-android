@@ -65,7 +65,7 @@ class LocalDataPointInspectionInstrumentedTest {
       id = "inspection-fixture",
       name = "Inspection fixture",
       localKey = SensitiveString.of("fixture-key"),
-      category = "custom_sensor",
+      category = "custom_meter",
       productId = "product-id",
       productName = "Fixture",
       model = "Model",

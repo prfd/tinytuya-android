@@ -260,19 +260,19 @@ class CapabilityResolverTest {
     val specs =
       listOf(
         MeasurementCapabilitySpec(
-          CapabilityId("sensor.temperature"),
+          CapabilityId("environment.temperature"),
           "Temperature",
-          listOf("temp_current"),
+          listOf("ambient_value"),
           unitPolicy = MeasurementUnitPolicy.TEMPERATURE,
         ),
         BinaryStateCapabilitySpec(
-          CapabilityId("sensor.contact"),
-          "Contact",
-          listOf("doorcontact_state"),
+          CapabilityId("system.ready"),
+          "Ready state",
+          listOf("ready"),
           states =
             listOf(
-              CapabilityState("false", "Closed", CapabilityTone.NORMAL),
-              CapabilityState("true", "Open", CapabilityTone.ACTIVE),
+              CapabilityState("false", "Idle", CapabilityTone.NORMAL),
+              CapabilityState("true", "Ready", CapabilityTone.ACTIVE),
             ),
         ),
         SafeTextCapabilitySpec(
@@ -286,14 +286,14 @@ class CapabilityResolverTest {
       schema(
         definition(
           "1",
-          "temp_current",
+          "ambient_value",
           "Integer",
           minimum = "-100",
           maximum = "600",
           scale = "1",
           unit = "℃",
         ),
-        definition("2", "doorcontact_state", "Boolean"),
+        definition("2", "ready", "Boolean"),
         definition("3", "display_message", "String"),
       )
     val capabilities =
@@ -309,7 +309,7 @@ class CapabilityResolverTest {
 
     assertEquals("21.7 °C", capabilities.ofType<ResolvedMeasurement>().single().displayValue)
     assertEquals(CapabilityTone.ACTIVE, capabilities.ofType<ResolvedBinaryState>().single().tone)
-    assertEquals("Open", capabilities.ofType<ResolvedBinaryState>().single().value)
+    assertEquals("Ready", capabilities.ofType<ResolvedBinaryState>().single().value)
     assertEquals("Ready", capabilities.ofType<ResolvedSafeText>().single().value)
     assertTrue(
       resolve(

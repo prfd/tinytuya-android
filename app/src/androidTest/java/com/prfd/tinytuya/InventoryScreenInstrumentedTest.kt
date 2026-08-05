@@ -384,30 +384,18 @@ class InventoryScreenInstrumentedTest {
   }
 
   @Test
-  fun statusOnlyDeviceOffersBoundedDpsDetailsWithoutRenderingPrivatePayloads() {
-    setInventoryContent(catalog = statusOnlyCatalog())
+  fun unsupportedDeviceHidesCachedDpsAndExplainsTheMvpScope() {
+    setInventoryContent(catalog = unsupportedCatalog())
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-    composeRule.onNodeWithText("Read only").assertExists()
-    composeRule.onNodeWithText("Status-only profile").assertExists()
-    composeRule.onNodeWithText("Local DPS stays read-only", substring = true).assertExists()
-    composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
-    composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
-
-    composeRule.onNodeWithTag("dps_inspector_toggle").performClick()
-
-    composeRule.onNodeWithTag("dps_inspector_panel").assertExists()
-    composeRule.onNodeWithText("ALL LOCAL DEVICE DATA · READ ONLY").assertExists()
-    composeRule.onNodeWithText("DP 1 · Boolean").assertExists()
-    composeRule.onNodeWithText("DP 3 · Enum").assertExists()
-    composeRule.onNodeWithText("DP 4 · Text").assertExists()
-    composeRule.onNodeWithText("DP 5 · Structured").assertExists()
-    composeRule.onNodeWithText("Ready for use").assertExists()
+    composeRule.onNodeWithText("Unsupported").assertExists()
+    composeRule.onNodeWithText("Unsupported device").assertExists()
     composeRule
-      .onNodeWithText("potentially sensitive values stay hidden", substring = true)
+      .onNodeWithText("supported switches, outlets, lights, and covers", substring = true)
       .assertExists()
     composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
     composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
+    composeRule.onNodeWithTag("dps_inspector_toggle").assertDoesNotExist()
     composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
   }
 
@@ -624,7 +612,7 @@ class InventoryScreenInstrumentedTest {
           ),
       )
 
-  private fun statusOnlyCatalog() =
+  private fun unsupportedCatalog() =
     controlledCatalog()
       .copy(
         devices =
@@ -633,8 +621,8 @@ class InventoryScreenInstrumentedTest {
               .devices
               .single()
               .copy(
-                category = "custom_sensor",
-                productName = "Room sensor",
+                category = "wsdcg",
+                productName = "Room climate monitor",
                 mappingJson =
                   """
                   {

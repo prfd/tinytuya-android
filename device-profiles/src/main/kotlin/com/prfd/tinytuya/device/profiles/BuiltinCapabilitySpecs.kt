@@ -1,12 +1,9 @@
 package com.prfd.tinytuya.device.profiles
 
 import com.prfd.tinytuya.device.core.capability.ActionGroupCapabilitySpec
-import com.prfd.tinytuya.device.core.capability.BinaryStateCapabilitySpec
 import com.prfd.tinytuya.device.core.capability.CapabilityChoice
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.CapabilitySpec
-import com.prfd.tinytuya.device.core.capability.CapabilityState
-import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.ChoiceCapabilitySpec
 import com.prfd.tinytuya.device.core.capability.ColorCapabilitySpec
 import com.prfd.tinytuya.device.core.capability.MeasurementCapabilitySpec
@@ -25,13 +22,6 @@ internal object BuiltinCapabilitySpecs {
       BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> switchSpecs(schema)
       BuiltinDeviceFamilyIds.LIGHT -> lightSpecs()
       BuiltinDeviceFamilyIds.COVER -> coverSpecs(schema)
-      BuiltinDeviceFamilyIds.CLIMATE_SENSOR -> climateSpecs()
-      BuiltinDeviceFamilyIds.CONTACT_SENSOR -> contactSpecs()
-      BuiltinDeviceFamilyIds.MOTION_SENSOR -> motionSpecs()
-      BuiltinDeviceFamilyIds.PRESENCE_SENSOR -> presenceSpecs()
-      BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR -> waterSpecs()
-      BuiltinDeviceFamilyIds.SMOKE_SENSOR -> smokeSpecs()
-      BuiltinDeviceFamilyIds.GAS_SENSOR -> gasSpecs()
       else -> emptyList()
     }
 
@@ -188,140 +178,12 @@ internal object BuiltinCapabilitySpecs {
     return null
   }
 
-  private fun climateSpecs(): List<CapabilitySpec> =
-    listOf(
-      measurement(
-        "sensor.temperature",
-        "Temperature",
-        listOf("temp_current", "va_temperature"),
-        MeasurementUnitPolicy.TEMPERATURE,
-      ),
-      measurement(
-        "sensor.humidity",
-        "Humidity",
-        listOf("humidity_value", "va_humidity"),
-        MeasurementUnitPolicy.PERCENTAGE,
-      ),
-      battery(),
-    )
-
-  private fun contactSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.contact",
-        "Contact",
-        listOf("doorcontact_state"),
-        CapabilityState("false", "Closed", CapabilityTone.NORMAL),
-        CapabilityState("true", "Open", CapabilityTone.ACTIVE),
-      ),
-      battery(),
-      measurement(
-        "sensor.signal",
-        "Signal",
-        listOf("signal_strength"),
-        MeasurementUnitPolicy.SIGNAL,
-      ),
-    )
-
-  private fun motionSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.motion",
-        "Motion",
-        listOf("pir"),
-        CapabilityState("none", "No motion", CapabilityTone.NORMAL),
-        CapabilityState("pir", "Motion detected", CapabilityTone.ACTIVE),
-      ),
-      battery(),
-    )
-
-  private fun presenceSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.presence",
-        "Presence",
-        listOf("presence_state"),
-        CapabilityState("none", "Room clear", CapabilityTone.NORMAL),
-        CapabilityState("presence", "Presence detected", CapabilityTone.ACTIVE),
-        CapabilityState("peaceful", "Still presence", CapabilityTone.ACTIVE),
-        CapabilityState("small_move", "Small movement", CapabilityTone.ACTIVE),
-        CapabilityState("large_move", "Large movement", CapabilityTone.ACTIVE),
-      ),
-      measurement(
-        "sensor.closest_target",
-        "Closest target",
-        listOf("target_dis_closest"),
-        MeasurementUnitPolicy.DISTANCE,
-      ),
-      battery(),
-    )
-
-  private fun waterSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.water",
-        "Water",
-        listOf("watersensor_state"),
-        CapabilityState("normal", "No leak reported", CapabilityTone.NORMAL),
-        CapabilityState("alarm", "Leak detected", CapabilityTone.ALERT),
-      ),
-      battery(),
-    )
-
-  private fun smokeSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.smoke",
-        "Smoke",
-        listOf("smoke_sensor_status", "smoke_sensor_state"),
-        CapabilityState("normal", "No smoke alarm", CapabilityTone.NORMAL),
-        CapabilityState("alarm", "Smoke alarm", CapabilityTone.ALERT),
-        CapabilityState("2", "No smoke alarm", CapabilityTone.NORMAL),
-        CapabilityState("1", "Smoke alarm", CapabilityTone.ALERT),
-      ),
-      measurement(
-        "sensor.smoke_level",
-        "Smoke level",
-        listOf("smoke_sensor_value"),
-        MeasurementUnitPolicy.SAFE_MAPPED,
-      ),
-      battery(),
-    )
-
-  private fun gasSpecs(): List<CapabilitySpec> =
-    listOf(
-      state(
-        "sensor.gas",
-        "Gas",
-        listOf("gas_sensor_status", "gas_sensor_state"),
-        CapabilityState("normal", "No gas alarm", CapabilityTone.NORMAL),
-        CapabilityState("alarm", "Gas alarm", CapabilityTone.ALERT),
-        CapabilityState("2", "No gas alarm", CapabilityTone.NORMAL),
-        CapabilityState("1", "Gas alarm", CapabilityTone.ALERT),
-      ),
-      measurement(
-        "sensor.gas_level",
-        "Gas level",
-        listOf("gas_sensor_value"),
-        MeasurementUnitPolicy.SAFE_MAPPED,
-      ),
-      battery(),
-    )
-
   private fun electricalMeasurements(): List<CapabilitySpec> =
     listOf(
       measurement("electrical.power", "Power draw", listOf("cur_power")),
       measurement("electrical.voltage", "Voltage", listOf("cur_voltage")),
       measurement("electrical.current", "Current", listOf("cur_current")),
       measurement("electrical.energy", "Energy", listOf("add_ele")),
-    )
-
-  private fun battery(): CapabilitySpec =
-    measurement(
-      "sensor.battery",
-      "Battery",
-      listOf("battery_percentage"),
-      MeasurementUnitPolicy.PERCENTAGE,
     )
 
   private fun measurement(
@@ -347,19 +209,6 @@ internal object BuiltinCapabilitySpecs {
       label = label,
       codeCandidates = codes,
       display = MeasurementDisplay.PERCENTAGE,
-    )
-
-  private fun state(
-    id: String,
-    label: String,
-    codes: List<String>,
-    vararg states: CapabilityState,
-  ): CapabilitySpec =
-    BinaryStateCapabilitySpec(
-      id = CapabilityId(id),
-      label = label,
-      codeCandidates = codes,
-      states = states.toList(),
     )
 
   private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")

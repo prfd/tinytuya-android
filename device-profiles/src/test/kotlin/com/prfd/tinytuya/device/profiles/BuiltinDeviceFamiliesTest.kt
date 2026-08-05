@@ -29,21 +29,26 @@ class BuiltinDeviceFamiliesTest {
         "tyndj" to BuiltinDeviceFamilyIds.LIGHT,
         "cl" to BuiltinDeviceFamilyIds.COVER,
         "clkg" to BuiltinDeviceFamilyIds.COVER,
-        "wsdcg" to BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
-        "mcs" to BuiltinDeviceFamilyIds.CONTACT_SENSOR,
-        "pir" to BuiltinDeviceFamilyIds.MOTION_SENSOR,
-        "hps" to BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
-        "sj" to BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
-        "ywbj" to BuiltinDeviceFamilyIds.SMOKE_SENSOR,
-        "rqbj" to BuiltinDeviceFamilyIds.GAS_SENSOR,
       )
       .forEach { (category, expectedId) -> assertEquals(expectedId, resolve(category)?.id) }
+
+    assertEquals(
+      setOf(
+        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
+        BuiltinDeviceFamilyIds.LIGHT,
+        BuiltinDeviceFamilyIds.COVER,
+      ),
+      BuiltinDeviceFamilies.definitions.mapTo(mutableSetOf(), DeviceFamilyDefinition::id),
+    )
   }
 
   @Test
-  fun `unknown and blank categories are unsupported`() {
+  fun `unknown blank and retired sensor categories are unsupported`() {
     assertNull(resolve("custom"))
     assertNull(resolve(""))
+    listOf("wsdcg", "mcs", "pir", "hps", "sj", "ywbj", "rqbj").forEach { category ->
+      assertNull(resolve(category))
+    }
   }
 
   @Test
@@ -53,9 +58,6 @@ class BuiltinDeviceFamiliesTest {
     assertEquals(StandardDeviceLayoutIds.GENERIC_CONTROLS, layoutFor("kg"))
     assertEquals(StandardDeviceLayoutIds.LIGHT, layoutFor("dj"))
     assertEquals(StandardDeviceLayoutIds.COVER, layoutFor("cl"))
-    listOf("wsdcg", "mcs", "pir", "hps", "sj", "ywbj", "rqbj").forEach { category ->
-      assertEquals(StandardDeviceLayoutIds.SENSOR_SUMMARY, layoutFor(category))
-    }
   }
 
   @Test

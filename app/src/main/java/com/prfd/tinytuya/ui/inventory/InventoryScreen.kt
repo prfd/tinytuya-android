@@ -65,12 +65,9 @@ import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.core.capability.CapabilityAccess
-import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
-import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
-import com.prfd.tinytuya.device.ui.BinaryStateUiModel
 import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
@@ -78,7 +75,6 @@ import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
 import com.prfd.tinytuya.device.ui.DeviceUiMapper
 import com.prfd.tinytuya.device.ui.DeviceUiModel
 import com.prfd.tinytuya.device.ui.LightDeviceLayoutRenderer
-import com.prfd.tinytuya.device.ui.SensorSummaryLayoutRenderer
 import com.prfd.tinytuya.device.ui.ToggleUiModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
@@ -92,7 +88,6 @@ private val inventoryDeviceLayoutRegistry =
     listOf(
       CoverDeviceLayoutRenderer,
       LightDeviceLayoutRenderer,
-      SensorSummaryLayoutRenderer,
     )
   )
 
@@ -578,14 +573,9 @@ internal fun InventoryDeviceCard(
     }
   val deviceUiModel =
     remember(profile.resolvedDevice) { DeviceUiMapper.map(profile.resolvedDevice) }
-  val summaryTone =
-    deviceUiModel.capabilities.filterIsInstance<BinaryStateUiModel>().firstOrNull()?.tone
-  val hasActiveSensor = summaryTone == CapabilityTone.ACTIVE || summaryTone == CapabilityTone.ALERT
   val isProfileActive =
     isCurrentStatus &&
-      (deviceUiModel.capabilities
-        .filterIsInstance<ToggleUiModel>()
-        .any(ToggleUiModel::currentValue) || hasActiveSensor)
+      deviceUiModel.capabilities.filterIsInstance<ToggleUiModel>().any(ToggleUiModel::currentValue)
   val localAvailability =
     when {
       lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
@@ -604,7 +594,6 @@ internal fun InventoryDeviceCard(
       Row(verticalAlignment = Alignment.Top) {
         DeviceProfileMark(
           profile = profile,
-          tone = summaryTone,
           active = isProfileActive,
         )
         Spacer(Modifier.width(14.dp))
@@ -651,10 +640,7 @@ internal fun InventoryDeviceCard(
           }
         }
       }
-      if (
-        profile.capabilityAccess != CapabilityAccess.READ_WRITE &&
-          !(profile.capabilityAccess == CapabilityAccess.READ_ONLY && profile.isSensor)
-      ) {
+      if (profile.capabilityAccess != CapabilityAccess.READ_WRITE) {
         LocalAccessNotice(profile)
       }
       LocalStatusPanel(
@@ -770,11 +756,11 @@ private fun LocalAccessNotice(profile: LocalDeviceProfile) {
   val title =
     when (profile.restriction) {
       DeviceAccessRestriction.NONE ->
-        if (isStatusOnly && profile.isSensor) {
-          "Read-only sensor"
-        } else if (isStatusOnly) {
+        if (isStatusOnly) {
           "Status-only profile"
-        } else return
+        } else {
+          "Unsupported device"
+        }
       DeviceAccessRestriction.GATEWAY_CHILD -> "Gateway child"
       DeviceAccessRestriction.GATEWAY -> "Gateway controls unavailable"
       DeviceAccessRestriction.CAMERA -> "Camera controls disabled"
@@ -783,10 +769,10 @@ private fun LocalAccessNotice(profile: LocalDeviceProfile) {
   val message =
     when (profile.restriction) {
       DeviceAccessRestriction.NONE ->
-        when {
-          profile.isSensor ->
-            "Fresh readings come directly from the device. This profile never sends commands."
-          else -> "No verified control profile matches this device. Local DPS stays read-only."
+        if (isStatusOnly) {
+          "This supported device has no verified writable capability. Local DPS stays read-only."
+        } else {
+          "Local status and controls are available only for supported switches, outlets, lights, and covers."
         }
       DeviceAccessRestriction.GATEWAY_CHILD ->
         "This device communicates through a Tuya gateway, not directly over Wi-Fi."
@@ -995,20 +981,15 @@ private fun StatusPill(text: String, positive: Boolean) {
 @Composable
 private fun DeviceProfileMark(
   profile: LocalDeviceProfile,
-  tone: CapabilityTone?,
   active: Boolean,
 ) {
   val containerColor =
     when {
-      tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.errorContainer
-      tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.tertiaryContainer
       active -> MaterialTheme.colorScheme.primaryContainer
       else -> MaterialTheme.colorScheme.surfaceVariant
     }
   val contentColor =
     when {
-      tone == CapabilityTone.ALERT -> MaterialTheme.colorScheme.onErrorContainer
-      tone == CapabilityTone.ACTIVE -> MaterialTheme.colorScheme.onTertiaryContainer
       active -> MaterialTheme.colorScheme.onPrimaryContainer
       else -> MaterialTheme.colorScheme.primary
     }
@@ -1217,11 +1198,8 @@ private fun deviceProfileSymbol(profile: LocalDeviceProfile): String =
     DeviceAccessRestriction.NONE -> profile.presentation.symbol
   }
 
-private val LocalDeviceProfile.isSensor: Boolean
-  get() = presentation.layoutId == StandardDeviceLayoutIds.SENSOR_SUMMARY
-
 private val LocalDeviceProfile.canReadLocalStatus: Boolean
-  get() = restriction == DeviceAccessRestriction.NONE
+  get() = restriction == DeviceAccessRestriction.NONE && capabilityAccess != CapabilityAccess.DENIED
 
 private val TuyaCloudRegion.displayName: String
   get() =

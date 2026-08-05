@@ -321,6 +321,26 @@ class LocalControlCoordinatorInstrumentedTest {
   }
 
   @Test
+  fun unsupportedCategoryCannotReachThePythonBridgeWithAValidSwitchMapping() = runBlocking {
+    val catalog = sampleCatalog(category = "wsdcg")
+    val gateway = FakeGateway { confirmedResult(false) }
+    val coordinator =
+      DefaultLocalControlCoordinator(
+        gateway = gateway,
+        catalogStore = FakeStore(catalog),
+        networkResolver = FakeNetworkResolver(NETWORK),
+      )
+
+    try {
+      coordinator.execute(NETWORK, toggleIntent(false))
+      throw AssertionError("Expected an unsupported category to reject local control")
+    } catch (error: LocalControlException) {
+      assertEquals("LOCAL_CONTROL_UNSUPPORTED", error.code)
+    }
+    assertEquals(0, gateway.callCount)
+  }
+
+  @Test
   fun forgedCapabilityIdCannotReachThePythonBridge() = runBlocking {
     val catalog = sampleCatalog()
     val gateway = FakeGateway { confirmedResult(false) }

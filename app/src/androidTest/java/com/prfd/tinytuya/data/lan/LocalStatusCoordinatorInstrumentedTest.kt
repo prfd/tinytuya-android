@@ -78,6 +78,40 @@ class LocalStatusCoordinatorInstrumentedTest {
     assertEquals(0, store.mergeCount)
   }
 
+  @Test
+  fun refreshWithOnlyUnsupportedDevicesDoesNotCallThePythonBridge() = runBlocking {
+    val catalog =
+      sampleCatalog().let { source ->
+        source.copy(
+          devices = source.devices.filter { device -> device.id == "unsupported-device" },
+          lanDevices = source.lanDevices.filter { device -> device.id == "unsupported-device" },
+        )
+      }
+    val gateway = FakeGateway { error("Unsupported devices must not reach Python") }
+    val store = FakeStore(catalog)
+    val coordinator = DefaultLocalStatusCoordinator(gateway, store)
+
+    val unchanged = coordinator.poll(catalog, NETWORK)
+
+    assertEquals(catalog, unchanged)
+    assertEquals(null, gateway.request)
+    assertEquals(0, store.mergeCount)
+  }
+
+  @Test
+  fun unsupportedDevicesAreNotQuickRefreshTargets() {
+    val catalog =
+      sampleCatalog().let { source ->
+        source.copy(
+          devices = source.devices.filter { device -> device.id == "unsupported-device" },
+          lanDevices = source.lanDevices.filter { device -> device.id == "unsupported-device" },
+        )
+      }
+
+    assertFalse(catalog.hasCurrentKnownStatusTargets())
+    assertFalse(catalog.hasPreviouslyMatchedStatusTargets())
+  }
+
   private class FakeGateway(private val poll: suspend (LocalPollRequest) -> LocalPollResult) :
     TuyaPythonGateway {
     var request: LocalPollRequest? = null
@@ -159,6 +193,7 @@ class LocalStatusCoordinatorInstrumentedTest {
             cloudDevice(id = "gateway", category = "wg2"),
             cloudDevice(id = "camera", category = "sp"),
             cloudDevice(id = "lock", category = "ms"),
+            cloudDevice(id = "unsupported-device", category = "wsdcg"),
           ),
         lastDiscoveryAtEpochMillis = 10L,
         lanDevices =
@@ -169,6 +204,7 @@ class LocalStatusCoordinatorInstrumentedTest {
             lanDevice(id = "gateway", lastSeenAt = 10L, ip = "192.168.10.45"),
             lanDevice(id = "camera", lastSeenAt = 10L, ip = "192.168.10.46"),
             lanDevice(id = "lock", lastSeenAt = 10L, ip = "192.168.10.47"),
+            lanDevice(id = "unsupported-device", lastSeenAt = 10L, ip = "192.168.10.48"),
           ),
       )
 

@@ -15,7 +15,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.prfd.tinytuya.device.core.capability.CapabilityId
-import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
@@ -111,34 +110,6 @@ class DeviceLayoutRenderersInstrumentedTest {
     composeRule.onNodeWithTag("capability_measurement_room_temperature").assertExists()
     composeRule.onNodeWithTag("capability_range_target_temperature").assertDoesNotExist()
     composeRule.runOnIdle { assertEquals(DeviceIntent.SetRange(DEVICE_ID, targetId, 22), emitted) }
-  }
-
-  @Test
-  fun sensorSummaryArrangesPrimaryAndSecondarySafeReadings() {
-    val device =
-      device(
-        StandardDeviceLayoutIds.SENSOR_SUMMARY,
-        listOf(
-          BinaryStateUiModel(
-            CapabilityId("sensor.water"),
-            "Water",
-            "Leak detected",
-            CapabilityTone.ALERT,
-          ),
-          MeasurementUiModel(CapabilityId("sensor.battery"), "Battery", "87%"),
-        ),
-      )
-
-    setHost(
-      device,
-      DeviceLayoutRendererRegistry(listOf(SensorSummaryLayoutRenderer)),
-    )
-
-    composeRule.onNodeWithTag("local_sensor_summary").assertExists()
-    composeRule.onNodeWithText("Current reading").assertExists()
-    composeRule.onNodeWithText("Leak detected").assertExists()
-    composeRule.onNodeWithText("87%").assertExists()
-    composeRule.onNodeWithTag("capability_binary_sensor_water").assertDoesNotExist()
   }
 
   @Test

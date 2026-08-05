@@ -15,7 +15,6 @@ import com.prfd.tinytuya.device.core.profile.DeviceClassifier
 import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
-import com.prfd.tinytuya.device.core.profile.ProtectedDevicePolicy
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import com.prfd.tinytuya.device.core.schema.DpDeclaredType
 import com.prfd.tinytuya.device.core.schema.DpSchema
@@ -48,7 +47,7 @@ object LocalDeviceCapabilityRegistry {
           runCatching { matched.capabilitySpecs(schema) }.getOrDefault(emptyList())
         }
         .orEmpty()
-    val capabilityAccess = capabilityAccess(classification.restriction, specs)
+    val capabilityAccess = capabilityAccess(definition != null, classification.restriction, specs)
     val capabilities =
       CapabilityResolver.resolve(
         specs = specs,
@@ -74,18 +73,22 @@ object LocalDeviceCapabilityRegistry {
     )
   }
 
-  fun canPollStatus(device: CloudImportedDevice): Boolean =
-    ProtectedDevicePolicy.restrictionFor(device.toDeviceIdentity()) == DeviceAccessRestriction.NONE
+  fun canPollStatus(device: CloudImportedDevice): Boolean {
+    val classification = classify(device)
+    return classification.family != null &&
+      classification.restriction == DeviceAccessRestriction.NONE
+  }
 
   private fun classify(device: CloudImportedDevice): DeviceClassification =
     deviceClassifier.classify(device.toDeviceIdentity())
 
   private fun capabilityAccess(
+    isSupportedFamily: Boolean,
     restriction: DeviceAccessRestriction,
     specs: List<CapabilitySpec>,
   ): CapabilityAccess =
     when {
-      restriction != DeviceAccessRestriction.NONE -> CapabilityAccess.DENIED
+      !isSupportedFamily || restriction != DeviceAccessRestriction.NONE -> CapabilityAccess.DENIED
       specs.any(CapabilitySpec::writable) -> CapabilityAccess.READ_WRITE
       else -> CapabilityAccess.READ_ONLY
     }

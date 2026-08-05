@@ -12,19 +12,12 @@ object BuiltinDeviceFamilyIds {
   val SWITCH_OR_OUTLET = DeviceFamilyId("switch_or_outlet")
   val LIGHT = DeviceFamilyId("light")
   val COVER = DeviceFamilyId("cover")
-  val CLIMATE_SENSOR = DeviceFamilyId("sensor_climate")
-  val CONTACT_SENSOR = DeviceFamilyId("sensor_contact")
-  val MOTION_SENSOR = DeviceFamilyId("sensor_motion")
-  val PRESENCE_SENSOR = DeviceFamilyId("sensor_presence")
-  val WATER_LEAK_SENSOR = DeviceFamilyId("sensor_water_leak")
-  val SMOKE_SENSOR = DeviceFamilyId("sensor_smoke")
-  val GAS_SENSOR = DeviceFamilyId("sensor_gas")
 }
 
 /**
  * Built-in device families selected exclusively by the normalized category imported from Tuya
- * Cloud. Switches and lights have representative hardware evidence; covers and sensor families
- * currently have synthetic coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
+ * Cloud. Switches and lights have representative hardware evidence; covers currently have synthetic
+ * coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
  */
 object BuiltinDeviceFamilies {
   val definitions: List<DeviceFamilyDefinition> =
@@ -59,48 +52,6 @@ object BuiltinDeviceFamilies {
           ),
         categories = setOf("cl", "clkg"),
       ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.CLIMATE_SENSOR,
-        label = "Temperature and humidity sensor",
-        symbol = "°",
-        categories = setOf("wsdcg"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.CONTACT_SENSOR,
-        label = "Contact sensor",
-        symbol = "▯",
-        categories = setOf("mcs"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.MOTION_SENSOR,
-        label = "Motion sensor",
-        symbol = "⌁",
-        categories = setOf("pir"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.PRESENCE_SENSOR,
-        label = "Presence sensor",
-        symbol = "◎",
-        categories = setOf("hps"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.WATER_LEAK_SENSOR,
-        label = "Water leak sensor",
-        symbol = "≈",
-        categories = setOf("sj"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.SMOKE_SENSOR,
-        label = "Smoke alarm",
-        symbol = "≋",
-        categories = setOf("ywbj"),
-      ),
-      sensorFamily(
-        id = BuiltinDeviceFamilyIds.GAS_SENSOR,
-        label = "Gas alarm",
-        symbol = "◇",
-        categories = setOf("rqbj"),
-      ),
     )
 
   val registry = DeviceFamilyRegistry(definitions)
@@ -114,20 +65,3 @@ private class DeclarativeDeviceFamily(
   override fun capabilitySpecs(schema: DpSchema): List<CapabilitySpec> =
     BuiltinCapabilitySpecs.forFamily(id, schema)
 }
-
-private fun sensorFamily(
-  id: DeviceFamilyId,
-  label: String,
-  symbol: String,
-  categories: Set<String>,
-): DeviceFamilyDefinition =
-  DeclarativeDeviceFamily(
-    id = id,
-    presentation =
-      DevicePresentation(
-        StandardDeviceLayoutIds.SENSOR_SUMMARY,
-        typeLabel = label,
-        symbol = symbol,
-      ),
-    categories = categories,
-  )

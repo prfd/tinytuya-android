@@ -162,7 +162,8 @@ The inventory exposes two deliberately separate actions:
 - **Refresh status** is the fast path. It directly polls addresses verified by the latest discovery on the exact same Android network and never opens UDP discovery listeners.
 - **Find devices** is the slower address-matching path. It listens for Tuya UDP broadcasts, saves the new discovery generation, and then polls status.
 
-Keeping these separate prevents normal startup and future sensor refreshes from paying for a global scan every time.
+Keeping these separate prevents normal startup and foreground status refreshes from paying for a
+global scan every time.
 
 ### Part A: find devices and refresh their addresses
 
@@ -231,8 +232,9 @@ Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel
 `LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`.
 
 Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons
-are that the record belongs to an older discovery generation, the device has no key, its protocol
-version is unsupported, or `ProtectedDevicePolicy` denies direct local access.
+are that its category is not in the supported family registry, the record belongs to an older
+discovery generation, the device has no key, its protocol version is unsupported, or
+`ProtectedDevicePolicy` denies direct local access.
 
 ## Pass 4: capability policy and device cards
 
@@ -275,9 +277,10 @@ Light mode, white brightness, color temperature, and HSV color follow the same r
 
 Profiles declaring writable semantics can receive `CapabilityAccess.READ_WRITE`; individual
 capabilities still become writable only after the complete schema/fresh-observation intersection.
-Families with only read-only specs and devices with unknown categories receive `READ_ONLY`; unknown
-categories resolve no semantic capabilities and use the generic presentation. Gateway children,
-gateways, cameras, and locks receive `DENIED` and do not reach local polling or writes.
+A registered family with only read-only specs can receive `READ_ONLY`. Unknown and retired
+categories receive `DENIED`, resolve no semantic capabilities, expose no cached local DPS, and do
+not reach local polling or writes. Gateway children, gateways, cameras, and locks are denied by the
+protected-device policy independently of profile selection.
 
 Cover actions deserve a close read in `BuiltinCapabilitySpecs.kt`. The profile accepts only an
 imported Enum which explicitly contains every value in one reviewed open/stop/close vocabulary.
@@ -297,8 +300,7 @@ Then read the presentation pipeline:
   in `:device-core`, followed by
   [DeviceLayoutRenderers.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderers.kt),
   [LightDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/LightDeviceLayoutRenderer.kt),
-  [CoverDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/CoverDeviceLayoutRenderer.kt),
-  and [SensorSummaryLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/SensorSummaryLayoutRenderer.kt)
+  and [CoverDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/CoverDeviceLayoutRenderer.kt)
   in `:device-ui` define stable arrangement hints, the explicit renderer/fallback contract, and the
   reusable compound layouts.
   A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
@@ -483,7 +485,7 @@ After each production flow, read its nearest test instead of immediately reading
 | Android profile adapter and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
 | Built-in category profiles and cover fixtures | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt) and [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt) |
 | Atomic controls | [DeviceCapabilityRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderersInstrumentedTest.kt) |
-| Layout registry and cover/light/sensor fallback | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt) |
+| Layout registry and cover/light fallback | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt) |
 | Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
 | Safe DPS inspection | [LocalDataPointInspectionInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDataPointInspectionInstrumentedTest.kt) |
 

@@ -192,14 +192,6 @@ fun InventoryScreen(
             UnmatchedLanDeviceCard(device)
           }
         }
-        item {
-          DataControls(
-            enabled = !isBusy,
-            onImportFromCloud = onImportFromCloud,
-            onDeleteAllLocalData = { confirmDelete = true },
-          )
-        }
-        item { LocalSecurityCard(catalog) }
       }
     }
   }
@@ -270,45 +262,6 @@ private fun InventoryHeader(
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(top = 8.dp),
     )
-  }
-}
-
-@Composable
-private fun LocalSecurityCard(catalog: DeviceCatalog) {
-  val importedAt =
-    remember(catalog.importedAtEpochMillis) {
-      DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-        .format(Date(catalog.importedAtEpochMillis))
-    }
-  Surface(
-    color = MaterialTheme.colorScheme.primaryContainer,
-    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-    shape = MaterialTheme.shapes.large,
-    modifier = Modifier.fillMaxWidth().testTag("local_security_card"),
-  ) {
-    Column(Modifier.padding(18.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-        Spacer(Modifier.width(10.dp))
-        Text(
-          "Encrypted on this device",
-          style = MaterialTheme.typography.titleMedium,
-        )
-      }
-      Text(
-        text =
-          "Local keys are protected by Android Keystore and excluded from backup. Cloud credentials were not saved.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
-        modifier = Modifier.padding(top = 7.dp),
-      )
-      Text(
-        text = "Imported $importedAt · ${catalog.region.displayName}",
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
-        modifier = Modifier.padding(top = 12.dp),
-      )
-    }
   }
 }
 
@@ -1077,46 +1030,6 @@ private data class LocalAvailability(
   val label: String,
   val isLocal: Boolean,
 )
-
-@Composable
-private fun DataControls(
-  enabled: Boolean,
-  onImportFromCloud: () -> Unit,
-  onDeleteAllLocalData: () -> Unit,
-) {
-  Column(modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 18.dp)) {
-    Text("Data controls", style = MaterialTheme.typography.titleMedium)
-    Text(
-      text =
-        "Cloud access happens only when you choose this action. Saved credentials are reused when available; automatic local refresh never contacts Tuya Cloud.",
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
-    )
-    OutlinedButton(
-      onClick = onImportFromCloud,
-      enabled = enabled,
-      modifier = Modifier.fillMaxWidth().height(54.dp),
-    ) {
-      Text("Import or sync from Tuya")
-    }
-    TextButton(
-      onClick = onDeleteAllLocalData,
-      enabled = enabled,
-      modifier = Modifier.fillMaxWidth().height(50.dp),
-    ) {
-      Text(
-        "Delete all local data",
-        color =
-          if (enabled) {
-            MaterialTheme.colorScheme.error
-          } else {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-          },
-      )
-    }
-  }
-}
 
 private fun lanErrorTitle(code: String): String =
   when (code) {

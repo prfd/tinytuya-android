@@ -235,9 +235,10 @@ private fun LightRangeSlider(
             value = progress,
             onValueChange = { progress = it },
             onValueChangeFinished = {
-                if (alignedValue != capability.currentValue) {
-                    progress = capability.progressFor(alignedValue)
-                    onValueCommitted(alignedValue)
+                val committedValue = capability.valueFor(progress)
+                if (committedValue != capability.currentValue) {
+                    progress = capability.progressFor(committedValue)
+                    onValueCommitted(committedValue)
                 }
             },
             valueRange = 0f..1f,
@@ -416,9 +417,10 @@ private fun LightColorBrightnessSlider(
             value = brightness.coerceIn(10f, 1_000f),
             onValueChange = { brightness = it },
             onValueChangeFinished = {
-                if (alignedBrightness != color.brightness) {
-                    brightness = alignedBrightness.toFloat()
-                    onColorCommitted(color.copy(brightness = alignedBrightness))
+                val committedBrightness = brightness.roundToInt().coerceIn(10, 1_000)
+                if (committedBrightness != color.brightness) {
+                    brightness = committedBrightness.toFloat()
+                    onColorCommitted(color.copy(brightness = committedBrightness))
                 }
             },
             valueRange = 10f..1_000f,

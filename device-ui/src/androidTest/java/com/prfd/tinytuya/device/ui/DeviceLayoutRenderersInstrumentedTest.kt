@@ -5,12 +5,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.CapabilityTone
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
@@ -18,6 +21,7 @@ import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -203,6 +207,65 @@ class DeviceLayoutRenderersInstrumentedTest {
     }
 
     @Test
+    fun lightRangeSliderTapEmitsSemanticIntentWithoutWaitingForRecomposition() {
+        val brightnessId = CapabilityId("light.brightness")
+        val device = lightDevice(
+            mode = "white",
+            brightnessCapability = RangeUiModel(
+                brightnessId,
+                "Brightness",
+                true,
+                10,
+                1_000,
+                10,
+                730,
+                "73%",
+            ),
+        )
+        var emitted: DeviceIntent? = null
+
+        setHost(
+            device,
+            DeviceLayoutRendererRegistry(listOf(LightDeviceLayoutRenderer)),
+            onIntent = { emitted = it },
+        )
+
+        composeRule.onNodeWithTag("light_slider_light_brightness").performTouchInput {
+            click(Offset(width * 0.25f, height / 2f))
+        }
+        composeRule.runOnIdle {
+            val intent = emitted as DeviceIntent.SetRange
+            assertEquals(brightnessId, intent.capabilityId)
+            assertTrue(intent.value < 730)
+        }
+    }
+
+    @Test
+    fun lightColorBrightnessSliderTapEmitsSemanticIntentWithoutWaitingForRecomposition() {
+        val colorId = CapabilityId("light.color")
+        val device = lightDevice(
+            mode = "colour",
+            colorCapability = ColorUiModel(colorId, "Color", true, 120, 600, 700),
+        )
+        var emitted: DeviceIntent? = null
+
+        setHost(
+            device,
+            DeviceLayoutRendererRegistry(listOf(LightDeviceLayoutRenderer)),
+            onIntent = { emitted = it },
+        )
+
+        composeRule.onNodeWithTag("light_slider_color_brightness").performTouchInput {
+            click(Offset(width * 0.25f, height / 2f))
+        }
+        composeRule.runOnIdle {
+            val intent = emitted as DeviceIntent.SetColor
+            assertEquals(colorId, intent.capabilityId)
+            assertTrue(intent.color.brightness < 700)
+        }
+    }
+
+    @Test
     fun lightLayoutRejectsAnIncompatibleModeVocabulary() {
         val incompatible = device(
             StandardDeviceLayoutIds.LIGHT,
@@ -330,6 +393,32 @@ class DeviceLayoutRenderersInstrumentedTest {
     ) = DeviceUiModel(DEVICE_ID, layoutId, capabilities)
 
     private fun power() = ToggleUiModel(CapabilityId("power"), "Power", true, true)
+
+    private fun lightDevice(
+        mode: String,
+        brightnessCapability: RangeUiModel? = null,
+        colorCapability: ColorUiModel? = null,
+    ) = device(
+        StandardDeviceLayoutIds.LIGHT,
+        buildList {
+            add(power())
+            add(
+                ChoiceUiModel(
+                    CapabilityId("light.mode"),
+                    "Mode",
+                    true,
+                    mode,
+                    if (mode == "white") "White" else "Color",
+                    listOf(
+                        ChoiceUiOption("white", "White"),
+                        ChoiceUiOption("colour", "Color"),
+                    ),
+                )
+            )
+            brightnessCapability?.let(::add)
+            colorCapability?.let(::add)
+        },
+    )
 
     private companion object {
         const val DEVICE_ID = "private-device-route"

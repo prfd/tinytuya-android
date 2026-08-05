@@ -583,11 +583,13 @@ internal fun InventoryDeviceCard(
     control: LocalControlUiState,
     onIntent: (DeviceIntent) -> Unit,
 ) {
-    val isOnCurrentLan = lastDiscoveryAtEpochMillis != null &&
-        lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
-    val isCurrentStatus = isOnCurrentLan &&
+    val discoveryAt = lastDiscoveryAtEpochMillis
+    val isOnCurrentLan = discoveryAt != null &&
+        lanRecord?.lastSeenAtEpochMillis == discoveryAt
+    val isCurrentStatus = discoveryAt != null &&
+        isOnCurrentLan &&
         localStatus != null &&
-        localStatus.polledAtEpochMillis >= (lastDiscoveryAtEpochMillis ?: Long.MAX_VALUE)
+        localStatus.polledAtEpochMillis >= discoveryAt
     val profile = remember(device, localStatus, lastDiscoveryAtEpochMillis) {
         LocalDeviceCapabilityRegistry.profile(
             device = device,

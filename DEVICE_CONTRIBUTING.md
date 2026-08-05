@@ -10,9 +10,6 @@ The build enforces that trust boundary. `:device-profiles` and `:device-ui` may 
 `com.prfd.tinytuya.device.*`. Do not work around `verifyDeviceModuleBoundaries`; a contribution which
 needs app transport, persistence, Python, or secret models is proposing a new architecture boundary.
 
-Read [SUPPORTED_DEVICES.md](SUPPORTED_DEVICES.md)
-for the evidence language used publicly.
-
 ## Choose the contribution level
 
 1. **Known primitives, standard layout:** add a family definition, capability specs, registration,

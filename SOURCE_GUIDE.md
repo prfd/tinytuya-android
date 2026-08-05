@@ -1,9 +1,5 @@
 # TinyTuya Android source guide
 
-This is a guided route through the codebase, not a list of every file.
-It describes the current post-migration architecture and retains the
-historical rationale and phase log.
-
 The main runtime path has three layers:
 
 ```text
@@ -11,11 +7,11 @@ The main runtime path has three layers:
     events to ViewModels, immutable UI state to Compose
 [ViewModels and Kotlin coordinators]
     typed requests and results
-[Chaquopy gateway] <-> versioned JSON <-> tuya_bridge.py <-> TinyTuya
-                                ^                 |
-                                |                 |
-                                |                 v    
-                          Tuya Cloud         local UDP/TCP
+[Chaquopy gateway] <-> [versioned JSON] <-> [tuya_bridge.py] <-> [TinyTuya]
+                                ^                                    |
+                                |                                    |
+                                |                                    v    
+                          [Tuya Cloud]                         [local UDP/TCP]
 ```
 
 Device extensibility crosses that runtime flow through a separate, enforced dependency graph. Arrows
@@ -120,7 +116,7 @@ CredentialsScreen
   -> tuya_bridge.import_cloud
   -> tinytuya.Cloud.getdevices(include_map=True)
   -> normalized JSON envelope
-  -> Kotlin validation and CloudImportResult
+  -> Kotlin response parsing into CloudImportResult
   -> EncryptedCloudCredentialStore.save after accepted newly entered credentials
   -> EncryptedDeviceCatalogStore.replaceFromCloud
   -> AppRoute asks AppViewModel to reload the catalog
@@ -273,7 +269,7 @@ A Boolean control exists only when all of these agree:
 3. A successful status response at or after the current discovery generation independently reports
    that DP as Boolean.
 
-Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; arbitrary JSON or other color encodings remain read-only.
+Light mode, white brightness, color temperature, and HSV color follow the same rule. Their exact mapping code, declared type and bounds, and independently observed primitive value must agree. The currently validated `colour_data_v2` shape is a 12-digit hexadecimal `HHHHSSSSVVVV` string; unsupported, malformed, or differently encoded values do not resolve to a color capability or receive write authority.
 
 Profiles declaring writable semantics can receive `CapabilityAccess.READ_WRITE`; individual
 capabilities still become writable only after the complete schema/fresh-observation intersection.
@@ -306,7 +302,7 @@ Then read the presentation pipeline:
   A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
 - [LocalDataPointInspection.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDataPointInspection.kt)
   builds the safe inspector from already bounded local-status data and the same normalized schema
-  boundary; Compose never parses raw mapping JSON.
+  boundary; the app-side helper parses raw mapping JSON, while the `:device-ui` module does not.
 - [InventoryScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/inventory/InventoryScreen.kt) assembles
   the renderer registry and hosts the selected compound or complete generic atomic fallback.
 
@@ -393,10 +389,6 @@ The full schema-v4 catalog is one authenticated ciphertext in `noBackupFilesDir`
 
 The encryption envelope version and the catalog schema version solve different problems. The former describes how bytes are encrypted; the latter describes the JSON fields inside the decrypted payload.
 
-Also read [AndroidManifest.xml](app/src/main/AndroidManifest.xml), [backup_rules.xml](app/src/main/res/xml/backup_rules.xml), and [data_extraction_rules.xml](app/src/main/res/xml/data_extraction_rules.xml) to see the no-backup policy outside Kotlin.
-
-The small [AppSettingsStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/AppSettingsStore.kt) uses private `SharedPreferences` only for non-sensitive behavior preferences. Its write uses `commit` on `Dispatchers.IO` so the UI reports success only after persistence. It is deliberately not mixed into the encrypted device-catalog schema.
-
 Checkpoint: follow `forgetCloudCredentials` and verify that it removes only the credential ciphertext and key. Then follow `deleteAllLocalData` and verify that it attempts credential-vault, catalog, and preference deletion even if one store reports a failure.
 
 ## The Kotlin/Python contract
@@ -430,7 +422,10 @@ or:
 - serializes mutable bridge operations;
 - converts typed Kotlin requests into bounded JSON;
 - checks the contract version and success envelope;
-- validates counts, IDs, durations, DPS kinds, sizes, uniqueness, and confirmation semantics;
+- validates the shared envelope and local discovery/status/control responses, including counts, IDs,
+  durations, DPS kinds, sizes, uniqueness, and confirmation semantics;
+- leaves cloud-device catalog limits and device-ID uniqueness validation to
+  `EncryptedDeviceCatalogStore`;
 - converts Python failures into `PythonBridgeException` with stable codes.
 
 [tuya_bridge.py](app/src/main/python/tuya_bridge.py) is deliberately not Android architecture code. It:
@@ -443,27 +438,6 @@ or:
 - maps exceptions and raw Tuya errors to stable, redacted failures.
 
 When changing the contract, update both sides and their tests together. Increment `CONTRACT_VERSION` only for an incompatible boundary change.
-
-## How to read the three large files
-
-These files are large because they keep closely related UI or protocol helpers together. Use symbol search instead of scrolling from top to bottom.
-
-### `OnboardingScreen.kt`
-
-Read `OnboardingRoute` and `OnboardingScreen` first, then each destination independently: `WelcomeScreen`, `SetupGuideScreen`, `CredentialsScreen`, `ImportingScreen`, `ErrorScreen`, and `SuccessScreen`. Leave the illustration, small design primitives, and previews until you are modifying visuals.
-
-The code-native app identity lives in [BrandMark.kt](app/src/main/java/com/prfd/tinytuya/ui/components/BrandMark.kt) and is shared by onboarding, inventory, Settings, and app loading. Keep it for app-level identity; device-profile badges and success/error marks communicate different meanings and should remain distinct.
-
-### `InventoryScreen.kt`
-
-Start with `InventoryScreen` and `InventoryDeviceCard`, then jump to the one panel you are changing.
-Presentation and policy should remain outside composables where possible, so inspect the matching
-`:device-ui` renderer, `LocalDataPointInspection.kt`, or `LocalDeviceCapabilities.kt` before adding
-logic directly to the screen.
-
-### `tuya_bridge.py`
-
-Treat each public function as a chapter. Read its `_parse_*` helper, its normalizer or worker, and then the public function. Do not read cloud, discovery, polling, and control internals in one sitting.
 
 ## Tests as executable documentation
 
@@ -494,25 +468,6 @@ and authorization under fast host JVM tests in `:device-core` and `:device-profi
 Keystore, Android networking types, lifecycle, app integration, and Chaquopy remain instrumentation
 tests. The small tests under `app/src/test` cover app code which has no Android dependency.
 
-The opt-in [LightCapabilityProbeInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/LightCapabilityProbeInstrumentedTest.kt) produces a sanitized mapping report from the encrypted on-device catalog. It is skipped by default. Read and follow its manual ADB workflow exactly; do not invoke it through `connectedDebugAndroidTest`, which may remove the installed debug app and its private data during teardown.
-
-For a device contribution, follow [DEVICE_CONTRIBUTING.md](DEVICE_CONTRIBUTING.md). Its profile and
-fixture templates are the shortest intended path. [SUPPORTED_DEVICES.md](SUPPORTED_DEVICES.md) is the
-manually maintained public evidence boundary.
-
-## Files to postpone
-
-You can safely skip these during the architecture tour:
-
-- `ui/theme/Color.kt`, `Theme.kt`, and `Type.kt` unless changing the visual system.
-- launcher icons, `strings.xml`, and the XML theme unless changing packaging or startup appearance.
-- Compose previews and small private drawing helpers.
-- the detailed JSON encode/decode loops in the catalog store until changing its schema.
-- long category and DPS code sets until adding a device profile.
-- Gradle version-catalog plumbing unless changing a dependency.
-
-Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essential runtime constraints: min SDK 29, target SDK 36, arm64 today, Python 3.11, and pinned TinyTuya 1.20.0.
-
 ## Glossary
 
 - **DPS / DP** — Tuya data points. A device exposes values under numeric IDs such as `1`; the meaning differs by product.
@@ -528,41 +483,3 @@ Do read [app/build.gradle.kts](app/build.gradle.kts) once. It records the essent
 - **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and encrypted storage and is never sent to Python or displayed.
 - **Bridge envelope** — the versioned success/error JSON shared by Kotlin and Python.
 - **Catalog** — the encrypted local aggregate of imported identity, LAN observations, and local status.
-
-## Useful navigation and verification commands
-
-From WSL, `rg` is the quickest way to jump to a symbol:
-
-```bash
-rg -n 'fun (refreshCatalog|refreshKnownDevices|discoverLan|submitControl)' app/src/main/java
-rg -n '^def (import_cloud|discover_lan|poll_local|set_values)' app/src/main/python/tuya_bridge.py
-rg -n 'DeviceFamilyDefinition|CapabilitySpec|DeviceLayoutRenderer' device-{core,profiles,ui}/src
-rg -n 'LOCAL_CONTROL_UNCONFIRMED' app/src
-```
-
-Because this checkout and Android toolchain live on Windows, run Gradle through Windows when verifying changes:
-
-```bash
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat :device-core:test :device-profiles:test testDebugUnitTest verifyDeviceModuleBoundaries -q --warning-mode=none --console=plain
-/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat lint assembleDebug :app:assembleDebugAndroidTest :device-ui:assembleDebugAndroidTest installDebug -q --warning-mode=none --console=plain
-```
-
-For device tests which must preserve the encrypted catalog, upgrade the target app with `installDebug`,
-install the relevant assembled test APK with `adb install -r -t`, and invoke its runner directly. The
-app and `:device-ui` have separate test APKs. Do not use `connectedDebugAndroidTest` against an
-installed catalog which must be preserved: Gradle's deployment teardown may uninstall the target app
-and erase its private data.
-
-## A practical learning loop
-
-For each new feature, use the same loop:
-
-1. Start at the user event in a screen.
-2. Follow the callback into a ViewModel.
-3. Identify the coordinator and the policy it enforces.
-4. Follow the typed request through `TuyaPythonGateway`.
-5. Read only the matching Python parser, worker, and public function.
-6. Follow the result back into the encrypted catalog and immutable UI state.
-7. Read the closest test and change a fake input mentally to predict the outcome.
-
-That route is the architecture. The rest of the code is validation, safety, and presentation detail around it.

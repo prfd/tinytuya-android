@@ -4,7 +4,7 @@ These instructions apply to the entire repository.
 
 ## Toolchain and device
 
-- Work from WSL, but treat the Windows Android SDK, JDK, and Gradle environment as authoritative. A Linux build failure does not prove the project is broken.
+- Work from WSL, but treat the Windows Android SDK, JDK, and Gradle environment as authoritative.
 - Run Gradle from the repository root with:
 
   ```bash
@@ -37,8 +37,4 @@ These instructions apply to the entire repository.
 ## Project guardrails
 
 - Read `SOURCE_GUIDE.md` for progressive code reading.
-- Keep runtime local-first. Tuya Cloud access requires an explicit user import or sync.
-- Never log, display, persist in plaintext, or expose through errors any Client Secret, local key, token, request header, raw device payload, or Python traceback.
-- Keep Python bridge inputs and work bounded; blocking Python and network work must stay off the main thread.
-- Local control fails closed: only fresh, independently observed DPS with recognized mappings may become writable.
-- Preserve the versioned Kotlin/Python JSON contract, or update both sides and their relevant tests together.
+- Format your code with ktfmt: `/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`

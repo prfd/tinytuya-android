@@ -21,6 +21,7 @@ These instructions apply to the entire repository.
 - Inspect `git status` and relevant diffs before and after changes. Preserve unrelated work in a dirty tree.
 - Commit completed, verified work in focused commits using `type: description`, staging only task files. Do not amend, rewrite, squash, or reset history unless asked.
 - Never commit generated output, device captures, secrets, local configuration, or unrelated IDE churn.
+- Before commiting, format your code with ktfmt: `/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`
 
 ## Verification
 
@@ -37,4 +38,3 @@ These instructions apply to the entire repository.
 ## Project guardrails
 
 - Read `SOURCE_GUIDE.md` for progressive code reading.
-- Format your code with ktfmt: `/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`

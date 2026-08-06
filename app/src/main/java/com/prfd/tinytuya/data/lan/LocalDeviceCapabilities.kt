@@ -100,6 +100,7 @@ object LocalDeviceCapabilityRegistry {
       layoutId = StandardDeviceLayoutIds.GENERIC_CONTROLS,
       typeLabel = "Tuya device",
       symbol = "••",
+      familyLabel = "Other devices",
     )
 }
 

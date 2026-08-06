@@ -1,8 +1,10 @@
 package com.prfd.tinytuya.ui.inventory
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +48,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +65,7 @@ import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.lan.inspectLocalDataPoints
 import com.prfd.tinytuya.data.local.DeviceCatalog
+import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
@@ -67,14 +74,21 @@ import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.core.capability.CapabilityAccess
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.profile.DeviceAccessRestriction
+import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
+import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
+import com.prfd.tinytuya.device.ui.CompactDeviceLayoutHost
+import com.prfd.tinytuya.device.ui.CompactDeviceLayoutRendererRegistry
+import com.prfd.tinytuya.device.ui.CoverActionsCompactLayoutRenderer
 import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
 import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
 import com.prfd.tinytuya.device.ui.DeviceUiMapper
 import com.prfd.tinytuya.device.ui.DeviceUiModel
+import com.prfd.tinytuya.device.ui.GenericToggleCompactLayoutRenderer
 import com.prfd.tinytuya.device.ui.LightDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.LightPowerCompactLayoutRenderer
 import com.prfd.tinytuya.device.ui.ToggleUiModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
@@ -91,22 +105,153 @@ private val inventoryDeviceLayoutRegistry =
     )
   )
 
+private val inventoryCompactDeviceLayoutRegistry =
+  CompactDeviceLayoutRendererRegistry(
+    listOf(
+      GenericToggleCompactLayoutRenderer,
+      LightPowerCompactLayoutRenderer,
+      CoverActionsCompactLayoutRenderer,
+    )
+  )
+
+private data class InventoryDeviceItem(
+  val device: CloudImportedDevice,
+  val lanRecord: LanDeviceRecord?,
+  val localStatus: LocalStatusRecord?,
+  val profile: LocalDeviceProfile,
+  val deviceUiModel: DeviceUiModel,
+  val isOnCurrentLan: Boolean,
+  val isCurrentStatus: Boolean,
+  val isProfileActive: Boolean,
+  val localAvailability: LocalAvailability,
+)
+
+private data class InventorySection(
+  val key: String,
+  val label: String,
+  val symbol: String,
+  val familyId: DeviceFamilyId?,
+  val items: List<InventoryDeviceItem>,
+)
+
+private fun buildInventoryDeviceItems(
+  catalog: DeviceCatalog,
+  currentDiscoveryAtEpochMillis: Long?,
+): List<InventoryDeviceItem> {
+  val lanById = catalog.lanDevices.associateBy(LanDeviceRecord::id)
+  val statusById = catalog.localStatus.associateBy(LocalStatusRecord::id)
+  return catalog.devices.map { device ->
+    inventoryDeviceItem(
+      device = device,
+      lastDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
+      lanRecord = lanById[device.id],
+      localStatus = statusById[device.id],
+    )
+  }
+}
+
+private fun inventoryDeviceItem(
+  device: CloudImportedDevice,
+  lastDiscoveryAtEpochMillis: Long?,
+  lanRecord: LanDeviceRecord?,
+  localStatus: LocalStatusRecord?,
+): InventoryDeviceItem {
+  val isOnCurrentLan =
+    lastDiscoveryAtEpochMillis != null &&
+      lanRecord?.lastSeenAtEpochMillis == lastDiscoveryAtEpochMillis
+  val isCurrentStatus =
+    lastDiscoveryAtEpochMillis != null &&
+      isOnCurrentLan &&
+      localStatus != null &&
+      localStatus.polledAtEpochMillis >= lastDiscoveryAtEpochMillis
+  val profile =
+    LocalDeviceCapabilityRegistry.profile(
+      device = device,
+      status = localStatus,
+      lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+    )
+  val deviceUiModel = DeviceUiMapper.map(profile.resolvedDevice)
+  val localAvailability =
+    when {
+      lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
+      isOnCurrentLan -> LocalAvailability("Local", true)
+      else -> LocalAvailability("Not found", false)
+    }
+  return InventoryDeviceItem(
+    device = device,
+    lanRecord = lanRecord,
+    localStatus = localStatus,
+    profile = profile,
+    deviceUiModel = deviceUiModel,
+    isOnCurrentLan = isOnCurrentLan,
+    isCurrentStatus = isCurrentStatus,
+    isProfileActive =
+      isCurrentStatus &&
+        deviceUiModel.capabilities
+          .filterIsInstance<ToggleUiModel>()
+          .any(ToggleUiModel::currentValue),
+    localAvailability = localAvailability,
+  )
+}
+
+private fun buildInventorySections(items: List<InventoryDeviceItem>): List<InventorySection> {
+  val familyOrder =
+    BuiltinDeviceFamilies.definitions
+      .mapIndexed { index, definition -> definition.id to index }
+      .toMap()
+  return items
+    .groupBy { item ->
+      item.profile.familyId.takeIf { item.profile.restriction == DeviceAccessRestriction.NONE }
+    }
+    .map { (familyId, familyItems) ->
+      val presentation = familyItems.first().profile.presentation
+      InventorySection(
+        key = familyId?.value ?: "other",
+        label = if (familyId == null) "Other devices" else presentation.familyLabel,
+        symbol = if (familyId == null) "••" else presentation.symbol,
+        familyId = familyId,
+        items = familyItems,
+      )
+    }
+    .sortedWith(
+      compareBy<InventorySection> { section ->
+          section.familyId?.let { familyId -> familyOrder[familyId] } ?: Int.MAX_VALUE
+        }
+        .thenBy { section -> section.label.lowercase() }
+    )
+}
+
 @Composable
 fun InventoryScreen(
   catalog: DeviceCatalog,
   discovery: LanDiscoveryUiState,
   control: LocalControlUiState,
   isLanSnapshotCurrent: Boolean = true,
+  displayMode: InventoryDisplayMode = InventoryDisplayMode.FULL,
+  isDisplayModeSaving: Boolean = false,
+  onDisplayModeChanged: (InventoryDisplayMode) -> Unit = {},
   onRefreshKnownDevices: () -> Unit,
   onDiscoverLan: () -> Unit,
   onIntent: (DeviceIntent) -> Unit,
   onOpenSettings: () -> Unit,
-  onImportFromCloud: () -> Unit,
-  onDeleteAllLocalData: () -> Unit,
 ) {
-  var confirmDelete by remember { mutableStateOf(false) }
+  var focusedDeviceId by remember { mutableStateOf<String?>(null) }
   val currentDiscoveryAtEpochMillis =
     catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
+  val inventoryItems =
+    remember(
+      catalog.devices,
+      catalog.lanDevices,
+      catalog.localStatus,
+      currentDiscoveryAtEpochMillis,
+    ) {
+      buildInventoryDeviceItems(catalog, currentDiscoveryAtEpochMillis)
+    }
+  val inventorySections = remember(inventoryItems) { buildInventorySections(inventoryItems) }
+  val focusedDevice = inventoryItems.firstOrNull { item -> item.device.id == focusedDeviceId }
+  LaunchedEffect(focusedDeviceId, focusedDevice) {
+    if (focusedDeviceId != null && focusedDevice == null) focusedDeviceId = null
+  }
   val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
   val unmatchedLanDevices =
     remember(
@@ -118,10 +263,17 @@ fun InventoryScreen(
         record.id !in knownIds && record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
       }
     }
-  val isBusy =
-    discovery is LanDiscoveryUiState.Scanning ||
-      discovery is LanDiscoveryUiState.ReadingStatus ||
-      control is LocalControlUiState.Sending
+  if (focusedDevice != null) {
+    BackHandler { focusedDeviceId = null }
+    FocusedDeviceControlsScreen(
+      item = focusedDevice,
+      discovery = discovery,
+      control = control,
+      onIntent = onIntent,
+      onBack = { focusedDeviceId = null },
+    )
+    return
+  }
 
   Surface(
     modifier = Modifier.fillMaxSize(),
@@ -139,6 +291,9 @@ fun InventoryScreen(
         item {
           InventoryHeader(
             catalog = catalog,
+            displayMode = displayMode,
+            isDisplayModeSaving = isDisplayModeSaving,
+            onDisplayModeChanged = onDisplayModeChanged,
             onOpenSettings = onOpenSettings,
           )
         }
@@ -160,19 +315,31 @@ fun InventoryScreen(
             onRefreshKnownDevices = onRefreshKnownDevices,
           )
         }
-        items(
-          items = catalog.devices,
-          key = { it.id },
-        ) { device ->
-          InventoryDeviceCard(
-            device = device,
-            lastDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
-            lanRecord = catalog.lanDevices.firstOrNull { it.id == device.id },
-            localStatus = catalog.localStatus.firstOrNull { it.id == device.id },
-            discovery = discovery,
-            control = control,
-            onIntent = onIntent,
-          )
+        inventorySections.forEach { section ->
+          if (catalog.devices.size > 1) {
+            item(key = "family-${section.key}") { InventoryFamilyHeader(section) }
+          }
+          items(
+            items = section.items,
+            key = { item -> item.device.id },
+          ) { item ->
+            when (displayMode) {
+              InventoryDisplayMode.COMPACT ->
+                CompactInventoryDeviceCard(
+                  item = item,
+                  control = control,
+                  onIntent = onIntent,
+                  onOpenFullControls = { focusedDeviceId = item.device.id },
+                )
+              InventoryDisplayMode.FULL ->
+                InventoryDeviceCard(
+                  item = item,
+                  discovery = discovery,
+                  control = control,
+                  onIntent = onIntent,
+                )
+            }
+          }
         }
         if (unmatchedLanDevices.isNotEmpty()) {
           item {
@@ -195,35 +362,14 @@ fun InventoryScreen(
       }
     }
   }
-
-  if (confirmDelete) {
-    AlertDialog(
-      onDismissRequest = { confirmDelete = false },
-      title = { Text("Delete all local data?") },
-      text = {
-        Text(
-          "This removes the encrypted device catalog and its Android Keystore key. " +
-            "You will need to import from Tuya again."
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            confirmDelete = false
-            onDeleteAllLocalData()
-          }
-        ) {
-          Text("Delete data")
-        }
-      },
-      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-    )
-  }
 }
 
 @Composable
 private fun InventoryHeader(
   catalog: DeviceCatalog,
+  displayMode: InventoryDisplayMode,
+  isDisplayModeSaving: Boolean,
+  onDisplayModeChanged: (InventoryDisplayMode) -> Unit,
   onOpenSettings: () -> Unit,
 ) {
   Column(modifier = Modifier.fillMaxWidth()) {
@@ -239,6 +385,30 @@ private fun InventoryHeader(
           letterSpacing = 1.7.sp,
           color = MaterialTheme.colorScheme.primary,
         )
+      }
+      TextButton(
+        onClick = {
+          onDisplayModeChanged(
+            if (displayMode == InventoryDisplayMode.COMPACT) {
+              InventoryDisplayMode.FULL
+            } else {
+              InventoryDisplayMode.COMPACT
+            }
+          )
+        },
+        enabled = !isDisplayModeSaving,
+        modifier =
+          Modifier.semantics {
+              contentDescription =
+                if (displayMode == InventoryDisplayMode.COMPACT) {
+                  "Switch to Advanced view"
+                } else {
+                  "Switch to Simple view"
+                }
+            }
+            .testTag("inventory_mode_toggle"),
+      ) {
+        Text(if (displayMode == InventoryDisplayMode.COMPACT) "Simple" else "Advanced")
       }
       TextButton(
         onClick = onOpenSettings,
@@ -500,6 +670,169 @@ private fun DeviceInventoryHeader(
 }
 
 @Composable
+private fun InventoryFamilyHeader(section: InventorySection) {
+  Row(
+    modifier =
+      Modifier.fillMaxWidth()
+        .padding(top = 10.dp, bottom = 1.dp)
+        .testTag("inventory_family_${section.key}"),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Surface(
+      shape = CircleShape,
+      color = MaterialTheme.colorScheme.secondaryContainer,
+      contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+      Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
+        if (section.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET) {
+          SwitchProfileIcon(
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(18.dp),
+          )
+        } else {
+          Text(section.symbol, style = MaterialTheme.typography.labelLarge)
+        }
+      }
+    }
+    Spacer(Modifier.width(9.dp))
+    Text(
+      text = section.label,
+      style = MaterialTheme.typography.titleSmall,
+      modifier = Modifier.weight(1f),
+    )
+    Text(
+      text = section.items.size.toString(),
+      style = MaterialTheme.typography.labelLarge,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+@Composable
+private fun CompactInventoryDeviceCard(
+  item: InventoryDeviceItem,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
+  onOpenFullControls: () -> Unit,
+) {
+  val device = item.device
+  val targetedError =
+    (control as? LocalControlUiState.Error)?.takeIf { error -> error.deviceId == device.id }
+  OutlinedCard(
+    colors =
+      CardDefaults.outlinedCardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+      ),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    modifier =
+      Modifier.fillMaxWidth()
+        .semantics {
+          contentDescription = "Open full controls for ${device.name.ifBlank { "device" }}"
+          role = Role.Button
+        }
+        .clickable(onClick = onOpenFullControls)
+        .testTag("compact_device_card_${device.id}"),
+  ) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        DeviceProfileMark(profile = item.profile, active = item.isProfileActive)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+          Text(
+            text = device.name.ifBlank { "Unnamed Tuya device" },
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = deviceProfileLabel(device, item.profile),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 1.dp),
+          )
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 3.dp),
+          ) {
+            LocalAvailabilityLabel(item.localAvailability)
+            Text(
+              text = "  ·  Advanced controls ›",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
+        Spacer(Modifier.width(10.dp))
+        CompactDeviceLayoutHost(
+          device = item.deviceUiModel,
+          registry = inventoryCompactDeviceLayoutRegistry,
+          controlState = control,
+          onIntent = onIntent,
+          modifier = Modifier.widthIn(max = 168.dp),
+        )
+      }
+      targetedError?.let { error ->
+        Text(
+          text = error.message,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.error,
+          modifier = Modifier.padding(top = 8.dp).testTag("compact_control_error"),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun FocusedDeviceControlsScreen(
+  item: InventoryDeviceItem,
+  discovery: LanDiscoveryUiState,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
+  onBack: () -> Unit,
+) {
+  Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Box(
+      modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+      contentAlignment = Alignment.TopCenter,
+    ) {
+      LazyColumn(
+        modifier = Modifier.fillMaxSize().widthIn(max = 680.dp).testTag("focused_device_controls"),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+      ) {
+        item {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack, modifier = Modifier.testTag("focused_device_back")) {
+              Text("←  Back")
+            }
+            Spacer(Modifier.width(8.dp))
+            Column {
+              Text("Advanced controls", style = MaterialTheme.typography.titleLarge)
+              Text(
+                text = "Only this device is expanded.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+        }
+        item {
+          InventoryDeviceCard(
+            item = item,
+            discovery = discovery,
+            control = control,
+            onIntent = onIntent,
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
 internal fun InventoryDeviceCard(
   device: CloudImportedDevice,
   lastDiscoveryAtEpochMillis: Long?,
@@ -509,32 +842,27 @@ internal fun InventoryDeviceCard(
   control: LocalControlUiState,
   onIntent: (DeviceIntent) -> Unit,
 ) {
-  val discoveryAt = lastDiscoveryAtEpochMillis
-  val isOnCurrentLan = discoveryAt != null && lanRecord?.lastSeenAtEpochMillis == discoveryAt
-  val isCurrentStatus =
-    discoveryAt != null &&
-      isOnCurrentLan &&
-      localStatus != null &&
-      localStatus.polledAtEpochMillis >= discoveryAt
-  val profile =
+  val item =
     remember(device, localStatus, lastDiscoveryAtEpochMillis) {
-      LocalDeviceCapabilityRegistry.profile(
+      inventoryDeviceItem(
         device = device,
-        status = localStatus,
+        lanRecord = lanRecord,
+        localStatus = localStatus,
         lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
       )
     }
-  val deviceUiModel =
-    remember(profile.resolvedDevice) { DeviceUiMapper.map(profile.resolvedDevice) }
-  val isProfileActive =
-    isCurrentStatus &&
-      deviceUiModel.capabilities.filterIsInstance<ToggleUiModel>().any(ToggleUiModel::currentValue)
-  val localAvailability =
-    when {
-      lastDiscoveryAtEpochMillis == null -> LocalAvailability("Scan needed", false)
-      isOnCurrentLan -> LocalAvailability("Local", true)
-      else -> LocalAvailability("Not found", false)
-    }
+  InventoryDeviceCard(item, discovery, control, onIntent)
+}
+
+@Composable
+private fun InventoryDeviceCard(
+  item: InventoryDeviceItem,
+  discovery: LanDiscoveryUiState,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
+) {
+  val device = item.device
+  val profile = item.profile
   OutlinedCard(
     colors =
       CardDefaults.outlinedCardColors(
@@ -547,7 +875,7 @@ internal fun InventoryDeviceCard(
       Row(verticalAlignment = Alignment.Top) {
         DeviceProfileMark(
           profile = profile,
-          active = isProfileActive,
+          active = item.isProfileActive,
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -567,7 +895,7 @@ internal fun InventoryDeviceCard(
         }
         Spacer(Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
-          LocalAvailabilityLabel(localAvailability)
+          LocalAvailabilityLabel(item.localAvailability)
           when {
             profile.capabilityAccess == CapabilityAccess.READ_ONLY ->
               Text(
@@ -599,10 +927,10 @@ internal fun InventoryDeviceCard(
       LocalStatusPanel(
         device = device,
         profile = profile,
-        deviceUiModel = deviceUiModel,
-        status = localStatus,
-        isCurrentStatus = isCurrentStatus,
-        isOnCurrentLan = isOnCurrentLan,
+        deviceUiModel = item.deviceUiModel,
+        status = item.localStatus,
+        isCurrentStatus = item.isCurrentStatus,
+        isOnCurrentLan = item.isOnCurrentLan,
         isReadingStatus = discovery is LanDiscoveryUiState.ReadingStatus,
         control = control,
         onIntent = onIntent,
@@ -1163,8 +1491,6 @@ private fun InventoryPreview() {
       onDiscoverLan = {},
       onIntent = {},
       onOpenSettings = {},
-      onImportFromCloud = {},
-      onDeleteAllLocalData = {},
     )
   }
 }

@@ -103,18 +103,13 @@ fun AppRoute(
           discovery = destination.discovery,
           control = destination.control,
           isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
+          displayMode = settingsState.inventoryDisplayMode,
+          isDisplayModeSaving = settingsState.isSaving,
+          onDisplayModeChanged = appViewModel::setInventoryDisplayMode,
           onRefreshKnownDevices = appViewModel::refreshKnownDevices,
           onDiscoverLan = appViewModel::discoverLan,
           onIntent = appViewModel::submitControl,
           onOpenSettings = { showSettings = true },
-          onImportFromCloud = {
-            onboardingViewModel.prepareForCloudSync(destination.catalog.region)
-            appViewModel.showOnboarding()
-          },
-          onDeleteAllLocalData = {
-            onboardingViewModel.clearSession()
-            appViewModel.deleteAllLocalData()
-          },
         )
       is AppUiState.Recovery ->
         CatalogRecoveryScreen(

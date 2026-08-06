@@ -542,14 +542,14 @@ private fun EmptyCapabilityFallback() {
   )
 }
 
-private data class ControlPresentation(
+internal data class ControlPresentation(
   val enabled: Boolean,
   val showProgress: Boolean,
   val supportingText: String?,
   val isError: Boolean,
 )
 
-private fun controlPresentation(
+internal fun controlPresentation(
   deviceId: String,
   capability: CapabilityUiModel,
   state: DeviceControlUiState,

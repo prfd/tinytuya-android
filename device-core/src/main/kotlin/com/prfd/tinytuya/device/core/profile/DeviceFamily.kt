@@ -39,10 +39,14 @@ data class DevicePresentation(
   val layoutId: DeviceLayoutId,
   val typeLabel: String,
   val symbol: String,
+  val familyLabel: String = typeLabel,
 ) {
   init {
     require(typeLabel.length in 1..MAX_LABEL_LENGTH && typeLabel.none(Char::isISOControl)) {
       "Device type labels must be bounded single-line text."
+    }
+    require(familyLabel.length in 1..MAX_LABEL_LENGTH && familyLabel.none(Char::isISOControl)) {
+      "Device family labels must be bounded single-line text."
     }
     require(symbol.length in 1..MAX_SYMBOL_LENGTH && symbol.none(Char::isISOControl)) {
       "Device symbols must be bounded single-line text."

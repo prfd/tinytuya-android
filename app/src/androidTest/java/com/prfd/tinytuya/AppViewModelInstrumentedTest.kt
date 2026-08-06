@@ -19,6 +19,7 @@ import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
@@ -463,6 +464,40 @@ class AppViewModelInstrumentedTest {
     assertEquals(1, knownCoordinator.callCount)
     assertEquals(0, discoveryCoordinator.callCount)
     assertTrue(state.control is LocalControlUiState.Ready)
+  }
+
+  @Test
+  fun inventoryDisplayModeLoadsAndPersistsWithoutChangingRefreshPreference() = runBlocking {
+    val settingsStore =
+      InMemoryAppSettingsStore(
+        AppSettings(
+          refreshWhenAppOpens = true,
+          inventoryDisplayMode = InventoryDisplayMode.COMPACT,
+        )
+      )
+    val viewModel =
+      AppViewModel(
+        catalogStore = FakeCatalogStore(sampleCatalog()),
+        lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
+        localStatusCoordinator = FakeLocalStatusCoordinator(),
+        localControlCoordinator = FakeLocalControlCoordinator(),
+        settingsStore = settingsStore,
+      )
+
+    val loaded = withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
+    assertEquals(InventoryDisplayMode.COMPACT, loaded.inventoryDisplayMode)
+
+    viewModel.setInventoryDisplayMode(InventoryDisplayMode.FULL)
+
+    val saved =
+      withTimeout(5_000) {
+        viewModel.settingsState.first {
+          it.inventoryDisplayMode == InventoryDisplayMode.FULL && !it.isSaving
+        }
+      }
+    assertTrue(saved.refreshWhenAppOpens)
+    assertEquals(InventoryDisplayMode.FULL, settingsStore.load().inventoryDisplayMode)
+    assertTrue(settingsStore.load().refreshWhenAppOpens)
   }
 
   @Test

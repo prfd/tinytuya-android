@@ -31,6 +31,7 @@ import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.python.PythonBridgeException
 import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
@@ -83,6 +84,7 @@ enum class LocalRefreshPhase {
 
 data class AppSettingsUiState(
   val refreshWhenAppOpens: Boolean = true,
+  val inventoryDisplayMode: InventoryDisplayMode = InventoryDisplayMode.COMPACT,
   val isLoaded: Boolean = false,
   val isSaving: Boolean = false,
   val errorCode: String? = null,
@@ -278,6 +280,50 @@ class AppViewModel(
             isSaving = false,
             errorCode = "SETTINGS_WRITE_FAILED",
             errorMessage = "The refresh preference could not be saved.",
+          )
+      }
+    }
+  }
+
+  fun setInventoryDisplayMode(mode: InventoryDisplayMode) {
+    val current = mutableSettingsState.value
+    if (!current.isLoaded || current.isSaving || current.inventoryDisplayMode == mode) return
+    mutableSettingsState.value =
+      current.copy(
+        inventoryDisplayMode = mode,
+        isSaving = true,
+        errorCode = null,
+        errorMessage = null,
+      )
+    viewModelScope.launch {
+      try {
+        val saved = settingsStore.setInventoryDisplayMode(mode)
+        mutableSettingsState.value =
+          mutableSettingsState.value.copy(
+            refreshWhenAppOpens = saved.refreshWhenAppOpens,
+            inventoryDisplayMode = saved.inventoryDisplayMode,
+            isLoaded = true,
+            isSaving = false,
+            errorCode = null,
+            errorMessage = null,
+          )
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: AppSettingsStorageException) {
+        mutableSettingsState.value =
+          mutableSettingsState.value.copy(
+            inventoryDisplayMode = current.inventoryDisplayMode,
+            isSaving = false,
+            errorCode = error.code,
+            errorMessage = error.message ?: "The inventory view preference could not be saved.",
+          )
+      } catch (_: Exception) {
+        mutableSettingsState.value =
+          mutableSettingsState.value.copy(
+            inventoryDisplayMode = current.inventoryDisplayMode,
+            isSaving = false,
+            errorCode = "SETTINGS_WRITE_FAILED",
+            errorMessage = "The inventory view preference could not be saved.",
           )
       }
     }
@@ -871,6 +917,7 @@ class AppViewModel(
         mutableSettingsState.value =
           mutableSettingsState.value.copy(
             refreshWhenAppOpens = settings.refreshWhenAppOpens,
+            inventoryDisplayMode = settings.inventoryDisplayMode,
             isLoaded = true,
             isSaving = false,
             errorCode = null,
@@ -882,6 +929,7 @@ class AppViewModel(
         mutableSettingsState.value =
           mutableSettingsState.value.copy(
             refreshWhenAppOpens = false,
+            inventoryDisplayMode = InventoryDisplayMode.COMPACT,
             isLoaded = true,
             isSaving = false,
             errorCode = error.code,
@@ -891,6 +939,7 @@ class AppViewModel(
         mutableSettingsState.value =
           mutableSettingsState.value.copy(
             refreshWhenAppOpens = false,
+            inventoryDisplayMode = InventoryDisplayMode.COMPACT,
             isLoaded = true,
             isSaving = false,
             errorCode = "SETTINGS_READ_FAILED",

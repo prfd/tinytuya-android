@@ -20,6 +20,7 @@ import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
 import com.prfd.tinytuya.data.local.DeviceCatalog
+import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
@@ -42,21 +43,6 @@ class InventoryScreenInstrumentedTest {
   @get:Rule val composeRule = createComposeRule()
 
   @Test
-  fun deletingDataRequiresExplicitConfirmation() {
-    var deleteCalled = false
-    setInventoryContent(onDelete = { deleteCalled = true })
-    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
-
-    composeRule.onNodeWithText("Saved credentials are reused", substring = true).assertExists()
-    composeRule.onNodeWithText("Delete all local data").performClick()
-    composeRule.onNodeWithText("Delete all local data?").assertExists()
-    assertFalse(deleteCalled)
-
-    composeRule.onNodeWithText("Delete data").performClick()
-    composeRule.runOnIdle { assertTrue(deleteCalled) }
-  }
-
-  @Test
   fun quickRefreshContactsKnownDevicesWithoutStartingDiscovery() {
     var refreshCalled = false
     var scanCalled = false
@@ -77,6 +63,83 @@ class InventoryScreenInstrumentedTest {
     composeRule
       .onNodeWithText("Discovery · listens locally for new or changed addresses")
       .assertExists()
+  }
+
+  @Test
+  fun compactInventoryGroupsBySemanticFamilyAndKeepsCardsSmall() {
+    setInventoryContent(
+      catalog = groupedCatalog(),
+      control = LocalControlUiState.Ready,
+      displayMode = InventoryDisplayMode.COMPACT,
+    )
+
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+    composeRule.onNodeWithTag("inventory_family_switch_or_outlet").assertExists()
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
+    composeRule.onNodeWithTag("compact_device_card_office-lamp").assertExists()
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(5)
+    composeRule.onNodeWithTag("compact_device_card_bedroom-outlet").assertExists()
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(6)
+    composeRule.onNodeWithTag("inventory_family_light").assertExists()
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(7)
+    composeRule.onNodeWithTag("compact_device_card_hall-light").assertExists()
+    composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
+  }
+
+  @Test
+  fun inventoryModeSelectorRequestsThePersistedGlobalChoice() {
+    var requestedMode: InventoryDisplayMode? = null
+    setInventoryContent(
+      catalog = controlledCatalog(),
+      displayMode = InventoryDisplayMode.COMPACT,
+      onDisplayModeChanged = { requestedMode = it },
+    )
+
+    composeRule.onNodeWithTag("inventory_mode_toggle").performClick()
+
+    composeRule.runOnIdle { assertEquals(InventoryDisplayMode.FULL, requestedMode) }
+  }
+
+  @Test
+  fun compactCardOpensOnlyThatDevicesFullControlsAndBackKeepsCompactMode() {
+    setInventoryContent(
+      catalog = controlledCatalog(),
+      control = LocalControlUiState.Ready,
+      displayMode = InventoryDisplayMode.COMPACT,
+    )
+
+    composeRule.onNodeWithTag("compact_device_card_office-lamp").performScrollTo().performClick()
+
+    composeRule.onNodeWithTag("focused_device_controls").assertExists()
+    composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn()
+    composeRule.onNodeWithTag("inventory_mode_toggle").assertDoesNotExist()
+
+    composeRule.onNodeWithTag("focused_device_back").performClick()
+
+    composeRule.onNodeWithTag("inventory_mode_toggle").assertExists()
+    composeRule.onNodeWithTag("compact_device_card_office-lamp").assertExists()
+    composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
+  }
+
+  @Test
+  fun compactPowerButtonControlsWithoutOpeningFullScreen() {
+    var request: DeviceIntent? = null
+    setInventoryContent(
+      catalog = controlledCatalog(),
+      control = LocalControlUiState.Ready,
+      displayMode = InventoryDisplayMode.COMPACT,
+      onIntent = { request = it },
+    )
+
+    composeRule.onNodeWithTag("compact_toggle_switch_1").performScrollTo().performClick()
+
+    composeRule.runOnIdle {
+      assertEquals(
+        DeviceIntent.SetToggle("office-lamp", CapabilityId("switch.1"), false),
+        request,
+      )
+    }
+    composeRule.onNodeWithTag("focused_device_controls").assertDoesNotExist()
   }
 
   @Test
@@ -263,8 +326,6 @@ class InventoryScreenInstrumentedTest {
             controlState = LocalControlUiState.Sending(intent)
           },
           onOpenSettings = {},
-          onImportFromCloud = {},
-          onDeleteAllLocalData = {},
         )
       }
     }
@@ -408,7 +469,8 @@ class InventoryScreenInstrumentedTest {
     onDiscoverLan: () -> Unit = {},
     onIntent: (DeviceIntent) -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onDelete: () -> Unit = {},
+    displayMode: InventoryDisplayMode = InventoryDisplayMode.FULL,
+    onDisplayModeChanged: (InventoryDisplayMode) -> Unit = {},
   ) {
     composeRule.setContent {
       TinytuyaTheme(darkTheme = false) {
@@ -417,12 +479,12 @@ class InventoryScreenInstrumentedTest {
           discovery = discovery,
           control = control,
           isLanSnapshotCurrent = isLanSnapshotCurrent,
+          displayMode = displayMode,
+          onDisplayModeChanged = onDisplayModeChanged,
           onRefreshKnownDevices = onRefreshKnownDevices,
           onDiscoverLan = onDiscoverLan,
           onIntent = onIntent,
           onOpenSettings = onOpenSettings,
-          onImportFromCloud = {},
-          onDeleteAllLocalData = onDelete,
         )
       }
     }
@@ -528,6 +590,33 @@ class InventoryScreenInstrumentedTest {
               )
           ),
       )
+
+  private fun groupedCatalog(): DeviceCatalog {
+    val firstSwitch = controlledCatalog().devices.single()
+    val secondSwitch =
+      firstSwitch.copy(
+        id = "bedroom-outlet",
+        name = "Bedroom outlet",
+        category = "cz",
+      )
+    val light = lightCatalog().devices.single().copy(id = "hall-light", name = "Hall light")
+    return controlledCatalog()
+      .copy(
+        devices = listOf(light, firstSwitch, secondSwitch),
+        lanDevices =
+          listOf(
+            lanRecord("hall-light", "192.168.10.21"),
+            lanRecord("office-lamp", "192.168.10.20"),
+            lanRecord("bedroom-outlet", "192.168.10.22"),
+          ),
+        localStatus =
+          listOf(
+            lightCatalog().localStatus.single().copy(id = "hall-light"),
+            controlledCatalog().localStatus.single(),
+            controlledCatalog().localStatus.single().copy(id = "bedroom-outlet"),
+          ),
+      )
+  }
 
   private fun lightCatalog(
     mode: String = "white",

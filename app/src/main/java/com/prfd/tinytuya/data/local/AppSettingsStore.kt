@@ -8,7 +8,20 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class AppSettings(val refreshWhenAppOpens: Boolean = true)
+enum class InventoryDisplayMode(val storedValue: String) {
+  COMPACT("compact"),
+  FULL("full");
+
+  companion object {
+    fun fromStoredValue(value: String?): InventoryDisplayMode =
+      entries.firstOrNull { mode -> mode.storedValue == value } ?: COMPACT
+  }
+}
+
+data class AppSettings(
+  val refreshWhenAppOpens: Boolean = true,
+  val inventoryDisplayMode: InventoryDisplayMode = InventoryDisplayMode.COMPACT,
+)
 
 class AppSettingsStorageException(
   val code: String,
@@ -19,6 +32,8 @@ interface AppSettingsStore {
   suspend fun load(): AppSettings
 
   suspend fun setRefreshWhenAppOpens(enabled: Boolean): AppSettings
+
+  suspend fun setInventoryDisplayMode(mode: InventoryDisplayMode): AppSettings
 
   suspend fun deleteAll()
 }
@@ -41,13 +56,7 @@ internal constructor(
     withContext(Dispatchers.IO) {
       mutex.withLock {
         try {
-          AppSettings(
-            refreshWhenAppOpens =
-              preferences.getBoolean(
-                REFRESH_WHEN_APP_OPENS,
-                true,
-              )
-          )
+          readSettings()
         } catch (error: CancellationException) {
           throw error
         } catch (_: Exception) {
@@ -69,7 +78,7 @@ internal constructor(
               message = "The refresh preference could not be saved.",
             )
           }
-          AppSettings(refreshWhenAppOpens = enabled)
+          readSettings()
         } catch (error: CancellationException) {
           throw error
         } catch (error: AppSettingsStorageException) {
@@ -78,6 +87,30 @@ internal constructor(
           throw settingsError(
             code = "SETTINGS_WRITE_FAILED",
             message = "The refresh preference could not be saved.",
+          )
+        }
+      }
+    }
+
+  override suspend fun setInventoryDisplayMode(mode: InventoryDisplayMode): AppSettings =
+    withContext(Dispatchers.IO) {
+      mutex.withLock {
+        try {
+          if (!preferences.edit().putString(INVENTORY_DISPLAY_MODE, mode.storedValue).commit()) {
+            throw settingsError(
+              code = "SETTINGS_WRITE_FAILED",
+              message = "The inventory view preference could not be saved.",
+            )
+          }
+          readSettings()
+        } catch (error: CancellationException) {
+          throw error
+        } catch (error: AppSettingsStorageException) {
+          throw error
+        } catch (_: Exception) {
+          throw settingsError(
+            code = "SETTINGS_WRITE_FAILED",
+            message = "The inventory view preference could not be saved.",
           )
         }
       }
@@ -109,9 +142,17 @@ internal constructor(
   private fun settingsError(code: String, message: String) =
     AppSettingsStorageException(code = code, message = message)
 
+  private fun readSettings(): AppSettings =
+    AppSettings(
+      refreshWhenAppOpens = preferences.getBoolean(REFRESH_WHEN_APP_OPENS, true),
+      inventoryDisplayMode =
+        InventoryDisplayMode.fromStoredValue(preferences.getString(INVENTORY_DISPLAY_MODE, null)),
+    )
+
   private companion object {
     const val PREFERENCES_FILE = "app_settings"
     const val REFRESH_WHEN_APP_OPENS = "refresh_when_app_opens"
+    const val INVENTORY_DISPLAY_MODE = "inventory_display_mode"
   }
 }
 
@@ -122,7 +163,10 @@ class InMemoryAppSettingsStore(initial: AppSettings = AppSettings()) : AppSettin
   override suspend fun load(): AppSettings = settings
 
   override suspend fun setRefreshWhenAppOpens(enabled: Boolean): AppSettings =
-    AppSettings(refreshWhenAppOpens = enabled).also { settings = it }
+    settings.copy(refreshWhenAppOpens = enabled).also { settings = it }
+
+  override suspend fun setInventoryDisplayMode(mode: InventoryDisplayMode): AppSettings =
+    settings.copy(inventoryDisplayMode = mode).also { settings = it }
 
   override suspend fun deleteAll() {
     settings = AppSettings()

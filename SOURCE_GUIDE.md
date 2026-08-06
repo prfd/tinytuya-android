@@ -25,12 +25,12 @@ mean “depends on”:
 
 The ownership boundary is:
 
-| Module | Owns | Must not own |
-| --- | --- | --- |
-| `:device-core` | Normalized DP schemas, family contracts, protected-device policy, semantic capability specs and intents, resolution, codecs, and command authorization | Android, Compose, app models, transport, persistence, Python, or secrets |
-| `:device-profiles` | Built-in category registration, presentation metadata, and capability-spec assembly | Fresh observations, DPS writes, app models, UI, transport, persistence, Python, or secrets |
-| `:device-ui` | Safe UI models, atomic controls, compound layout contracts, and reusable layouts | Catalog models, raw mapping JSON, DPS bindings, network state, local keys, persistence, or Python |
-| `:app` | Raw Tuya mapping adaptation, fresh observations, runtime policy application, explicit profile/layout composition, ViewModels, persistence, and transport | Device-specific copies of generic authorization or transport behavior |
+| Module                    | Owns                                                                                                                                                     | 
+|---------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `:device-core`            | Normalized DP schemas, family contracts, protected-device policy, semantic capability specs and intents, resolution, codecs, and command authorization   |
+| `:device-profiles`        | Built-in category registration, presentation metadata, and capability-spec assembly                                                                      | 
+| `:device-ui`              | Safe UI models, atomic controls, compound layout contracts, and reusable layouts                                                                         |
+| `:app`                    | Raw Tuya mapping adaptation, fresh observations, runtime policy application, explicit profile/layout composition, ViewModels, persistence, and transport |
 
 `:app` is the only module allowed to join these domains. [MainActivity.kt](app/src/main/java/com/prfd/tinytuya/MainActivity.kt)
 is the runtime dependency-composition root; `inventoryDeviceLayoutRegistry` in
@@ -59,12 +59,25 @@ Read these files in order:
 
 Several lists coexist in `DeviceCatalog`. They are not duplicates:
 
-| State | Type and owner | What it means | Freshness rule |
-| --- | --- | --- | --- |
-| Imported identity | `CloudImportedDevice` in `DeviceCatalog.devices` | Tuya ID, local key, mapping, category, and product metadata imported from the user's cloud project | Replaced by an explicit cloud import |
-| LAN observation | `LanDeviceRecord` plus `lastDiscoveryNetwork` in `DeviceCatalog` | An ID was heard at an IP and protocol version on one exact Android network | Current only when its timestamp belongs to the latest generation and the observed Android network handle still matches |
-| Local status | `LocalStatusRecord` in `DeviceCatalog.localStatus` | The latest normalized DPS values or offline/error result | Safe for current controls only when it is a successful response polled at or after the current discovery generation |
-| Control session | `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel` | The exact Wi-Fi network and discovery generation authorized for writes | Process-only; cleared on catalog reload, leaving inventory for onboarding, a new refresh/scan, deletion, or a default-network change |
+#### **Imported identity**
+* **Type & Owner:** `CloudImportedDevice` in `DeviceCatalog.devices`
+* **What it means:** Tuya ID, local key, mapping, category, and product metadata imported from the user's cloud project.
+* **Freshness rule:** Replaced by an explicit cloud import.
+
+#### **LAN observation**
+* **Type & Owner:** `LanDeviceRecord` plus `lastDiscoveryNetwork` in `DeviceCatalog`
+* **What it means:** An ID was heard at an IP and protocol version on one exact Android network.
+* **Freshness rule:** Current only when its timestamp belongs to the latest generation and the observed Android network handle still matches.
+
+#### **Local status**
+* **Type & Owner:** `LocalStatusRecord` in `DeviceCatalog.localStatus`
+* **What it means:** The latest normalized DPS values or offline/error result.
+* **Freshness rule:** Safe for current controls only when it is a successful response polled at or after the current discovery generation.
+
+#### **Control session**
+* **Type & Owner:** `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel`
+* **What it means:** The exact Wi-Fi network and discovery generation authorized for writes.
+* **Freshness rule:** Process-only; cleared on catalog reload, leaving inventory for onboarding, a new refresh/scan, deletion, or a default-network change.
 
 This split explains an important UI behavior: an old address can remain encrypted as history without
 being treated as a device found by the latest scan. A control is available only when the saved
@@ -246,7 +259,7 @@ presentation from permission:
 Read the capability path in four pieces:
 
 1. [TuyaDpSchemaAdapter.kt](app/src/main/java/com/prfd/tinytuya/data/lan/TuyaDpSchemaAdapter.kt)
-   is the only app adapter which parses imported raw mapping JSON into the bounded core `DpSchema`.
+   is the only `:app` adapter which parses imported raw mapping JSON into the bounded core `DpSchema`.
 2. [DeviceFamily.kt](device-core/src/main/kotlin/com/prfd/tinytuya/device/core/profile/DeviceFamily.kt)
    in `:device-core` and
    [BuiltinDeviceFamilies.kt](device-profiles/src/main/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamilies.kt)
@@ -443,25 +456,25 @@ When changing the contract, update both sides and their tests together. Incremen
 
 After each production flow, read its nearest test instead of immediately reading another feature:
 
-| Feature | Best tests to read next |
-| --- | --- |
-| Startup routing, foreground refresh, and control state | [AppViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/AppViewModelInstrumentedTest.kt) |
-| Known-address quick-refresh boundary | [KnownDeviceRefreshCoordinatorTest.kt](app/src/test/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinatorTest.kt) |
-| Settings persistence and UI | [AppSettingsStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/AppSettingsStoreInstrumentedTest.kt) and [SettingsScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/SettingsScreenInstrumentedTest.kt) |
-| Onboarding state and credential lifecycle | [OnboardingViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingViewModelInstrumentedTest.kt) and [OnboardingScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingScreenInstrumentedTest.kt) |
-| Kotlin/Python validation | [TuyaPythonGatewayInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/python/TuyaPythonGatewayInstrumentedTest.kt) |
-| Encrypted credential vault and deletion | [EncryptedCloudCredentialStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedCloudCredentialStoreInstrumentedTest.kt) |
-| Encrypted catalog and recovery | [EncryptedDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedDeviceCatalogStoreInstrumentedTest.kt) |
-| Discovery selection and merge | [LanDiscoveryCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinatorInstrumentedTest.kt) |
-| Status eligibility | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt) |
-| Write authorization and rollback | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt) |
+| Feature                                                      | Best tests to read next                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Startup routing, foreground refresh, and control state       | [AppViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/AppViewModelInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Known-address quick-refresh boundary                         | [KnownDeviceRefreshCoordinatorTest.kt](app/src/test/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinatorTest.kt)                                                                                                                                                                                                                                                                                                                                                                                           |
+| Settings persistence and UI                                  | [AppSettingsStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/AppSettingsStoreInstrumentedTest.kt) and [SettingsScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/SettingsScreenInstrumentedTest.kt)                                                                                                                                                                                                                                                              |
+| Onboarding state and credential lifecycle                    | [OnboardingViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingViewModelInstrumentedTest.kt) and [OnboardingScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingScreenInstrumentedTest.kt)                                                                                                                                                                                                                                                               |
+| Kotlin/Python validation                                     | [TuyaPythonGatewayInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/python/TuyaPythonGatewayInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                                 |
+| Encrypted credential vault and deletion                      | [EncryptedCloudCredentialStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedCloudCredentialStoreInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                          |
+| Encrypted catalog and recovery                               | [EncryptedDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedDeviceCatalogStoreInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                              |
+| Discovery selection and merge                                | [LanDiscoveryCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                        |
+| Status eligibility                                           | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                          |
+| Write authorization and rollback                             | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                        |
 | Core schema, resolution, authorization, and protected policy | [DpSchemaTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/schema/DpSchemaTest.kt), [CapabilityResolverTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityResolverTest.kt), [CapabilityCommandAuthorizerTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/capability/CapabilityCommandAuthorizerTest.kt), and [ProtectedDevicePolicyTest.kt](device-core/src/test/kotlin/com/prfd/tinytuya/device/core/profile/ProtectedDevicePolicyTest.kt) |
-| Android profile adapter and protected devices | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt) |
-| Built-in category profiles and cover fixtures | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt) and [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt) |
-| Atomic controls | [DeviceCapabilityRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderersInstrumentedTest.kt) |
-| Layout registry and cover/light fallback | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt) |
-| Inventory behavior and callbacks | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt) |
-| Safe DPS inspection | [LocalDataPointInspectionInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDataPointInspectionInstrumentedTest.kt) |
+| Android profile adapter and protected devices                | [LocalDeviceCapabilitiesInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDeviceCapabilitiesInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                        |
+| Built-in category profiles and cover fixtures                | [BuiltinDeviceFamiliesTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/BuiltinDeviceFamiliesTest.kt) and [CoverDeviceProfileTest.kt](device-profiles/src/test/kotlin/com/prfd/tinytuya/device/profiles/CoverDeviceProfileTest.kt)                                                                                                                                                                                                                                                         |
+| Atomic controls                                              | [DeviceCapabilityRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceCapabilityRenderersInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                             |
+| Layout registry and cover/light fallback                     | [DeviceLayoutRenderersInstrumentedTest.kt](device-ui/src/androidTest/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderersInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                     |
+| Inventory behavior and callbacks                             | [InventoryScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/InventoryScreenInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Safe DPS inspection                                          | [LocalDataPointInspectionInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalDataPointInspectionInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                      |
 
 The device architecture keeps schema normalization, family selection, capability resolution, codecs,
 and authorization under fast host JVM tests in `:device-core` and `:device-profiles`. Compose, Android

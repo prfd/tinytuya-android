@@ -60,9 +60,7 @@ class InventoryScreenInstrumentedTest {
     }
     composeRule.onNodeWithTag("find_devices_card").assertExists()
     composeRule.onNodeWithTag("device_inventory_header").assertExists()
-    composeRule
-      .onNodeWithText("Discovery · listens locally for new or changed addresses")
-      .assertExists()
+    composeRule.onNodeWithText("1 device found").assertExists()
   }
 
   @Test

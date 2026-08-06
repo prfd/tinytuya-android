@@ -463,89 +463,61 @@ private fun FindDevicesCard(
     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     modifier = Modifier.fillMaxWidth().testTag("find_devices_card"),
   ) {
-    Column(Modifier.padding(18.dp)) {
-      Row(verticalAlignment = Alignment.Top) {
-        Surface(
-          shape = CircleShape,
-          color = MaterialTheme.colorScheme.tertiaryContainer,
-          contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        ) {
-          Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-            if (isScanning) {
-              CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
-                strokeWidth = 2.5.dp,
-              )
-            } else {
-              Text(
-                "LAN",
-                style = MaterialTheme.typography.labelLarge,
-                fontSize = 10.sp,
-              )
-            }
-          }
-        }
-        Spacer(Modifier.width(13.dp))
-        Column(Modifier.weight(1f)) {
-          Text(
-            text =
-              when {
-                isScanning -> "Listening for Tuya devices"
-                error != null -> lanErrorTitle(error.code)
-                currentDiscoveryAtEpochMillis == null && lastScan != null ->
-                  "Find devices on this Wi-Fi"
-                lastScan != null && currentDeviceCount == 0 -> "No devices found in the last search"
-                lastScan != null && currentDeviceCount == 1 -> "1 Tuya device found"
-                lastScan != null -> "$currentDeviceCount Tuya devices found"
-                else -> "Find devices on this Wi-Fi"
-              },
-            style = MaterialTheme.typography.titleMedium,
-          )
-          Text(
-            text =
-              when {
-                isScanning -> "Listening on UDP 6666, 6667, and 7000 for up to twelve seconds."
-                error != null -> error.message
-                currentDiscoveryAtEpochMillis == null && lastScan != null ->
-                  "The previous local snapshot is not verified on the active Wi-Fi."
-                lastScan != null ->
-                  "Last searched $lastScan. Search again after a device or Wi-Fi address changes."
-                else ->
-                  "Match the encrypted cloud inventory to devices broadcasting on the phone's current Wi-Fi."
-              },
-            style = MaterialTheme.typography.bodyMedium,
-            color =
-              if (error != null) {
-                MaterialTheme.colorScheme.error
-              } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-              },
-            modifier = Modifier.padding(top = 5.dp),
-          )
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+      Text(
+        text =
+          when {
+            isScanning -> "Finding devices…"
+            error != null -> lanErrorTitle(error.code)
+            lastScan != null && currentDeviceCount == 0 -> "No devices found"
+            lastScan != null && currentDeviceCount == 1 -> "1 device found"
+            lastScan != null -> "$currentDeviceCount devices found"
+            else -> "Find devices on this Wi-Fi"
+          },
+        style = MaterialTheme.typography.titleMedium,
+      )
+      Text(
+        text =
+          when {
+            isScanning -> "Listening on your local network."
+            error != null -> error.message
+            currentDiscoveryAtEpochMillis == null && lastScan != null ->
+              "Search again to verify this Wi-Fi."
+            lastScan != null -> "Last searched $lastScan."
+            else -> "Search this Wi-Fi for your saved devices."
+          },
+        style = MaterialTheme.typography.bodySmall,
+        color =
           if (error != null) {
-            Text(
-              text = "Reference · ${error.code}",
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.padding(top = 7.dp),
-            )
-          }
-        }
+            MaterialTheme.colorScheme.error
+          } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+          },
+        modifier = Modifier.padding(top = 3.dp),
+      )
+      if (error != null) {
+        Text(
+          text = "Reference · ${error.code}",
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(top = 6.dp),
+        )
       }
-      OutlinedButton(
+      Button(
         onClick = onDiscoverLan,
         enabled = !isBusy,
         modifier =
-          Modifier.fillMaxWidth().padding(top = 14.dp).height(50.dp).testTag("lan_scan_button"),
+          Modifier.fillMaxWidth().padding(top = 12.dp).height(48.dp).testTag("lan_scan_button"),
       ) {
+        if (isScanning) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp,
+          )
+          Spacer(Modifier.width(8.dp))
+        }
         Text("Find devices")
       }
-      Text(
-        text = "Discovery · listens locally for new or changed addresses",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 6.dp),
-      )
     }
   }
 }

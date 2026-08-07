@@ -159,7 +159,7 @@ class AndroidLanNetworkResolver(context: Context) : LanNetworkResolver, LanNetwo
 
           override fun onLinkPropertiesChanged(
             network: Network,
-            linkProperties: android.net.LinkProperties,
+            linkProperties: LinkProperties,
           ) {
             resolveWifiNetwork(network)?.let { finish(Result.success(it)) }
           }

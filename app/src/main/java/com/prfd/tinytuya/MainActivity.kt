@@ -26,11 +26,14 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+
     val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
     val credentialStore = EncryptedCloudCredentialStore(applicationContext)
     val settingsStore = AndroidAppSettingsStore(applicationContext)
+
     val gateway = ChaquopyTuyaPythonGateway(applicationContext)
     val networkResolver = AndroidLanNetworkResolver(applicationContext)
+
     val lanDiscoveryCoordinator =
       DefaultLanDiscoveryCoordinator(
         gateway = gateway,
@@ -54,6 +57,7 @@ class MainActivity : ComponentActivity() {
         networkResolver = networkResolver,
         localStatusCoordinator = localStatusCoordinator,
       )
+
     appViewModel =
       ViewModelProvider(
         this,
@@ -74,6 +78,7 @@ class MainActivity : ComponentActivity() {
         this,
         OnboardingViewModel.factory(this, catalogStore, credentialStore),
       )[OnboardingViewModel::class.java]
+
     setContent {
       TinytuyaTheme {
         AppRoute(

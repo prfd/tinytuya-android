@@ -9,42 +9,20 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Opt-in, on-device diagnostic for designing conservative smart-light controls.
- *
- * This is an instrumentation test because the catalog key is owned by Android Keystore. It is
- * skipped unless the runner argument `tinytuya.lightCapabilityProbe=true` is present. Never run it
- * through `connectedDebugAndroidTest`: that Gradle deployment may remove the target debug app and
- * its private data at teardown.
- *
- * Safe manual workflow after the normal debug app is installed and its light status is fresh:
- *
- * 1. `gradlew.bat assembleDebugAndroidTest`
- * 2. `adb install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
- * 3. `adb shell am instrument -w -e class com.prfd.tinytuya.LightCapabilityProbeInstrumentedTest -e
- *    tinytuya.lightCapabilityProbe true
- *    com.prfd.tinytuya.test/androidx.test.runner.AndroidJUnitRunner`
- * 4. `adb shell run-as com.prfd.tinytuya cat cache/tinytuya-light-capabilities.json`
- * 5. Delete only that cache report, then uninstall only `com.prfd.tinytuya.test`.
- *
- * The report omits device IDs, names, keys, addresses, product identifiers, and raw color/scene
- * strings. It contains only bounded mapping metadata, safe primitive observations, and a decoded
- * HSV candidate when the observed color text matches the expected 12-hex-character shape.
+ * gradlew.bat installDebugAndroidTest adb shell am instrument -w -e class
+ * com.prfd.tinytuya.LightCapabilityProbeInstrumentedTest -e \
+ * com.prfd.tinytuya.test/androidx.test.runner.AndroidJUnitRunner adb shell run-as com.prfd.tinytuya
+ * cat cache/tinytuya-light-capabilities.json
  */
 @RunWith(AndroidJUnit4::class)
+@ManualTestProbe
 class LightCapabilityProbeInstrumentedTest {
   @Test
   fun writeSanitizedLightCapabilityReportToTargetCache() = runBlocking {
-    val arguments = InstrumentationRegistry.getArguments()
-    assumeTrue(
-      "Opt-in diagnostic; follow the safe manual workflow in this test's KDoc.",
-      arguments.getString(PROBE_ARGUMENT) == "true",
-    )
-
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val catalog =
       EncryptedDeviceCatalogStore(context).load()

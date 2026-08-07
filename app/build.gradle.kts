@@ -21,6 +21,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["notAnnotation"] =
+            "com.prfd.tinytuya.ManualTestProbe"
+
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

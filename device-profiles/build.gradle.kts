@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
-    id("com.ncorti.ktfmt.gradle") version "0.27.0"
+    alias(libs.plugins.ktfmt.gradle)
 }
 
 java {

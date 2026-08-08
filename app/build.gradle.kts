@@ -1,8 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.chaquo.python")
-    id("com.ncorti.ktfmt.gradle") version "0.27.0"
+    alias(libs.plugins.chaquopy)
+    alias(libs.plugins.ktfmt.gradle)
 }
 
 android {
@@ -16,7 +16,7 @@ android {
     defaultConfig {
         applicationId = "com.prfd.tinytuya"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 

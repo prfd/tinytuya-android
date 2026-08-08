@@ -23,8 +23,8 @@ import org.junit.runner.RunWith
 /**
  * Exports BrandMark as 512x512 transparent PNG to the app cache.
  *
- * gradlew.bat installDebugAndroidTest adb shell am instrument -w -r -e \
- * class com.prfd.tinytuya.ui.components.BrandMarkPngInstrumentedTest#renderBrandMark
+ * gradlew.bat installDebugAndroidTest adb shell am instrument -w -r -e \ class
+ * com.prfd.tinytuya.ui.components.BrandMarkPngInstrumentedTest#renderBrandMark
  * com.prfd.tinytuya.test/androidx.test.runner.AndroidJUnitRunner
  *
  * Pipe the generated cache file to the local filesystem with: adb exec-out run-as com.prfd.tinytuya

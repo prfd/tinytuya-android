@@ -7,11 +7,11 @@ plugins {
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.compose) apply false
-    id("com.chaquo.python") version "17.0.0" apply false
+    alias(libs.plugins.chaquopy) apply false
 }
 
 val allowedDeviceModuleDependencies = mapOf(
-    "device-core" to emptySet<String>(),
+    "device-core" to emptySet(),
     "device-profiles" to setOf(":device-core"),
     "device-ui" to setOf(":device-core"),
 )

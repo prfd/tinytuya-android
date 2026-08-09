@@ -11,9 +11,7 @@ These instructions apply to the entire repository.
   /mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat <tasks> -q --warning-mode=none --console=plain
   ```
 
-- Use the Windows SDK `adb.exe` at `/mnt/c/Users/paulo/AppData/Local/Android/Sdk/platform-tools/adb.exe`. If it moves, derive its WSL path from `sdk.dir` in untracked `local.properties`.
-- Assume ADB is connected. After completing a change, always build and install the latest app on the user's device (normally with `gradlew.bat installDebug`). Preserve the installed app's encrypted catalog and settings unless the user authorizes destructive device-state changes.
-- For UI changes, install the app, ask the user to navigate to the changed UI and manually save an **extended screenshot** as `/sdcard/tinytuya-<feature-name>.jpg`, then pull it with ADB and inspect it. Never commit captured screenshots.
+- To use Android SDK tools (adb, etc.), invoke them from the SDK path derived from `sdk.dir` in untracked `local.properties`.
 - Never edit or commit `local.properties`, SDK paths, signing material, credentials, device identifiers, Tuya keys, or other machine-local or secret data.
 
 ## Git workflow
@@ -21,7 +19,7 @@ These instructions apply to the entire repository.
 - Inspect `git status` and relevant diffs before and after changes. Preserve unrelated work in a dirty tree.
 - Commit completed, verified work in focused commits using `type: description`, staging only task files. Do not amend, rewrite, squash, or reset history unless asked.
 - Never commit generated output, device captures, secrets, local configuration, or unrelated IDE churn.
-- Before commiting, format your code with ktfmt: `/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`
+- Before commiting your work, format your code with ktfmt: `/mnt/c/Windows/System32/cmd.exe /d /c gradlew.bat ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`
 
 ## Verification
 

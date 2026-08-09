@@ -3,7 +3,6 @@ package com.prfd.tinytuya.ui.inventory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
@@ -236,8 +234,7 @@ fun InventoryScreen(
   onOpenSettings: () -> Unit,
 ) {
   var focusedDeviceId by remember { mutableStateOf<String?>(null) }
-  val currentDiscoveryAtEpochMillis =
-    catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
+  val currentDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
   val inventoryItems =
     remember(
       catalog.devices,
@@ -249,9 +246,11 @@ fun InventoryScreen(
     }
   val inventorySections = remember(inventoryItems) { buildInventorySections(inventoryItems) }
   val focusedDevice = inventoryItems.firstOrNull { item -> item.device.id == focusedDeviceId }
+
   LaunchedEffect(focusedDeviceId, focusedDevice) {
     if (focusedDeviceId != null && focusedDevice == null) focusedDeviceId = null
   }
+
   val knownIds = remember(catalog.devices) { catalog.devices.mapTo(mutableSetOf()) { it.id } }
   val unmatchedLanDevices =
     remember(
@@ -263,6 +262,7 @@ fun InventoryScreen(
         record.id !in knownIds && record.lastSeenAtEpochMillis == currentDiscoveryAtEpochMillis
       }
     }
+
   if (focusedDevice != null) {
     BackHandler { focusedDeviceId = null }
     FocusedDeviceControlsScreen(

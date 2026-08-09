@@ -52,9 +52,8 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         lastDiscoveryAtEpochMillis = DISCOVERED_AT,
       )
 
-    assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, profile.familyId)
+    assertEquals(BuiltinDeviceFamilyIds.OUTLET, profile.familyId)
     assertEquals(CapabilityAccess.READ_WRITE, profile.capabilityAccess)
-    assertEquals(3, profile.mappedSwitchCount)
     val toggles = profile.capabilities.ofType<ResolvedToggle>()
     assertEquals(listOf("1", "2", "3"), toggles.map { it.dataPointId })
     assertEquals(listOf("Switch 1", "Switch 2", "Switch 3"), toggles.map { it.label })
@@ -82,7 +81,6 @@ class LocalDeviceCapabilitiesInstrumentedTest {
       )
 
     assertEquals(BuiltinDeviceFamilyIds.LIGHT, profile.familyId)
-    assertEquals(1, profile.mappedSwitchCount)
     assertEquals(listOf("20"), profile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId })
     assertEquals("Power", profile.capabilities.ofType<ResolvedToggle>().single().label)
     val mode = profile.capabilities.ofType<ResolvedChoice>().single()
@@ -334,7 +332,7 @@ class LocalDeviceCapabilitiesInstrumentedTest {
         sampleDevice(category = "custom", mappingJson = mapping)
       )
     )
-    assertEquals(BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET, switchProfile.familyId)
+    assertEquals(BuiltinDeviceFamilyIds.OUTLET, switchProfile.familyId)
     assertEquals(
       listOf("1"),
       switchProfile.capabilities.ofType<ResolvedToggle>().map { it.dataPointId },

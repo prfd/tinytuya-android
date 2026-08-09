@@ -234,7 +234,8 @@ fun InventoryScreen(
   onOpenSettings: () -> Unit,
 ) {
   var focusedDeviceId by remember { mutableStateOf<String?>(null) }
-  val currentDiscoveryAtEpochMillis = catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
+  val currentDiscoveryAtEpochMillis =
+    catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
   val inventoryItems =
     remember(
       catalog.devices,
@@ -656,7 +657,7 @@ private fun InventoryFamilyHeader(section: InventorySection) {
       contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
       Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-        if (section.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET) {
+        if (section.familyId == BuiltinDeviceFamilyIds.OUTLET) {
           SwitchProfileIcon(
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.size(18.dp),
@@ -678,6 +679,28 @@ private fun InventoryFamilyHeader(section: InventorySection) {
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
   }
+}
+
+@Composable
+internal fun CompactInventoryDeviceCard(
+  device: CloudImportedDevice,
+  lastDiscoveryAtEpochMillis: Long?,
+  lanRecord: LanDeviceRecord?,
+  localStatus: LocalStatusRecord?,
+  control: LocalControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
+  onOpenFullControls: () -> Unit,
+) {
+  val item =
+    remember(device, localStatus, lastDiscoveryAtEpochMillis) {
+      inventoryDeviceItem(
+        device = device,
+        lanRecord = lanRecord,
+        localStatus = localStatus,
+        lastDiscoveryAtEpochMillis = lastDiscoveryAtEpochMillis,
+      )
+    }
+  CompactInventoryDeviceCard(item, control, onIntent, onOpenFullControls)
 }
 
 @Composable
@@ -733,6 +756,8 @@ private fun CompactInventoryDeviceCard(
               text = "  ·  Advanced controls ›",
               style = MaterialTheme.typography.labelMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
           }
         }
@@ -1025,7 +1050,7 @@ private fun LocalAccessNotice(profile: LocalDeviceProfile) {
         if (isStatusOnly) {
           "This supported device has no verified writable capability. Local DPS stays read-only."
         } else {
-          "Local status and controls are available only for supported switches, outlets, lights, and covers."
+          "Local status and controls are available only for supported Outlet devices, lights, and covers."
         }
       DeviceAccessRestriction.GATEWAY_CHILD ->
         "This device communicates through a Tuya gateway, not directly over Wi-Fi."
@@ -1236,14 +1261,18 @@ private fun DeviceProfileMark(
   profile: LocalDeviceProfile,
   active: Boolean,
 ) {
+  val highlighted =
+    active ||
+      (profile.restriction == DeviceAccessRestriction.NONE &&
+        profile.familyId == BuiltinDeviceFamilyIds.COVER)
   val containerColor =
     when {
-      active -> MaterialTheme.colorScheme.primaryContainer
+      highlighted -> MaterialTheme.colorScheme.primaryContainer
       else -> MaterialTheme.colorScheme.surfaceVariant
     }
   val contentColor =
     when {
-      active -> MaterialTheme.colorScheme.onPrimaryContainer
+      highlighted -> MaterialTheme.colorScheme.onPrimaryContainer
       else -> MaterialTheme.colorScheme.primary
     }
   Surface(
@@ -1255,7 +1284,7 @@ private fun DeviceProfileMark(
     Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
       if (
         profile.restriction == DeviceAccessRestriction.NONE &&
-          profile.familyId == BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET
+          profile.familyId == BuiltinDeviceFamilyIds.OUTLET
       ) {
         SwitchProfileIcon(
           color = contentColor,
@@ -1389,17 +1418,18 @@ private fun deviceProfileLabel(
     DeviceAccessRestriction.LOCK -> "Smart lock or access control"
     DeviceAccessRestriction.NONE ->
       when (profile.familyId) {
-        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET ->
-          when {
-            profile.mappedSwitchCount > 1 && device.category.lowercase() == "pc" ->
-              "${profile.mappedSwitchCount}-channel power strip"
-            profile.mappedSwitchCount > 1 -> "${profile.mappedSwitchCount}-gang switch"
-            device.category.lowercase() == "cz" -> "Smart outlet"
-            device.category.lowercase() == "pc" -> "Power strip"
-            else -> "Smart switch"
-          }
+        BuiltinDeviceFamilyIds.OUTLET ->
+          outletDeviceTypeLabel(device.category) ?: profile.presentation.typeLabel
         else -> profile.presentation.typeLabel
       }
+  }
+
+internal fun outletDeviceTypeLabel(category: String): String? =
+  when (category.trim().lowercase()) {
+    "kg" -> "Switch"
+    "pc" -> "Power strip"
+    "cz" -> "Socket"
+    else -> null
   }
 
 private fun deviceProfileSymbol(profile: LocalDeviceProfile): String =

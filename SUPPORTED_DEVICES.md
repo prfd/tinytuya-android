@@ -13,7 +13,7 @@ This table is maintained alongside the built-in category registry and its nearby
 
 | Profile | Cloud categories | Evidence | Profile claim |
 | --- | --- | --- | --- |
-| Switch or outlet | `kg`, `cz`, `pc` | Real hardware | Switch and outlet control validated on representative local hardware. |
+| Outlet | `kg` (Switch), `pc` (Power strip), `cz` (Socket) | Representative `kg` switch hardware | Local switching validated on representative hardware; multi-channel behavior and electrical readings have synthetic coverage only. |
 | Smart light | `dj`, `xdd`, `fwd`, `dc`, `dd`, `gyd`, `fsd`, `tyndj` | Real hardware | Power and first-release light controls validated on a category `dj` bulb. |
 | Curtain or cover | `cl`, `clkg` | Synthetic only | Mapped open, stop, close, and optional position controls have synthetic coverage only. |
 
@@ -21,7 +21,7 @@ This table is maintained alongside the built-in category registry and its nearby
 
 | Device class | Local behavior | Evidence boundary |
 | --- | --- | --- |
-| Switches and outlets | Status, switching, and bounded electrical readings when mapped | Representative switch hardware; multi-gang is synthetic only |
+| Outlet | Status, switching, and bounded electrical readings when mapped | Representative `kg` switch hardware; multi-channel behavior and electrical readings are synthetic only |
 | Lights | Power, White/Color mode, brightness, color temperature, and validated HSV v2 color | Representative category `dj` bulb |
 | Covers | Open, stop, close, target position, and current position when independently mapped and observed | Synthetic fixtures only; no cover hardware claim |
 

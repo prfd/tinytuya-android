@@ -16,9 +16,9 @@ class BuiltinDeviceFamiliesTest {
   @Test
   fun `category matrix selects the expected family`() {
     mapOf(
-        "kg" to BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
-        "cz" to BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
-        "pc" to BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
+        "kg" to BuiltinDeviceFamilyIds.OUTLET,
+        "pc" to BuiltinDeviceFamilyIds.OUTLET,
+        "cz" to BuiltinDeviceFamilyIds.OUTLET,
         "dj" to BuiltinDeviceFamilyIds.LIGHT,
         "xdd" to BuiltinDeviceFamilyIds.LIGHT,
         "fwd" to BuiltinDeviceFamilyIds.LIGHT,
@@ -34,7 +34,7 @@ class BuiltinDeviceFamiliesTest {
 
     assertEquals(
       setOf(
-        BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
+        BuiltinDeviceFamilyIds.OUTLET,
         BuiltinDeviceFamilyIds.LIGHT,
         BuiltinDeviceFamilyIds.COVER,
       ),

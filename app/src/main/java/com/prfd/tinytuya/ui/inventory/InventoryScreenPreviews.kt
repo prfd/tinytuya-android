@@ -21,13 +21,146 @@ import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 @Preview(
   name = "Switch",
-  group = "Supported device cards",
+  group = FULL_DEVICE_CARD_PREVIEWS,
   widthDp = 420,
   heightDp = 430,
 )
 @Composable
-private fun SwitchCardPreview() =
-  PreviewDeviceCard(
+private fun SwitchCardPreview() = PreviewFullDeviceCard(previewSwitch())
+
+@Preview(
+  name = "Socket",
+  group = FULL_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 600,
+)
+@Composable
+private fun SocketCardPreview() = PreviewFullDeviceCard(previewSocket())
+
+@Preview(
+  name = "Power strip",
+  group = FULL_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 580,
+)
+@Composable
+private fun PowerStripCardPreview() = PreviewFullDeviceCard(previewPowerStrip())
+
+@Preview(
+  name = "Light · white",
+  group = FULL_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 760,
+)
+@Composable
+private fun WhiteLightCardPreview() = PreviewLightCard(mode = "white")
+
+@Preview(
+  name = "Light · color",
+  group = FULL_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 820,
+)
+@Composable
+private fun ColorLightCardPreview() = PreviewLightCard(mode = "colour")
+
+@Composable private fun PreviewLightCard(mode: String) = PreviewFullDeviceCard(previewLight(mode))
+
+@Preview(
+  name = "Cover",
+  group = FULL_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 570,
+)
+@Composable
+private fun CoverCardPreview() = PreviewFullDeviceCard(previewCover())
+
+@Preview(
+  name = "Switch",
+  group = COMPACT_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 140,
+)
+@Composable
+private fun CompactSwitchCardPreview() = PreviewCompactDeviceCard(previewSwitch())
+
+@Preview(
+  name = "Socket",
+  group = COMPACT_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 140,
+)
+@Composable
+private fun CompactSocketCardPreview() = PreviewCompactDeviceCard(previewSocket())
+
+@Preview(
+  name = "Power strip",
+  group = COMPACT_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 140,
+)
+@Composable
+private fun CompactPowerStripCardPreview() = PreviewCompactDeviceCard(previewPowerStrip())
+
+@Preview(
+  name = "Light",
+  group = COMPACT_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 140,
+)
+@Composable
+private fun CompactLightCardPreview() = PreviewCompactDeviceCard(previewLight(mode = "white"))
+
+@Preview(
+  name = "Cover",
+  group = COMPACT_DEVICE_CARD_PREVIEWS,
+  widthDp = 420,
+  heightDp = 140,
+)
+@Composable
+private fun CompactCoverCardPreview() = PreviewCompactDeviceCard(previewCover())
+
+@Composable
+private fun PreviewFullDeviceCard(state: PreviewDeviceState) {
+  PreviewCardFrame {
+    InventoryDeviceCard(
+      device = state.device,
+      lastDiscoveryAtEpochMillis = PREVIEW_TIMESTAMP,
+      lanRecord = previewLanRecord(state.device),
+      localStatus = previewLocalStatus(state),
+      discovery = LanDiscoveryUiState.Idle,
+      control = LocalControlUiState.Ready,
+      onIntent = {},
+    )
+  }
+}
+
+@Composable
+private fun PreviewCompactDeviceCard(state: PreviewDeviceState) {
+  PreviewCardFrame {
+    CompactInventoryDeviceCard(
+      device = state.device,
+      lastDiscoveryAtEpochMillis = PREVIEW_TIMESTAMP,
+      lanRecord = previewLanRecord(state.device),
+      localStatus = previewLocalStatus(state),
+      control = LocalControlUiState.Ready,
+      onIntent = {},
+      onOpenFullControls = {},
+    )
+  }
+}
+
+@Composable
+private fun PreviewCardFrame(content: @Composable () -> Unit) {
+  TinytuyaTheme(darkTheme = false) {
+    Box(modifier = Modifier.background(MaterialTheme.colorScheme.background).padding(16.dp)) {
+      content()
+    }
+  }
+}
+
+private fun previewSwitch() =
+  PreviewDeviceState(
     device =
       previewDevice(
         id = "switch",
@@ -43,21 +176,14 @@ private fun SwitchCardPreview() =
     dataPoints = listOf(LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true")),
   )
 
-@Preview(
-  name = "Outlet",
-  group = "Supported device cards",
-  widthDp = 420,
-  heightDp = 600,
-)
-@Composable
-private fun OutletCardPreview() =
-  PreviewDeviceCard(
+private fun previewSocket() =
+  PreviewDeviceState(
     device =
       previewDevice(
-        id = "outlet",
+        id = "socket",
         name = "Coffee station",
         category = "cz",
-        productName = "Metered outlet",
+        productName = "Metered socket",
         mappingJson =
           """
           {
@@ -82,27 +208,34 @@ private fun OutletCardPreview() =
       ),
   )
 
-@Preview(
-  name = "Light · white",
-  group = "Supported device cards",
-  widthDp = 420,
-  heightDp = 760,
-)
-@Composable
-private fun WhiteLightCardPreview() = PreviewLightCard(mode = "white")
+private fun previewPowerStrip() =
+  PreviewDeviceState(
+    device =
+      previewDevice(
+        id = "power-strip",
+        name = "Media center",
+        category = "pc",
+        productName = "Three-socket power strip",
+        mappingJson =
+          """
+          {
+            "1":{"code":"switch_1","type":"Boolean"},
+            "2":{"code":"switch_2","type":"Boolean"},
+            "3":{"code":"switch_3","type":"Boolean"}
+          }
+          """
+            .trimIndent(),
+      ),
+    dataPoints =
+      listOf(
+        LocalDataPoint("1", LocalDataPointKind.BOOLEAN, "true"),
+        LocalDataPoint("2", LocalDataPointKind.BOOLEAN, "false"),
+        LocalDataPoint("3", LocalDataPointKind.BOOLEAN, "true"),
+      ),
+  )
 
-@Preview(
-  name = "Light · color",
-  group = "Supported device cards",
-  widthDp = 420,
-  heightDp = 820,
-)
-@Composable
-private fun ColorLightCardPreview() = PreviewLightCard(mode = "colour")
-
-@Composable
-private fun PreviewLightCard(mode: String) =
-  PreviewDeviceCard(
+private fun previewLight(mode: String) =
+  PreviewDeviceState(
     device =
       previewDevice(
         id = "light-$mode",
@@ -131,15 +264,8 @@ private fun PreviewLightCard(mode: String) =
       ),
   )
 
-@Preview(
-  name = "Cover",
-  group = "Supported device cards",
-  widthDp = 420,
-  heightDp = 570,
-)
-@Composable
-private fun CoverCardPreview() =
-  PreviewDeviceCard(
+private fun previewCover() =
+  PreviewDeviceState(
     device =
       previewDevice(
         id = "cover",
@@ -164,42 +290,26 @@ private fun CoverCardPreview() =
       ),
   )
 
-@Composable
-private fun PreviewDeviceCard(
-  device: CloudImportedDevice,
-  dataPoints: List<LocalDataPoint>,
-) {
-  TinytuyaTheme(darkTheme = false) {
-    Box(modifier = Modifier.background(MaterialTheme.colorScheme.background).padding(16.dp)) {
-      InventoryDeviceCard(
-        device = device,
-        lastDiscoveryAtEpochMillis = PREVIEW_TIMESTAMP,
-        lanRecord =
-          LanDeviceRecord(
-            id = device.id,
-            ip = "192.168.1.42",
-            protocolVersion = device.protocolVersion,
-            productKey = "preview-product-key",
-            mac = "",
-            origin = "preview",
-            lastSeenAtEpochMillis = PREVIEW_TIMESTAMP,
-          ),
-        localStatus =
-          LocalStatusRecord(
-            id = device.id,
-            state = LocalPollDeviceState.RESPONDED,
-            errorCode = "",
-            durationMillis = 38L,
-            dataPoints = dataPoints,
-            polledAtEpochMillis = PREVIEW_TIMESTAMP + 1L,
-          ),
-        discovery = LanDiscoveryUiState.Idle,
-        control = LocalControlUiState.Ready,
-        onIntent = {},
-      )
-    }
-  }
-}
+private fun previewLanRecord(device: CloudImportedDevice) =
+  LanDeviceRecord(
+    id = device.id,
+    ip = "192.168.1.42",
+    protocolVersion = device.protocolVersion,
+    productKey = "preview-product-key",
+    mac = "",
+    origin = "preview",
+    lastSeenAtEpochMillis = PREVIEW_TIMESTAMP,
+  )
+
+private fun previewLocalStatus(state: PreviewDeviceState) =
+  LocalStatusRecord(
+    id = state.device.id,
+    state = LocalPollDeviceState.RESPONDED,
+    errorCode = "",
+    durationMillis = 38L,
+    dataPoints = state.dataPoints,
+    polledAtEpochMillis = PREVIEW_TIMESTAMP + 1L,
+  )
 
 private fun previewDevice(
   id: String,
@@ -226,4 +336,11 @@ private fun previewDevice(
     mappingJson = mappingJson,
   )
 
+private data class PreviewDeviceState(
+  val device: CloudImportedDevice,
+  val dataPoints: List<LocalDataPoint>,
+)
+
+private const val FULL_DEVICE_CARD_PREVIEWS = "Full device cards"
+private const val COMPACT_DEVICE_CARD_PREVIEWS = "Compact device cards"
 private const val PREVIEW_TIMESTAMP = 1_775_400_000_000L

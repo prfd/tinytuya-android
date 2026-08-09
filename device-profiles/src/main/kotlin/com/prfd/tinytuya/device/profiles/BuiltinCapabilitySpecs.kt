@@ -19,13 +19,13 @@ import com.prfd.tinytuya.device.core.schema.DpSchema
 internal object BuiltinCapabilitySpecs {
   fun forFamily(familyId: DeviceFamilyId, schema: DpSchema): List<CapabilitySpec> =
     when (familyId) {
-      BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET -> switchSpecs(schema)
+      BuiltinDeviceFamilyIds.OUTLET -> outletSpecs(schema)
       BuiltinDeviceFamilyIds.LIGHT -> lightSpecs()
       BuiltinDeviceFamilyIds.COVER -> coverSpecs(schema)
       else -> emptyList()
     }
 
-  private fun switchSpecs(schema: DpSchema): List<CapabilitySpec> {
+  private fun outletSpecs(schema: DpSchema): List<CapabilitySpec> {
     val numberedSwitchCodes =
       schema.definitions
         .asSequence()

@@ -9,27 +9,27 @@ import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 import com.prfd.tinytuya.device.core.schema.DpSchema
 
 object BuiltinDeviceFamilyIds {
-  val SWITCH_OR_OUTLET = DeviceFamilyId("switch_or_outlet")
+  val OUTLET = DeviceFamilyId("outlet")
   val LIGHT = DeviceFamilyId("light")
   val COVER = DeviceFamilyId("cover")
 }
 
 /**
  * Built-in device families selected exclusively by the normalized category imported from Tuya
- * Cloud. Switches and lights have representative hardware evidence; covers currently have synthetic
- * coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
+ * Cloud. Outlet and Light devices have representative hardware evidence; Cover devices currently
+ * have synthetic coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
  */
 object BuiltinDeviceFamilies {
   val definitions: List<DeviceFamilyDefinition> =
     listOf(
       DeclarativeDeviceFamily(
-        id = BuiltinDeviceFamilyIds.SWITCH_OR_OUTLET,
+        id = BuiltinDeviceFamilyIds.OUTLET,
         presentation =
           DevicePresentation(
             StandardDeviceLayoutIds.GENERIC_CONTROLS,
-            typeLabel = "Switch or outlet",
+            typeLabel = "Outlet",
             symbol = "⏻",
-            familyLabel = "Switches & outlets",
+            familyLabel = "Outlet",
           ),
         categories = setOf("kg", "cz", "pc"),
       ),

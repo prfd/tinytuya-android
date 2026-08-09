@@ -342,7 +342,7 @@ For `InventoryScreen.kt`, search for and read only these functions at first:
 The remaining functions are reusable rows, labels, badges, previews, and styling. There is no
 app-owned device-family renderer branch.
 
-Checkpoint: choose one displayed value, such as outlet power or temperature. Trace it backward from
+Checkpoint: choose one displayed value, such as Outlet power draw or temperature. Trace it backward from
 an atomic/compound renderer through `ResolvedDevice`, `CapabilityResolver`,
 `LocalStatusRecord.dataPoints`, and finally `_normalize_local_data_points` in Python.
 

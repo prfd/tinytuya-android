@@ -31,10 +31,12 @@ import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.inventory.InventoryScreen
+import com.prfd.tinytuya.ui.inventory.outletDeviceTypeLabel
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -72,16 +74,25 @@ class InventoryScreenInstrumentedTest {
     )
 
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
-    composeRule.onNodeWithTag("inventory_family_switch_or_outlet").assertExists()
+    composeRule.onNodeWithTag("inventory_family_outlet").assertExists()
+    composeRule.onNodeWithText("Outlet").assertExists()
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(4)
     composeRule.onNodeWithTag("compact_device_card_office-lamp").assertExists()
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(5)
-    composeRule.onNodeWithTag("compact_device_card_bedroom-outlet").assertExists()
+    composeRule.onNodeWithTag("compact_device_card_bedroom-socket").assertExists()
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(6)
     composeRule.onNodeWithTag("inventory_family_light").assertExists()
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(7)
     composeRule.onNodeWithTag("compact_device_card_hall-light").assertExists()
     composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
+  }
+
+  @Test
+  fun outletCategoriesUseTheTuyaDeviceTypeNames() {
+    assertEquals("Switch", outletDeviceTypeLabel("kg"))
+    assertEquals("Power strip", outletDeviceTypeLabel("pc"))
+    assertEquals("Socket", outletDeviceTypeLabel("cz"))
+    assertNull(outletDeviceTypeLabel("unknown"))
   }
 
   @Test
@@ -190,7 +201,7 @@ class InventoryScreenInstrumentedTest {
     )
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
-    composeRule.onNodeWithText("3-gang switch", substring = true).assertExists()
+    composeRule.onNodeWithText("Switch · Wall switch").assertExists()
     composeRule.onNodeWithText("2 of 3 switches on").assertDoesNotExist()
     composeRule.onNodeWithText("Controls").assertExists()
     composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn()
@@ -391,7 +402,7 @@ class InventoryScreenInstrumentedTest {
     composeRule.onNodeWithText("Unsupported").assertExists()
     composeRule.onNodeWithText("Unsupported device").assertExists()
     composeRule
-      .onNodeWithText("supported switches, outlets, lights, and covers", substring = true)
+      .onNodeWithText("supported Outlet devices, lights, and covers", substring = true)
       .assertExists()
     composeRule.onNodeWithText(PRIVATE_DP_TEXT, substring = true).assertDoesNotExist()
     composeRule.onNodeWithText(PRIVATE_DP_JSON, substring = true).assertDoesNotExist()
@@ -534,8 +545,8 @@ class InventoryScreenInstrumentedTest {
     val firstSwitch = controlledCatalog().devices.single()
     val secondSwitch =
       firstSwitch.copy(
-        id = "bedroom-outlet",
-        name = "Bedroom outlet",
+        id = "bedroom-socket",
+        name = "Bedroom socket",
         category = "cz",
       )
     val light = lightCatalog().devices.single().copy(id = "hall-light", name = "Hall light")
@@ -546,13 +557,13 @@ class InventoryScreenInstrumentedTest {
           listOf(
             lanRecord("hall-light", "192.168.10.21"),
             lanRecord("office-lamp", "192.168.10.20"),
-            lanRecord("bedroom-outlet", "192.168.10.22"),
+            lanRecord("bedroom-socket", "192.168.10.22"),
           ),
         localStatus =
           listOf(
             lightCatalog().localStatus.single().copy(id = "hall-light"),
             controlledCatalog().localStatus.single(),
-            controlledCatalog().localStatus.single().copy(id = "bedroom-outlet"),
+            controlledCatalog().localStatus.single().copy(id = "bedroom-socket"),
           ),
       )
   }

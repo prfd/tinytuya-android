@@ -16,7 +16,6 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
-import com.prfd.tinytuya.device.core.schema.DpDeclaredType
 import com.prfd.tinytuya.device.core.schema.DpSchema
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 
@@ -26,7 +25,6 @@ data class LocalDeviceProfile(
   val presentation: DevicePresentation,
   val restriction: DeviceAccessRestriction,
   val capabilityAccess: CapabilityAccess,
-  val mappedSwitchCount: Int,
   val resolvedDevice: ResolvedDevice,
 )
 
@@ -62,13 +60,6 @@ object LocalDeviceCapabilityRegistry {
       presentation = presentation,
       restriction = classification.restriction,
       capabilityAccess = capabilityAccess,
-      mappedSwitchCount =
-        schema.definitions
-          .count { definition ->
-            definition.declaredType == DpDeclaredType.BOOLEAN &&
-              definition.code.orEmpty().isSwitchCode()
-          }
-          .coerceAtMost(MAX_BOOLEAN_CONTROLS),
       resolvedDevice = ResolvedDevice.create(device.id, presentation.layoutId, capabilities),
     )
   }
@@ -92,8 +83,6 @@ object LocalDeviceCapabilityRegistry {
       specs.any(CapabilitySpec::writable) -> CapabilityAccess.READ_WRITE
       else -> CapabilityAccess.READ_ONLY
     }
-
-  private const val MAX_BOOLEAN_CONTROLS = 16
 
   private val GENERIC_PRESENTATION =
     DevicePresentation(
@@ -140,8 +129,3 @@ private fun CloudImportedDevice.toDeviceIdentity(): DeviceIdentity =
     category = category,
     isSubDevice = isSubDevice,
   )
-
-private fun String.isSwitchCode(): Boolean =
-  this == "switch" || this == "switch_led" || SWITCH_NUMBER_CODE.matches(this)
-
-private val SWITCH_NUMBER_CODE = Regex("switch_[1-9][0-9]?")

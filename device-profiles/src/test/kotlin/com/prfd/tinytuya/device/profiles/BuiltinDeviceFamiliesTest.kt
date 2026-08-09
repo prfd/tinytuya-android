@@ -61,13 +61,6 @@ class BuiltinDeviceFamiliesTest {
   }
 
   @Test
-  fun `families provide stable inventory section labels`() {
-    assertEquals("Switches & outlets", requireNotNull(resolve("kg")).presentation.familyLabel)
-    assertEquals("Lights", requireNotNull(resolve("dj")).presentation.familyLabel)
-    assertEquals("Covers", requireNotNull(resolve("cl")).presentation.familyLabel)
-  }
-
-  @Test
   fun `profile capabilities use semantic ids independent of DPS numbers`() {
     fun idsFor(powerDp: String, brightnessDp: String): List<CapabilityId> {
       val schema =

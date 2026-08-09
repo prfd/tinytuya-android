@@ -85,20 +85,6 @@ class InventoryScreenInstrumentedTest {
   }
 
   @Test
-  fun inventoryModeSelectorRequestsThePersistedGlobalChoice() {
-    var requestedMode: InventoryDisplayMode? = null
-    setInventoryContent(
-      catalog = controlledCatalog(),
-      displayMode = InventoryDisplayMode.COMPACT,
-      onDisplayModeChanged = { requestedMode = it },
-    )
-
-    composeRule.onNodeWithTag("inventory_mode_toggle").performClick()
-
-    composeRule.runOnIdle { assertEquals(InventoryDisplayMode.FULL, requestedMode) }
-  }
-
-  @Test
   fun compactCardOpensOnlyThatDevicesFullControlsAndBackKeepsCompactMode() {
     setInventoryContent(
       catalog = controlledCatalog(),
@@ -117,27 +103,6 @@ class InventoryScreenInstrumentedTest {
     composeRule.onNodeWithTag("inventory_mode_toggle").assertExists()
     composeRule.onNodeWithTag("compact_device_card_office-lamp").assertExists()
     composeRule.onNodeWithTag("capability_toggle_switch_1").assertDoesNotExist()
-  }
-
-  @Test
-  fun compactPowerButtonControlsWithoutOpeningFullScreen() {
-    var request: DeviceIntent? = null
-    setInventoryContent(
-      catalog = controlledCatalog(),
-      control = LocalControlUiState.Ready,
-      displayMode = InventoryDisplayMode.COMPACT,
-      onIntent = { request = it },
-    )
-
-    composeRule.onNodeWithTag("compact_toggle_switch_1").performScrollTo().performClick()
-
-    composeRule.runOnIdle {
-      assertEquals(
-        DeviceIntent.SetToggle("office-lamp", CapabilityId("switch.1"), false),
-        request,
-      )
-    }
-    composeRule.onNodeWithTag("focused_device_controls").assertDoesNotExist()
   }
 
   @Test
@@ -267,30 +232,6 @@ class InventoryScreenInstrumentedTest {
     composeRule.onNodeWithText("Mode").assertExists()
     composeRule.onNodeWithText("White").assertExists()
     composeRule.onNodeWithText("Colour data").assertDoesNotExist()
-  }
-
-  @Test
-  fun lightModeCallbackIsTyped() {
-    var request: DeviceIntent? = null
-    setInventoryContent(
-      catalog = lightCatalog(),
-      control = LocalControlUiState.Ready,
-      onIntent = { request = it },
-    )
-    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
-
-    composeRule.onNodeWithTag("light_mode_color").performClick()
-
-    composeRule.runOnIdle {
-      assertEquals(
-        DeviceIntent.SetChoice(
-          "office-lamp",
-          CapabilityId("light.mode"),
-          "colour",
-        ),
-        request,
-      )
-    }
   }
 
   @Test

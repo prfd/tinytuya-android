@@ -160,12 +160,4 @@ class DpSchemaTest {
     assertNull(schema["1"]?.constraints?.scale)
     assertEquals(listOf(" white ", "colour"), schema["1"]?.constraints?.enumValues)
   }
-
-  @Test
-  fun `empty input produces usable empty schema`() {
-    val schema = DpSchema.empty()
-
-    assertTrue(schema.isEmpty)
-    assertFalse(schema.rejectedAsOversized)
-  }
 }

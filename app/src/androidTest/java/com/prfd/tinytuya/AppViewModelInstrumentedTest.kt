@@ -178,6 +178,52 @@ class AppViewModelInstrumentedTest {
   }
 
   @Test
+  fun cloudImportTransitionScansOnceThenForegroundUsesOnlyKnownAddresses() = runBlocking {
+    val imported = sampleCatalog()
+    val discovered = discoveredCatalog()
+    val refreshed = discovered.copy(lastLocalPollAtEpochMillis = 6L)
+    val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
+    val discoveryCoordinator = FakeLanDiscoveryCoordinator(discovered)
+    val statusCoordinator = FakeLocalStatusCoordinator(discovered)
+    val knownCoordinator = FakeKnownDeviceRefreshCoordinator(refreshed)
+    var elapsedRealtime = 100_000L
+    val viewModel =
+      AppViewModel(
+        catalogStore = FakeCatalogStore(imported),
+        lanDiscoveryCoordinator = discoveryCoordinator,
+        localStatusCoordinator = statusCoordinator,
+        localControlCoordinator = FakeLocalControlCoordinator(),
+        lanNetworkObserver = observer,
+        knownDeviceRefreshCoordinator = knownCoordinator,
+        settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = true)),
+        elapsedRealtimeMillis = { elapsedRealtime },
+      )
+    withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
+
+    viewModel.refreshCatalogAfterCloudImport()
+
+    withTimeout(5_000) {
+      viewModel.state.first {
+        it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Completed
+      }
+    }
+    assertEquals(1, discoveryCoordinator.callCount)
+    assertEquals(1, statusCoordinator.callCount)
+
+    elapsedRealtime = 200_000L
+    viewModel.onAppForegrounded()
+    observer.emit(LanNetworkObservation.Available(NETWORK))
+
+    withTimeout(5_000) {
+      viewModel.state.first {
+        it is AppUiState.Inventory && it.catalog.lastLocalPollAtEpochMillis == 6L
+      }
+    }
+    assertEquals(1, discoveryCoordinator.callCount)
+    assertEquals(1, knownCoordinator.callCount)
+  }
+
+  @Test
   fun localControlPublishesOnlyTheCoordinatorConfirmedCatalog() = runBlocking {
     val original = sampleCatalog()
     val discovered =
@@ -527,16 +573,11 @@ class AppViewModelInstrumentedTest {
   }
 
   @Test
-  fun foregroundOnChangedWifiRunsFullDiscoveryInsteadOfSavedAddressPoll() = runBlocking {
+  fun foregroundOnChangedWifiDoesNotScanOrPollSavedAddresses() = runBlocking {
     val changedNetwork = NETWORK.copy(networkHandle = 202L)
-    val rediscovered = discoveredCatalog().copy(lastDiscoveryNetwork = changedNetwork)
     val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(changedNetwork))
-    val discoveryCoordinator =
-      FakeLanDiscoveryCoordinator(
-        result = rediscovered,
-        network = changedNetwork,
-      )
-    val statusCoordinator = FakeLocalStatusCoordinator(rediscovered)
+    val discoveryCoordinator = FakeLanDiscoveryCoordinator()
+    val statusCoordinator = FakeLocalStatusCoordinator()
     val knownCoordinator = FakeKnownDeviceRefreshCoordinator()
     val viewModel =
       AppViewModel(
@@ -554,19 +595,18 @@ class AppViewModelInstrumentedTest {
     withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
 
     viewModel.onAppForegrounded()
+    delay(150)
 
-    withTimeout(5_000) {
-      viewModel.state.first {
-        it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Completed
-      }
-    }
+    val state = viewModel.state.value as AppUiState.Inventory
+    assertTrue(!state.isLanSnapshotCurrent)
+    assertTrue(state.discovery is LanDiscoveryUiState.Error)
     assertEquals(0, knownCoordinator.callCount)
-    assertEquals(1, discoveryCoordinator.callCount)
-    assertEquals(1, statusCoordinator.callCount)
+    assertEquals(0, discoveryCoordinator.callCount)
+    assertEquals(0, statusCoordinator.callCount)
   }
 
   @Test
-  fun foregroundQuickRefreshFallsBackWhenNetworkResolverRejectsTheSnapshot() = runBlocking {
+  fun foregroundQuickRefreshNeverEscalatesToDiscovery() = runBlocking {
     val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
     val discoveryCoordinator = FakeLanDiscoveryCoordinator(discoveredCatalog())
     val knownCoordinator =
@@ -593,13 +633,18 @@ class AppViewModelInstrumentedTest {
     viewModel.onAppForegrounded()
     observer.emit(LanNetworkObservation.Available(NETWORK))
 
-    withTimeout(5_000) {
-      viewModel.state.first {
-        it is AppUiState.Inventory && it.discovery is LanDiscoveryUiState.Completed
+    val state =
+      withTimeout(5_000) {
+        viewModel.state.first {
+          it is AppUiState.Inventory &&
+            it.discovery is LanDiscoveryUiState.Error &&
+            !it.isLanSnapshotCurrent
+        }
       }
-    }
+        as AppUiState.Inventory
+    assertEquals("LAN_NETWORK_CHANGED", (state.discovery as LanDiscoveryUiState.Error).code)
     assertEquals(1, knownCoordinator.callCount)
-    assertEquals(1, discoveryCoordinator.callCount)
+    assertEquals(0, discoveryCoordinator.callCount)
   }
 
   private class FakeLanDiscoveryCoordinator(

@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicLong
 internal enum class LocalRefreshTrigger(val logValue: String) {
   MANUAL("manual"),
   FOREGROUND("foreground"),
-  FOREGROUND_FALLBACK("foreground_fallback"),
+  POST_IMPORT("post_import"),
 }
 
 internal enum class LocalRefreshMode(val logValue: String) {
@@ -23,7 +23,7 @@ internal enum class DiagnosticBridgeOperation(val logValue: String) {
 }
 
 /**
- * Redacted timing diagnostics for user-initiated and foreground local refreshes.
+ * Redacted timing diagnostics for user-initiated, foreground, and post-import local refreshes.
  *
  * Keep this API deliberately narrow. Device IDs, addresses, keys, network handles, data-point
  * values, raw bridge responses, and exception messages must never reach Logcat.
@@ -158,14 +158,6 @@ internal object LocalRefreshDiagnostics {
         TAG,
         "event=refresh_failed trigger=${trigger.logValue} mode=${phase.logValue} " +
           "code=${safeCode(code)} total_ms=${elapsedMillis()}",
-      )
-    }
-
-    fun fallback(to: LocalRefreshMode, code: String) {
-      Log.i(
-        TAG,
-        "event=refresh_fallback trigger=${trigger.logValue} from=${mode.logValue} " +
-          "to=${to.logValue} code=${safeCode(code)} total_ms=${elapsedMillis()}",
       )
     }
 

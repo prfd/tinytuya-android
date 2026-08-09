@@ -102,7 +102,7 @@ MainActivity.onCreate
 MainActivity.onStart
   -> AppViewModel.onAppForegrounded
   -> wait until settings, catalog, and an Android network observation are ready
-  -> quick status refresh, discovery fallback, or no-op according to saved state
+  -> quick status refresh or no-op according to saved state
 ```
 
 Read:
@@ -115,7 +115,7 @@ Read:
 
 Ignore `AppLoadingScreen` and `CatalogRecoveryScreen` styling for now.
 
-Checkpoint: find the call which starts initial catalog loading, the Activity callback which announces foreground entry, and the callback which moves the app from a successful import to inventory. The answers are `AppViewModel.init`, `MainActivity.onStart`, and the success callback supplied by `AppRoute`.
+Checkpoint: find the call which starts initial catalog loading, the Activity callback which announces foreground entry, and the callback which moves the app from a successful import to inventory and starts its one automatic discovery. The answers are `AppViewModel.init`, `MainActivity.onStart`, and the success callback supplied by `AppRoute`.
 
 ## Pass 2: cloud import, end to end
 
@@ -132,7 +132,7 @@ CredentialsScreen
   -> Kotlin response parsing into CloudImportResult
   -> EncryptedCloudCredentialStore.save after accepted newly entered credentials
   -> EncryptedDeviceCatalogStore.replaceFromCloud
-  -> AppRoute asks AppViewModel to reload the catalog
+  -> AppRoute asks AppViewModel to reload the catalog and run one post-import LAN discovery
 ```
 
 For newly entered or replacement credentials, the actual order around the network call is
@@ -173,6 +173,10 @@ The inventory exposes two deliberately separate actions:
 
 Keeping these separate prevents normal startup and foreground status refreshes from paying for a
 global scan every time.
+
+The transition from a successful non-empty cloud import to the local inventory runs one automatic
+discovery, followed by a status poll. After that transition, only the explicit **Find devices**
+action may start discovery; foreground and **Refresh status** operations never escalate to a scan.
 
 ### Part A: find devices and refresh their addresses
 
@@ -236,7 +240,7 @@ AppViewModel.refreshKnownDevices
 
 Read [KnownDeviceRefreshCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinator.kt) in full. It is intentionally small: it requires at least one eligible, previously matched target, re-resolves the active Android network, compares the complete network identity including its opaque handle, and only then delegates to the same bounded status coordinator used after discovery. It does not own or call a discovery coordinator, which makes the “no UDP on quick refresh” boundary explicit.
 
-Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding and never-matched inventories; suppresses duplicate starts for 30 seconds; uses the quick path for a trustworthy snapshot; and uses full discovery only when the prior network or address generation cannot be trusted. Neither path calls Tuya Cloud. There is no timer or background service.
+Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding, never-matched inventories, and untrusted network or address generations; suppresses duplicate starts for 30 seconds; and uses only the quick path for a trustworthy snapshot. It never falls back to discovery or calls Tuya Cloud. There is no timer or background service.
 
 `LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`.
 

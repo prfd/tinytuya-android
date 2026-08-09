@@ -94,7 +94,7 @@ fun AppRoute(
           viewModel = onboardingViewModel,
           onOpenInventory = {
             onboardingViewModel.clearSession()
-            appViewModel.refreshCatalog()
+            appViewModel.refreshCatalogAfterCloudImport()
           },
         )
       is AppUiState.Inventory ->

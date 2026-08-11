@@ -110,6 +110,7 @@ private sealed interface OnboardingDestination {
 fun OnboardingRoute(
   viewModel: OnboardingViewModel,
   onOpenInventory: () -> Unit,
+  onCancel: () -> Unit,
 ) {
   val context = LocalContext.current
   val state by viewModel.state.collectAsState()
@@ -120,13 +121,16 @@ fun OnboardingRoute(
   )
 
   val destination = state.destination()
-  BackHandler(enabled = destination != OnboardingDestination.Welcome) { viewModel.goBack() }
+  val back = { if (!viewModel.goBack()) onCancel() }
+  BackHandler(enabled = destination != OnboardingDestination.Welcome || state.fromSettings) {
+    back()
+  }
 
   OnboardingScreen(
     state = state,
     onStartSetup = viewModel::showSetupGuide,
     onSkipGuide = viewModel::showCredentials,
-    onBack = viewModel::goBack,
+    onBack = back,
     onOpenOfficialGuide = {
       runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, TUYA_SETUP_GUIDE_URL.toUri()))
@@ -1326,7 +1330,7 @@ private fun SuccessPreview() {
                 region = TuyaCloudRegion.WESTERN_AMERICA,
                 deviceCount = 3,
                 missingLocalKeyCount = 1,
-                warnings = listOf("1 device uses protocol 3.5, which this app cannot control yet."),
+                warnings = emptyList(),
                 devices =
                   listOf(
                     CloudImportedDevice(

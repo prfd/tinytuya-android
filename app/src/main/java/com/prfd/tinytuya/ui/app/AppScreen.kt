@@ -100,6 +100,11 @@ fun AppRoute(
             onboardingViewModel.clearSession()
             appViewModel.refreshCatalogAfterCloudImport()
           },
+          onCancel = {
+            onboardingViewModel.clearSession()
+            appViewModel.refreshCatalog()
+            showSettings = true
+          },
         )
       is AppUiState.Inventory ->
         InventoryScreen(

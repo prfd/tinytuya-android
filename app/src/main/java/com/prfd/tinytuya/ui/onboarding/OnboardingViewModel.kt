@@ -54,6 +54,7 @@ data class OnboardingUiState(
   val validationAttempted: Boolean = false,
   val isCredentialUpdate: Boolean = false,
   val usedSavedCredentials: Boolean = false,
+  val fromSettings: Boolean = false,
   val cloudImport: CloudImportUiState = CloudImportUiState.Idle,
 ) {
   val canImport: Boolean
@@ -96,6 +97,8 @@ class OnboardingViewModel(
   fun goBack(): Boolean {
     val current = mutableState.value
     if (current.cloudImport is CloudImportUiState.Loading) return true
+
+    if (current.fromSettings) return false
 
     if (
       current.cloudImport is CloudImportUiState.Success ||
@@ -195,6 +198,7 @@ class OnboardingViewModel(
         region = fallbackRegion,
         isCredentialUpdate = true,
         usedSavedCredentials = true,
+        fromSettings = true,
         cloudImport = CloudImportUiState.Loading,
       )
     runCloudImport(
@@ -214,6 +218,7 @@ class OnboardingViewModel(
             page = OnboardingPage.CREDENTIALS,
             region = fallbackRegion,
             isCredentialUpdate = true,
+            fromSettings = true,
           )
       },
     )
@@ -226,6 +231,7 @@ class OnboardingViewModel(
         page = OnboardingPage.CREDENTIALS,
         region = region,
         isCredentialUpdate = true,
+        fromSettings = true,
       )
   }
 

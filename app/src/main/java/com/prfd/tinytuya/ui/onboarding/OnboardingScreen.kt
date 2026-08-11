@@ -83,6 +83,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.prfd.tinytuya.data.python.CloudImportResult
+import com.prfd.tinytuya.data.python.CloudImportedDevice
+import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.components.BrandMark
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
@@ -287,17 +289,17 @@ private fun WelcomeScreen(
     )
     Spacer(Modifier.height(24.dp))
     PrivacyPoint(
-      mark = "01",
+      mark = "1",
       title = "Local by default",
       body = "Device discovery and control stay on your Wi-Fi.",
     )
     PrivacyPoint(
-      mark = "02",
+      mark = "2",
       title = "No surveillance stack",
       body = "No ads, analytics, tracking SDKs, or background cloud polling.",
     )
     PrivacyPoint(
-      mark = "03",
+      mark = "3",
       title = "You hold the keys",
       body = "Cloud credentials are used only when you explicitly import or sync.",
     )
@@ -313,7 +315,7 @@ private fun WelcomeScreen(
       Text("I already have cloud credentials")
     }
     Text(
-      text = "Independent open-source software · Not affiliated with Tuya",
+      text = "Open-source software · Not affiliated with Tuya",
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       textAlign = TextAlign.Center,
@@ -707,14 +709,6 @@ private fun CredentialsScreen(
       onClick = onImport,
       modifier = Modifier.padding(top = 18.dp),
     )
-    Text(
-      text =
-        "Only credentials accepted by Tuya are saved. They use a separate encrypted Android Keystore vault and are never used for automatic local refresh.",
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      textAlign = TextAlign.Center,
-      modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 24.dp),
-    )
   }
 }
 
@@ -736,7 +730,7 @@ private fun CredentialPrivacyNote() {
         )
         Text(
           text =
-            "This form stays only in memory while Tuya verifies it. After success, the region, Client ID, and secret are encrypted on this device and the form is cleared.",
+            "This form stays only in memory while Tuya verifies it. After success, the region, Client ID, and secret are encrypted on this device.",
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
           modifier = Modifier.padding(top = 4.dp),
@@ -915,7 +909,7 @@ private fun SuccessScreen(
         if (result.deviceCount == 0) {
           "The project connected successfully and its credentials are encrypted on this device, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
         } else {
-          "The cloud handshake worked. The credential form was cleared, and both your cloud account and device catalog are encrypted locally with separate Android Keystore keys."
+          "The cloud handshake worked. Your cloud account and device catalog are encrypted locally with separate Android Keystore keys."
         },
       style = MaterialTheme.typography.bodyLarge,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1300,6 +1294,96 @@ private fun WelcomePreview() {
   TinytuyaTheme(darkTheme = false) {
     OnboardingScreen(
       state = OnboardingUiState(),
+      onStartSetup = {},
+      onSkipGuide = {},
+      onBack = {},
+      onOpenOfficialGuide = {},
+      onRegionChanged = {},
+      onClientIdChanged = {},
+      onClientSecretChanged = {},
+      onSampleDeviceIdChanged = {},
+      onToggleAdvanced = {},
+      onImport = {},
+      onDismissError = {},
+      onReturnToCredentials = {},
+      onReviewSetup = {},
+      onOpenInventory = {},
+    )
+  }
+}
+
+@Preview(showBackground = true, heightDp = 900)
+@Composable
+private fun SuccessPreview() {
+  TinytuyaTheme(darkTheme = false) {
+    OnboardingScreen(
+      state =
+        OnboardingUiState(
+          cloudImport =
+            CloudImportUiState.Success(
+              CloudImportResult(
+                contractVersion = 1,
+                region = TuyaCloudRegion.WESTERN_AMERICA,
+                deviceCount = 3,
+                missingLocalKeyCount = 1,
+                warnings = listOf("1 device uses protocol 3.5, which this app cannot control yet."),
+                devices =
+                  listOf(
+                    CloudImportedDevice(
+                      id = "1023456789abcdef",
+                      name = "Bedroom Lamp",
+                      localKey = SensitiveString.of("abcdefghijklmnop"),
+                      category = "dj",
+                      productId = "qwertyuiop123456",
+                      productName = "Smart Bulb",
+                      model = "TMB-01",
+                      mac = "A1:B2:C3:D4:E5:F6",
+                      uuid = "",
+                      isSubDevice = false,
+                      gatewayId = "",
+                      nodeId = "",
+                      protocolVersion = "3.3",
+                      lastIp = "",
+                      mappingJson = "{}",
+                    ),
+                    CloudImportedDevice(
+                      id = "1023456789abcdef",
+                      name = "Kitchen Outlet",
+                      localKey = SensitiveString.of("abcdefghijklmnop"),
+                      category = "cz",
+                      productId = "qwertyuiop123456",
+                      productName = "Smart Plug",
+                      model = "TMP-02",
+                      mac = "A1:B2:C3:D4:E5:F7",
+                      uuid = "",
+                      isSubDevice = false,
+                      gatewayId = "",
+                      nodeId = "",
+                      protocolVersion = "3.3",
+                      lastIp = "",
+                      mappingJson = "{}",
+                    ),
+                    CloudImportedDevice(
+                      id = "1023456789abcdef",
+                      name = "Thermostat",
+                      localKey = SensitiveString.of(""),
+                      category = "wk",
+                      productId = "qwertyuiop123456",
+                      productName = "Smart Thermostat",
+                      model = "TMT-03",
+                      mac = "A1:B2:C3:D4:E5:F8",
+                      uuid = "",
+                      isSubDevice = false,
+                      gatewayId = "",
+                      nodeId = "",
+                      protocolVersion = "3.5",
+                      lastIp = "",
+                      mappingJson = "{}",
+                    ),
+                  ),
+              )
+            )
+        ),
       onStartSetup = {},
       onSkipGuide = {},
       onBack = {},

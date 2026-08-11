@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +41,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.prfd.tinytuya.data.local.CloudCredentialSummary
+import com.prfd.tinytuya.data.python.PythonCryptoHealth
+import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppSettingsUiState
 import com.prfd.tinytuya.ui.app.CloudAccountUiState
@@ -55,9 +59,11 @@ fun SettingsScreen(
   onUpdateCredentials: () -> Unit,
   onForgetCredentials: () -> Unit,
   onDismissError: () -> Unit,
+  onDeleteAllLocalData: () -> Unit,
   onBack: () -> Unit,
 ) {
   var confirmForget by rememberSaveable { mutableStateOf(false) }
+  var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
 
   Surface(
     modifier = Modifier.fillMaxSize(),
@@ -103,6 +109,7 @@ fun SettingsScreen(
           )
         }
         item { LocalOnlyCard() }
+        item { DeleteAllDataButton(onDelete = { confirmDeleteAll = true }) }
         if (state.errorMessage != null) {
           item {
             SettingsErrorCard(
@@ -138,6 +145,32 @@ fun SettingsScreen(
         }
       },
       dismissButton = { TextButton(onClick = { confirmForget = false }) { Text("Keep them") } },
+    )
+  }
+
+  if (confirmDeleteAll) {
+    AlertDialog(
+      onDismissRequest = { confirmDeleteAll = false },
+      title = { Text("Delete all local data?") },
+      text = {
+        Text(
+          "This permanently removes the encrypted catalog, its Android Keystore key, " +
+            "app settings, and any saved Tuya Cloud credentials. " +
+            "You will need to import from Tuya again."
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            confirmDeleteAll = false
+            onDeleteAllLocalData()
+          },
+          modifier = Modifier.testTag("confirm_delete_all_local_data"),
+        ) {
+          Text("Delete data")
+        }
+      },
+      dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } },
     )
   }
 }
@@ -530,6 +563,16 @@ private fun LocalOnlyCard() {
 }
 
 @Composable
+private fun DeleteAllDataButton(onDelete: () -> Unit) {
+  TextButton(
+    onClick = onDelete,
+    modifier = Modifier.fillMaxWidth().testTag("delete_all_data_button"),
+  ) {
+    Text("Delete all data", color = MaterialTheme.colorScheme.error)
+  }
+}
+
+@Composable
 private fun SettingsErrorCard(
   code: String,
   message: String,
@@ -567,7 +610,7 @@ private fun SettingsErrorCard(
   }
 }
 
-@Preview(showBackground = true, heightDp = 780)
+@Preview(showBackground = true, heightDp = 900)
 @Composable
 private fun SettingsPreview() {
   TinytuyaTheme(darkTheme = true) {
@@ -576,12 +619,37 @@ private fun SettingsPreview() {
         AppSettingsUiState(
           refreshWhenAppOpens = true,
           isLoaded = true,
+          cloudAccount =
+            CloudAccountUiState.Saved(
+              CloudCredentialSummary(
+                region = TuyaCloudRegion.CENTRAL_EUROPE,
+                maskedClientId = "abcd••••wxyz",
+                savedAtEpochMillis = 1_775_400_000_000L,
+              )
+            ),
+          tinyTuyaHealth =
+            TinyTuyaHealthUiState.Ready(
+              PythonRuntimeHealth(
+                contractVersion = 1,
+                pythonVersion = "3.11.4",
+                tinytuyaVersion = "1.14.8",
+                crypto =
+                  PythonCryptoHealth(
+                    library = "cryptography",
+                    version = "42.0.5",
+                    gcmAvailable = true,
+                    selfTestPassed = true,
+                  ),
+                supportedProtocols = listOf("3.3", "3.4", "3.5"),
+              )
+            ),
         ),
       onRefreshWhenAppOpensChanged = {},
       onSyncFromCloud = {},
       onUpdateCredentials = {},
       onForgetCredentials = {},
       onDismissError = {},
+      onDeleteAllLocalData = {},
       onBack = {},
     )
   }

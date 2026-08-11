@@ -76,6 +76,10 @@ fun AppRoute(
       },
       onForgetCredentials = appViewModel::forgetCloudCredentials,
       onDismissError = appViewModel::dismissSettingsError,
+      onDeleteAllLocalData = {
+        onboardingViewModel.clearSession()
+        appViewModel.deleteAllLocalData()
+      },
       onBack = { showSettings = false },
     )
     return

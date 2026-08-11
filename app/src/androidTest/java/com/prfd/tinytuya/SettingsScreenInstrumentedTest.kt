@@ -2,10 +2,12 @@ package com.prfd.tinytuya
 
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import com.prfd.tinytuya.data.local.CloudCredentialSummary
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.ui.app.AppSettingsUiState
@@ -113,6 +115,34 @@ class SettingsScreenInstrumentedTest {
     composeRule.runOnIdle { assertTrue(forgetCalled) }
   }
 
+  @Test
+  fun deletingAllLocalDataRequiresConfirmation() {
+    var deleteCalled = false
+    setSettingsContent(
+      state =
+        AppSettingsUiState(
+          refreshWhenAppOpens = true,
+          isLoaded = true,
+        ),
+      onDeleteAllLocalData = { deleteCalled = true },
+    )
+
+    composeRule
+      .onNodeWithTag("settings_list")
+      .performScrollToNode(hasTestTag("delete_all_data_button"))
+    composeRule.onNodeWithTag("delete_all_data_button").performClick()
+    composeRule.runOnIdle { assertTrue(!deleteCalled) }
+    composeRule
+      .onNodeWithText(
+        "You will need to import from Tuya again.",
+        substring = true,
+      )
+      .assertExists()
+    composeRule.onNodeWithTag("confirm_delete_all_local_data").performClick()
+
+    composeRule.runOnIdle { assertTrue(deleteCalled) }
+  }
+
   private fun setSettingsContent(
     state: AppSettingsUiState =
       AppSettingsUiState(
@@ -123,6 +153,7 @@ class SettingsScreenInstrumentedTest {
     onSync: () -> Unit = {},
     onUpdate: () -> Unit = {},
     onForget: () -> Unit = {},
+    onDeleteAllLocalData: () -> Unit = {},
     onBack: () -> Unit = {},
   ) {
     composeRule.setContent {
@@ -134,6 +165,7 @@ class SettingsScreenInstrumentedTest {
           onUpdateCredentials = onUpdate,
           onForgetCredentials = onForget,
           onDismissError = {},
+          onDeleteAllLocalData = onDeleteAllLocalData,
           onBack = onBack,
         )
       }

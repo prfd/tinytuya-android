@@ -33,9 +33,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.ui.components.BrandMark
+import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 @Composable
 internal fun WelcomeScreen(
@@ -97,6 +99,17 @@ internal fun WelcomeScreen(
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       textAlign = TextAlign.Center,
       modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
+    )
+  }
+}
+
+@Preview(showBackground = true, heightDp = 900)
+@Composable
+private fun WelcomePreview() {
+  TinytuyaTheme(darkTheme = false) {
+    WelcomeScreen(
+      onStartSetup = {},
+      onSkipGuide = {},
     )
   }
 }

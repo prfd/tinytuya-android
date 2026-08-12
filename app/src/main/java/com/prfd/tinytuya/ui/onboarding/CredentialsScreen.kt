@@ -41,8 +41,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
+import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -293,3 +295,20 @@ private val TuyaCloudRegion.displayName: String
       TuyaCloudRegion.INDIA -> "India"
       TuyaCloudRegion.SINGAPORE -> "Singapore"
     }
+
+@Preview(showBackground = true, heightDp = 900)
+@Composable
+private fun CredentialsPreview() {
+  TinytuyaTheme(darkTheme = true) {
+    CredentialsScreen(
+      state = OnboardingUiState(page = OnboardingPage.CREDENTIALS),
+      onBack = {},
+      onRegionChanged = {},
+      onClientIdChanged = {},
+      onClientSecretChanged = {},
+      onSampleDeviceIdChanged = {},
+      onToggleAdvanced = {},
+      onImport = {},
+    )
+  }
+}

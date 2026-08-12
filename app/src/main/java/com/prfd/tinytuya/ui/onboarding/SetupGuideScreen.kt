@@ -23,7 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 @Composable
 internal fun SetupGuideScreen(
@@ -90,6 +92,18 @@ internal fun SetupGuideScreen(
       onClick = onContinue,
     )
     Spacer(Modifier.height(24.dp))
+  }
+}
+
+@Preview(showBackground = true, heightDp = 900)
+@Composable
+private fun SetupGuidePreview() {
+  TinytuyaTheme(darkTheme = false) {
+    SetupGuideScreen(
+      onBack = {},
+      onOpenOfficialGuide = {},
+      onContinue = {},
+    )
   }
 }
 

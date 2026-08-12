@@ -67,7 +67,6 @@ import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
-import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.core.capability.CapabilityAccess
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
@@ -1456,39 +1455,119 @@ private val TuyaCloudRegion.displayName: String
       TuyaCloudRegion.SINGAPORE -> "Singapore"
     }
 
-@Preview(showBackground = true, heightDp = 900)
+private const val INVENTORY_SCREEN_PREVIEWS = "Inventory screen"
+
+@Preview(
+  name = "Full · current local inventory",
+  group = INVENTORY_SCREEN_PREVIEWS,
+  showBackground = true,
+  widthDp = 430,
+  heightDp = 1600,
+)
 @Composable
-private fun InventoryPreview() {
-  TinytuyaTheme(darkTheme = true) {
+private fun InventoryScreenPreview() {
+  PreviewInventoryScreen(
+    catalog = previewHomeCatalog(),
+    discovery = LanDiscoveryUiState.Completed,
+    control = LocalControlUiState.Ready,
+    displayMode = InventoryDisplayMode.FULL,
+    darkTheme = true,
+  )
+}
+
+@Preview(
+  name = "Compact · current local inventory",
+  group = INVENTORY_SCREEN_PREVIEWS,
+  showBackground = true,
+  widthDp = 430,
+  heightDp = 1200,
+)
+@Composable
+private fun InventoryScreenCompactPreview() {
+  PreviewInventoryScreen(
+    catalog = previewHomeCatalog(),
+    discovery = LanDiscoveryUiState.Completed,
+    control = LocalControlUiState.Ready,
+    displayMode = InventoryDisplayMode.COMPACT,
+    darkTheme = false,
+  )
+}
+
+@Preview(
+  name = "Needs scan",
+  group = INVENTORY_SCREEN_PREVIEWS,
+  showBackground = true,
+  widthDp = 430,
+  heightDp = 1400,
+)
+@Composable
+private fun InventoryScreenNeedsScanPreview() {
+  PreviewInventoryScreen(
+    catalog = previewHomeCatalog(withCurrentLan = false),
+    discovery = LanDiscoveryUiState.Idle,
+    control = LocalControlUiState.Unavailable,
+    displayMode = InventoryDisplayMode.FULL,
+    darkTheme = true,
+  )
+}
+
+@Preview(
+  name = "Status refresh error",
+  group = INVENTORY_SCREEN_PREVIEWS,
+  showBackground = true,
+  widthDp = 430,
+  heightDp = 1600,
+)
+@Composable
+private fun InventoryScreenStatusErrorPreview() {
+  PreviewInventoryScreen(
+    catalog = previewHomeCatalog(),
+    discovery =
+      LanDiscoveryUiState.Error(
+        code = "LOCAL_POLL_FAILED",
+        message = "Some saved devices did not answer on this Wi-Fi.",
+        phase = LocalRefreshPhase.STATUS,
+      ),
+    control = LocalControlUiState.Unavailable,
+    displayMode = InventoryDisplayMode.FULL,
+    darkTheme = true,
+  )
+}
+
+@Preview(
+  name = "Unlinked device found",
+  group = INVENTORY_SCREEN_PREVIEWS,
+  showBackground = true,
+  widthDp = 430,
+  heightDp = 1400,
+)
+@Composable
+private fun InventoryScreenUnlinkedPreview() {
+  PreviewInventoryScreen(
+    catalog = previewUnmatchedLanCatalog(),
+    discovery = LanDiscoveryUiState.Completed,
+    control = LocalControlUiState.Unavailable,
+    displayMode = InventoryDisplayMode.FULL,
+    darkTheme = false,
+  )
+}
+
+@Composable
+private fun PreviewInventoryScreen(
+  catalog: DeviceCatalog,
+  discovery: LanDiscoveryUiState,
+  control: LocalControlUiState,
+  displayMode: InventoryDisplayMode,
+  darkTheme: Boolean,
+) {
+  TinytuyaTheme(darkTheme = darkTheme) {
     InventoryScreen(
-      catalog =
-        DeviceCatalog(
-          schemaVersion = 2,
-          importedAtEpochMillis = 1_753_981_200_000L,
-          region = TuyaCloudRegion.WESTERN_AMERICA,
-          devices =
-            listOf(
-              CloudImportedDevice(
-                id = "preview-device",
-                name = "Reading lamp",
-                localKey = SensitiveString.of("preview-secret"),
-                category = "dj",
-                productId = "",
-                productName = "Wi-Fi lamp",
-                model = "L1",
-                mac = "",
-                uuid = "",
-                isSubDevice = false,
-                gatewayId = "",
-                nodeId = "",
-                protocolVersion = "3.5",
-                lastIp = "",
-                mappingJson = "{}",
-              )
-            ),
-        ),
-      discovery = LanDiscoveryUiState.Idle,
-      control = LocalControlUiState.Unavailable,
+      catalog = catalog,
+      discovery = discovery,
+      control = control,
+      isLanSnapshotCurrent = true,
+      displayMode = displayMode,
+      onDisplayModeChanged = {},
       onRefreshKnownDevices = {},
       onDiscoverLan = {},
       onIntent = {},

@@ -11,10 +11,12 @@ import androidx.compose.ui.unit.dp
 import com.prfd.tinytuya.data.lan.LocalDataPoint
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
 import com.prfd.tinytuya.data.lan.LocalPollDeviceState
+import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.LanDeviceRecord
 import com.prfd.tinytuya.data.local.LocalStatusRecord
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
+import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
@@ -159,6 +161,63 @@ private fun PreviewCardFrame(content: @Composable () -> Unit) {
   }
 }
 
+internal fun previewHomeCatalog(
+  withCurrentLan: Boolean = true,
+  withCurrentStatus: Boolean = true,
+): DeviceCatalog {
+  val states = previewHomeStates()
+  return DeviceCatalog(
+    schemaVersion = 2,
+    importedAtEpochMillis = PREVIEW_IMPORT_TIMESTAMP,
+    region = TuyaCloudRegion.WESTERN_AMERICA,
+    devices = states.map(PreviewDeviceState::device),
+    lastDiscoveryAtEpochMillis = PREVIEW_TIMESTAMP.takeIf { withCurrentLan },
+    lanDevices =
+      if (withCurrentLan) {
+        states.mapIndexed { index, state ->
+          previewLanRecord(state.device, ip = "192.168.1.${42 + index}")
+        }
+      } else {
+        emptyList()
+      },
+    lastLocalPollAtEpochMillis =
+      (PREVIEW_TIMESTAMP + 1L).takeIf { withCurrentLan && withCurrentStatus },
+    localStatus =
+      if (withCurrentLan && withCurrentStatus) {
+        states.map(::previewLocalStatus)
+      } else {
+        emptyList()
+      },
+  )
+}
+
+internal fun previewUnmatchedLanCatalog(): DeviceCatalog =
+  previewHomeCatalog(withCurrentLan = false)
+    .copy(
+      lastDiscoveryAtEpochMillis = PREVIEW_TIMESTAMP,
+      lanDevices =
+        listOf(
+          LanDeviceRecord(
+            id = "preview-unlinked-device",
+            ip = "192.168.1.77",
+            protocolVersion = "3.3",
+            productKey = "preview-product-key",
+            mac = "",
+            origin = "preview",
+            lastSeenAtEpochMillis = PREVIEW_TIMESTAMP,
+          )
+        ),
+    )
+
+private fun previewHomeStates(): List<PreviewDeviceState> =
+  listOf(
+    previewSwitch(),
+    previewSocket(),
+    previewPowerStrip(),
+    previewLight(mode = "white"),
+    previewCover(),
+  )
+
 private fun previewSwitch() =
   PreviewDeviceState(
     device =
@@ -290,10 +349,13 @@ private fun previewCover() =
       ),
   )
 
-private fun previewLanRecord(device: CloudImportedDevice) =
+private fun previewLanRecord(
+  device: CloudImportedDevice,
+  ip: String = "192.168.1.42",
+) =
   LanDeviceRecord(
     id = device.id,
-    ip = "192.168.1.42",
+    ip = ip,
     protocolVersion = device.protocolVersion,
     productKey = "preview-product-key",
     mac = "",
@@ -344,3 +406,4 @@ private data class PreviewDeviceState(
 private const val FULL_DEVICE_CARD_PREVIEWS = "Full device cards"
 private const val COMPACT_DEVICE_CARD_PREVIEWS = "Compact device cards"
 private const val PREVIEW_TIMESTAMP = 1_775_400_000_000L
+private const val PREVIEW_IMPORT_TIMESTAMP = 1_753_981_200_000L

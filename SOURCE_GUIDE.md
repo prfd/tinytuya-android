@@ -1,17 +1,13 @@
 # TinyTuya Android source guide
 
-The main runtime path has three layers:
-
 ```text
-[Compose screens]
-    events to ViewModels, immutable UI state to Compose
-[ViewModels and Kotlin coordinators]
-    typed requests and results
-[Chaquopy gateway] <-> [versioned JSON] <-> [tuya_bridge.py] <-> [TinyTuya]
-                                ^                                    |
-                                |                                    |
-                                |                                    v    
-                          [Tuya Cloud]                         [local UDP/TCP]
+[Compose UI]
+    ->[ViewModels]
+        ->[Coordinators]
+            ->[Chaquopy gateway]
+                ->[JSON contract]
+                    ->[tuya_bridge.py]
+                        ->[TinyTuya Python]
 ```
 
 Device extensibility crosses that runtime flow through a separate, enforced dependency graph. Arrows

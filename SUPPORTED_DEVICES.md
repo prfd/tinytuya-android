@@ -25,18 +25,9 @@ This table is maintained alongside the built-in category registry and its nearby
 | Lights | Power, White/Color mode, brightness, color temperature, and validated HSV v2 color | Representative category `dj` bulb |
 | Covers | Open, stop, close, target position, and current position when independently mapped and observed | Synthetic fixtures only; no cover hardware claim |
 
-Every other device class is outside the MVP scope. Unsupported devices can remain in the saved
-catalog so imports are non-destructive and the inventory can explain the limitation, but they cannot
-enter local status or write requests. This includes battery-powered sensors, gateway children,
-gateways, cameras, and locks.
 
 Cover command labels are enabled only for imported Enum mappings whose declared values explicitly
 contain every value in a reviewed open/stop/close vocabulary. Alternate DPS IDs and `_2` mapping codes are allowed;
 unknown vocabularies, missing Stop support, malformed position bounds, stale observations, and
 gateway children stay unavailable or read-only. The app does not use TinyTuya's heuristic cover-type
 fallback as write authority.
-
-Support is intentionally narrower than category registration. Firmware, protocol, vendor mapping,
-gateway topology, and product revisions can differ under the same marketing name. Synthetic-only
-means automated behavior is covered without claiming successful operation on representative
-physical hardware.

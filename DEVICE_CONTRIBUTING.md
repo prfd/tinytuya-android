@@ -20,8 +20,7 @@ needs app transport, persistence, Python, or secret models is proposing a new ar
 3. **New semantics:** propose a bounded core model, codec, authorization rules, confirmation policy,
    privacy review, and reusable UI before writing device-specific code.
 
-Before adding semantics, inspect the pinned TinyTuya core, built-in wrappers, and relevant contrib
-implementations. Reuse protocol behavior which TinyTuya already provides. Wrapper constants or
+Reuse protocol behavior which TinyTuya already provides. Wrapper constants or
 conversions may be reference evidence or parity-test oracles, but wrapper guesses about DPS IDs,
 ranges, command vocabularies, or side effects are never write authority.
 
@@ -111,25 +110,3 @@ wrong observed primitive, stale observation, malformed constraints, unsupported 
 ambiguous bindings, out-of-range intent, read-only/denied access, and changed mapping before dispatch.
 Test alternate DPS numbers to prove semantic IDs do not depend on them. Test confirmation and
 rollback at the generic coordinator boundary without adding a device-specific gateway method.
-
-## Privacy and evidence checklist
-
-- [ ] No device ID, UUID, MAC, address, local key, token, credential, request header, raw payload, or
-      Python traceback appears in source, fixtures, logs, screenshots, errors, or commit messages.
-- [ ] Product/category/mapping samples are minimized and sanitized; fixture names and DPS numbers are
-      invented where their exact values are not behaviorally important.
-- [ ] Protected gateways, children, cameras, and locks cannot be promoted by the profile.
-- [ ] Every writable value is bounded by imported schema plus a fresh independent observation and is
-      reauthorized from the latest catalog immediately before the generic write.
-- [ ] UI extensions receive only safe UI models, emit only semantic intents, retain the atomic
-      fallback, and include accessibility and fault/absence coverage.
-- [ ] Host tests cover category registration/resolution/authorization; Android tests are added only
-      for Android, Compose, persistence, lifecycle, Python, or network behavior.
-- [ ] `verifyDeviceModuleBoundaries` passes, with no new app dependency or app-owned first-party
-      import in a device module.
-- [ ] `SUPPORTED_DEVICES.md` lists the registered categories and honestly distinguishes real hardware,
-      synthetic-only, experimental, and unsupported evidence.
-- [ ] A real-hardware claim names only behavior actually exercised on representative hardware. A
-      screenshot proves presentation, not protocol compatibility.
-- [ ] Windows Gradle verification, in-place device installation, and the repository screenshot
-      workflow are completed without clearing saved app state.

@@ -21,19 +21,11 @@ import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
 import com.prfd.tinytuya.data.lan.UnavailableKnownDeviceRefreshCoordinator
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.lan.hasPreviouslyMatchedStatusTargets
-import com.prfd.tinytuya.data.local.AppSettingsStorageException
 import com.prfd.tinytuya.data.local.AppSettingsStore
-import com.prfd.tinytuya.data.local.CloudCredentialStorageException
-import com.prfd.tinytuya.data.local.CloudCredentialStore
-import com.prfd.tinytuya.data.local.CloudCredentialSummary
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
-import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
-import com.prfd.tinytuya.data.local.InventoryDisplayMode
-import com.prfd.tinytuya.data.python.PythonBridgeException
-import com.prfd.tinytuya.data.python.PythonRuntimeHealth
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import java.util.concurrent.CancellationException
@@ -81,45 +73,6 @@ enum class LocalRefreshPhase {
   STATUS,
 }
 
-data class AppSettingsUiState(
-  val refreshWhenAppOpens: Boolean = true,
-  val inventoryDisplayMode: InventoryDisplayMode = InventoryDisplayMode.COMPACT,
-  val isLoaded: Boolean = false,
-  val isSaving: Boolean = false,
-  val errorCode: String? = null,
-  val errorMessage: String? = null,
-  val cloudAccount: CloudAccountUiState = CloudAccountUiState.Loading,
-  val tinyTuyaHealth: TinyTuyaHealthUiState = TinyTuyaHealthUiState.Loading,
-)
-
-sealed interface TinyTuyaHealthUiState {
-  data object Loading : TinyTuyaHealthUiState
-
-  data object Unavailable : TinyTuyaHealthUiState
-
-  data class Ready(val health: PythonRuntimeHealth) : TinyTuyaHealthUiState
-
-  data class Error(
-    val code: String,
-    val message: String,
-  ) : TinyTuyaHealthUiState
-}
-
-sealed interface CloudAccountUiState {
-  data object Loading : CloudAccountUiState
-
-  data object Missing : CloudAccountUiState
-
-  data class Saved(val summary: CloudCredentialSummary) : CloudAccountUiState
-
-  data object Forgetting : CloudAccountUiState
-
-  data class Recovery(
-    val code: String,
-    val message: String,
-  ) : CloudAccountUiState
-}
-
 class AppViewModel(
   private val catalogStore: DeviceCatalogStore,
   private val lanDiscoveryCoordinator: LanDiscoveryCoordinator,
@@ -130,25 +83,18 @@ class AppViewModel(
     UnavailableKnownDeviceRefreshCoordinator,
   private val settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
   private val elapsedRealtimeMillis: () -> Long = SystemClock::elapsedRealtime,
-  private val credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
-  private val pythonHealthCheck: (suspend () -> PythonRuntimeHealth)? = null,
 ) : ViewModel() {
   private val mutableState = MutableStateFlow<AppUiState>(AppUiState.Loading)
   val state: StateFlow<AppUiState> = mutableState.asStateFlow()
-  private val mutableSettingsState = MutableStateFlow(AppSettingsUiState())
-  val settingsState: StateFlow<AppSettingsUiState> = mutableSettingsState.asStateFlow()
   private var controlNetwork: LanNetworkContext? = null
   private var controlDiscoveryAtEpochMillis: Long? = null
   private var controlSessionVersion = 0L
   private var latestNetworkObservation: LanNetworkObservation? = null
   private var foregroundRefreshPending = false
   private var lastLocalRefreshStartedAtMillis: Long? = null
-  private var cloudAccountOperationVersion = 0L
-  private var pythonHealthOperationVersion = 0L
 
   init {
     observeLanNetwork()
-    loadSettings()
     refreshCatalog()
   }
 
@@ -161,7 +107,6 @@ class AppViewModel(
   }
 
   private fun refreshCatalog(discoverAfterLoad: Boolean) {
-    refreshCloudAccount()
     clearControlSession()
     mutableState.value = AppUiState.Loading
     viewModelScope.launch {
@@ -205,190 +150,7 @@ class AppViewModel(
 
   fun onAppForegrounded() {
     foregroundRefreshPending = true
-    maybeStartForegroundRefresh()
-  }
-
-  fun checkPythonHealth() {
-    val healthCheck = pythonHealthCheck
-    if (healthCheck == null) {
-      mutableSettingsState.value =
-        mutableSettingsState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Unavailable)
-      return
-    }
-
-    val operationVersion = ++pythonHealthOperationVersion
-    mutableSettingsState.value =
-      mutableSettingsState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Loading)
-    viewModelScope.launch {
-      try {
-        val health = healthCheck()
-        if (operationVersion != pythonHealthOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Ready(health))
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: PythonBridgeException) {
-        if (operationVersion != pythonHealthOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            tinyTuyaHealth =
-              TinyTuyaHealthUiState.Error(
-                code = error.code,
-                message =
-                  error.message ?: "The embedded TinyTuya runtime could not be initialized.",
-              )
-          )
-      } catch (_: Exception) {
-        if (operationVersion != pythonHealthOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            tinyTuyaHealth =
-              TinyTuyaHealthUiState.Error(
-                code = "BRIDGE_HEALTH_FAILED",
-                message = "The embedded TinyTuya runtime could not be initialized.",
-              )
-          )
-      }
-    }
-  }
-
-  fun setRefreshWhenAppOpens(enabled: Boolean) {
-    val current = mutableSettingsState.value
-    if (!current.isLoaded || current.isSaving || current.refreshWhenAppOpens == enabled) return
-    if (!enabled) foregroundRefreshPending = false
-    mutableSettingsState.value =
-      current.copy(
-        refreshWhenAppOpens = enabled,
-        isSaving = true,
-        errorCode = null,
-        errorMessage = null,
-      )
-    viewModelScope.launch {
-      try {
-        val saved = settingsStore.setRefreshWhenAppOpens(enabled)
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = saved.refreshWhenAppOpens,
-            isLoaded = true,
-            isSaving = false,
-            errorCode = null,
-            errorMessage = null,
-          )
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: AppSettingsStorageException) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = current.refreshWhenAppOpens,
-            isSaving = false,
-            errorCode = error.code,
-            errorMessage = error.message ?: "The refresh preference could not be saved.",
-          )
-      } catch (_: Exception) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = current.refreshWhenAppOpens,
-            isSaving = false,
-            errorCode = "SETTINGS_WRITE_FAILED",
-            errorMessage = "The refresh preference could not be saved.",
-          )
-      }
-    }
-  }
-
-  fun setInventoryDisplayMode(mode: InventoryDisplayMode) {
-    val current = mutableSettingsState.value
-    if (!current.isLoaded || current.isSaving || current.inventoryDisplayMode == mode) return
-    mutableSettingsState.value =
-      current.copy(
-        inventoryDisplayMode = mode,
-        isSaving = true,
-        errorCode = null,
-        errorMessage = null,
-      )
-    viewModelScope.launch {
-      try {
-        val saved = settingsStore.setInventoryDisplayMode(mode)
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = saved.refreshWhenAppOpens,
-            inventoryDisplayMode = saved.inventoryDisplayMode,
-            isLoaded = true,
-            isSaving = false,
-            errorCode = null,
-            errorMessage = null,
-          )
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: AppSettingsStorageException) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            inventoryDisplayMode = current.inventoryDisplayMode,
-            isSaving = false,
-            errorCode = error.code,
-            errorMessage = error.message ?: "The inventory view preference could not be saved.",
-          )
-      } catch (_: Exception) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            inventoryDisplayMode = current.inventoryDisplayMode,
-            isSaving = false,
-            errorCode = "SETTINGS_WRITE_FAILED",
-            errorMessage = "The inventory view preference could not be saved.",
-          )
-      }
-    }
-  }
-
-  fun dismissSettingsError() {
-    mutableSettingsState.value =
-      mutableSettingsState.value.copy(
-        errorCode = null,
-        errorMessage = null,
-      )
-  }
-
-  fun forgetCloudCredentials() {
-    val current = mutableSettingsState.value.cloudAccount
-    if (
-      current is CloudAccountUiState.Loading ||
-        current is CloudAccountUiState.Forgetting ||
-        current is CloudAccountUiState.Missing
-    )
-      return
-    val operationVersion = ++cloudAccountOperationVersion
-    mutableSettingsState.value =
-      mutableSettingsState.value.copy(cloudAccount = CloudAccountUiState.Forgetting)
-    viewModelScope.launch {
-      try {
-        credentialStore.deleteAll()
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(cloudAccount = CloudAccountUiState.Missing)
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: CloudCredentialStorageException) {
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            cloudAccount =
-              CloudAccountUiState.Recovery(
-                code = error.code,
-                message = error.message ?: "The saved Tuya Cloud credentials could not be deleted.",
-              )
-          )
-      } catch (_: Exception) {
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            cloudAccount =
-              CloudAccountUiState.Recovery(
-                code = "CREDENTIAL_VAULT_DELETE_FAILED",
-                message = "The saved Tuya Cloud credentials could not be deleted.",
-              )
-          )
-      }
-    }
+    viewModelScope.launch { maybeStartForegroundRefresh() }
   }
 
   fun refreshKnownDevices() {
@@ -840,61 +602,21 @@ class AppViewModel(
 
   fun deleteAllLocalData() {
     foregroundRefreshPending = false
-    cloudAccountOperationVersion += 1
     clearControlSession()
     mutableState.value = AppUiState.Loading
     viewModelScope.launch {
-      var firstFailure: Exception? = null
-      try {
-        credentialStore.deleteAll()
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: Exception) {
-        firstFailure = error
-      }
       try {
         catalogStore.deleteAll()
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: Exception) {
-        if (firstFailure == null) firstFailure = error
-      }
-      try {
-        settingsStore.deleteAll()
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: Exception) {
-        if (firstFailure == null) firstFailure = error
-      }
-
-      val failure = firstFailure
-      if (failure == null) {
-        mutableSettingsState.value =
-          AppSettingsUiState(
-            refreshWhenAppOpens = true,
-            isLoaded = true,
-            cloudAccount = CloudAccountUiState.Missing,
-          )
         mutableState.value = AppUiState.Onboarding
-      } else if (failure is DeviceCatalogStorageException) {
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: DeviceCatalogStorageException) {
         mutableState.value =
           AppUiState.Recovery(
-            code = failure.code,
-            message = failure.message ?: "The local device data could not be deleted.",
+            code = error.code,
+            message = error.message ?: "The local device data could not be deleted.",
           )
-      } else if (failure is AppSettingsStorageException) {
-        mutableState.value =
-          AppUiState.Recovery(
-            code = failure.code,
-            message = failure.message ?: "The local app settings could not be deleted.",
-          )
-      } else if (failure is CloudCredentialStorageException) {
-        mutableState.value =
-          AppUiState.Recovery(
-            code = failure.code,
-            message = failure.message ?: "The saved Tuya Cloud credentials could not be deleted.",
-          )
-      } else {
+      } catch (_: Exception) {
         mutableState.value =
           AppUiState.Recovery(
             code = "LOCAL_DATA_DELETE_FAILED",
@@ -904,95 +626,21 @@ class AppViewModel(
     }
   }
 
-  private fun loadSettings() {
-    viewModelScope.launch {
-      try {
-        val settings = settingsStore.load()
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = settings.refreshWhenAppOpens,
-            inventoryDisplayMode = settings.inventoryDisplayMode,
-            isLoaded = true,
-            isSaving = false,
-            errorCode = null,
-            errorMessage = null,
-          )
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: AppSettingsStorageException) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = false,
-            inventoryDisplayMode = InventoryDisplayMode.COMPACT,
-            isLoaded = true,
-            isSaving = false,
-            errorCode = error.code,
-            errorMessage = error.message ?: "App settings could not be read safely.",
-          )
-      } catch (_: Exception) {
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            refreshWhenAppOpens = false,
-            inventoryDisplayMode = InventoryDisplayMode.COMPACT,
-            isLoaded = true,
-            isSaving = false,
-            errorCode = "SETTINGS_READ_FAILED",
-            errorMessage = "App settings could not be read safely.",
-          )
-      }
-      maybeStartForegroundRefresh()
-    }
-  }
-
-  private fun refreshCloudAccount() {
-    val operationVersion = ++cloudAccountOperationVersion
-    mutableSettingsState.value =
-      mutableSettingsState.value.copy(cloudAccount = CloudAccountUiState.Loading)
-    viewModelScope.launch {
-      try {
-        val summary = credentialStore.loadSummary()
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            cloudAccount =
-              if (summary == null) {
-                CloudAccountUiState.Missing
-              } else {
-                CloudAccountUiState.Saved(summary)
-              }
-          )
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: CloudCredentialStorageException) {
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            cloudAccount =
-              CloudAccountUiState.Recovery(
-                code = error.code,
-                message =
-                  error.message ?: "The saved Tuya Cloud credentials could not be opened safely.",
-              )
-          )
-      } catch (_: Exception) {
-        if (operationVersion != cloudAccountOperationVersion) return@launch
-        mutableSettingsState.value =
-          mutableSettingsState.value.copy(
-            cloudAccount =
-              CloudAccountUiState.Recovery(
-                code = "CREDENTIAL_VAULT_READ_FAILED",
-                message = "The saved Tuya Cloud credentials could not be opened safely.",
-              )
-          )
-      }
-    }
-  }
-
-  private fun maybeStartForegroundRefresh() {
+  private suspend fun maybeStartForegroundRefresh() {
     if (!foregroundRefreshPending) return
-    val settings = mutableSettingsState.value
-    if (!settings.isLoaded) return
-    if (!settings.refreshWhenAppOpens) {
+    val enabled =
+      try {
+        settingsStore.load().refreshWhenAppOpens
+      } catch (_: Exception) {
+        foregroundRefreshPending = false
+        LocalRefreshDiagnostics.refreshSkipped(
+          trigger = LocalRefreshTrigger.FOREGROUND,
+          mode = LocalRefreshMode.STATUS,
+          reason = "settings_not_loaded",
+        )
+        return
+      }
+    if (!enabled) {
       foregroundRefreshPending = false
       LocalRefreshDiagnostics.refreshSkipped(
         trigger = LocalRefreshTrigger.FOREGROUND,
@@ -1238,8 +886,6 @@ class AppViewModel(
       knownDeviceRefreshCoordinator: KnownDeviceRefreshCoordinator =
         UnavailableKnownDeviceRefreshCoordinator,
       settingsStore: AppSettingsStore = InMemoryAppSettingsStore(),
-      credentialStore: CloudCredentialStore = InMemoryCloudCredentialStore(),
-      pythonHealthCheck: (suspend () -> PythonRuntimeHealth)? = null,
     ): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -1253,8 +899,6 @@ class AppViewModel(
             lanNetworkObserver,
             knownDeviceRefreshCoordinator,
             settingsStore,
-            credentialStore = credentialStore,
-            pythonHealthCheck = pythonHealthCheck,
           )
             as T
         }

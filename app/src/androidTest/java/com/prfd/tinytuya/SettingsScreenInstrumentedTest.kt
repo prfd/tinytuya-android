@@ -10,8 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import com.prfd.tinytuya.data.local.CloudCredentialSummary
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
-import com.prfd.tinytuya.ui.app.AppSettingsUiState
-import com.prfd.tinytuya.ui.app.CloudAccountUiState
+import com.prfd.tinytuya.ui.settings.AppSettingsUiState
+import com.prfd.tinytuya.ui.settings.CloudAccountUiState
 import com.prfd.tinytuya.ui.settings.SettingsScreen
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 import org.junit.Assert.assertEquals

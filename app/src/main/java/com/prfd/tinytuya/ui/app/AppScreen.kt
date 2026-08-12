@@ -16,14 +16,16 @@ import com.prfd.tinytuya.ui.inventory.InventoryScreen
 import com.prfd.tinytuya.ui.onboarding.OnboardingRoute
 import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
 import com.prfd.tinytuya.ui.settings.SettingsScreen
+import com.prfd.tinytuya.ui.settings.SettingsViewModel
 
 @Composable
 fun AppRoute(
   appViewModel: AppViewModel,
+  settingsViewModel: SettingsViewModel,
   onboardingViewModel: OnboardingViewModel,
 ) {
   val state by appViewModel.state.collectAsState()
-  val settingsState by appViewModel.settingsState.collectAsState()
+  val settingsState by settingsViewModel.state.collectAsState()
   val settingsInventory = state as? AppUiState.Inventory
   var showSettings by rememberSaveable { mutableStateOf(false) }
 
@@ -31,14 +33,14 @@ fun AppRoute(
     if (state !is AppUiState.Inventory) showSettings = false
   }
 
-  LaunchedEffect(showSettings) { if (showSettings) appViewModel.checkPythonHealth() }
+  LaunchedEffect(showSettings) { if (showSettings) settingsViewModel.checkPythonHealth() }
 
   BackHandler(enabled = showSettings) { showSettings = false }
 
   if (showSettings && settingsInventory != null) {
     SettingsScreen(
       state = settingsState,
-      onRefreshWhenAppOpensChanged = appViewModel::setRefreshWhenAppOpens,
+      onRefreshWhenAppOpensChanged = settingsViewModel::setRefreshWhenAppOpens,
       onSyncFromCloud = {
         showSettings = false
         onboardingViewModel.prepareForCloudSync(settingsInventory.catalog.region)
@@ -49,11 +51,12 @@ fun AppRoute(
         onboardingViewModel.prepareForCredentialUpdate(settingsInventory.catalog.region)
         appViewModel.showOnboarding()
       },
-      onForgetCredentials = appViewModel::forgetCloudCredentials,
-      onDismissError = appViewModel::dismissSettingsError,
+      onForgetCredentials = settingsViewModel::forgetCloudCredentials,
+      onDismissError = settingsViewModel::dismissSettingsError,
       onDeleteAllLocalData = {
         onboardingViewModel.clearSession()
         appViewModel.deleteAllLocalData()
+        settingsViewModel.deleteAllSettingsData()
       },
       onBack = { showSettings = false },
     )
@@ -74,10 +77,12 @@ fun AppRoute(
           onOpenInventory = {
             onboardingViewModel.clearSession()
             appViewModel.refreshCatalogAfterCloudImport()
+            settingsViewModel.refreshCloudAccount()
           },
           onCancel = {
             onboardingViewModel.clearSession()
             appViewModel.refreshCatalog()
+            settingsViewModel.refreshCloudAccount()
             showSettings = true
           },
         )
@@ -89,7 +94,7 @@ fun AppRoute(
           isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
           displayMode = settingsState.inventoryDisplayMode,
           isDisplayModeSaving = settingsState.isSaving,
-          onDisplayModeChanged = appViewModel::setInventoryDisplayMode,
+          onDisplayModeChanged = settingsViewModel::setInventoryDisplayMode,
           onRefreshKnownDevices = appViewModel::refreshKnownDevices,
           onDiscoverLan = appViewModel::discoverLan,
           onIntent = appViewModel::submitControl,
@@ -102,6 +107,7 @@ fun AppRoute(
           onDeleteAllLocalData = {
             onboardingViewModel.clearSession()
             appViewModel.deleteAllLocalData()
+            settingsViewModel.deleteAllSettingsData()
           },
         )
     }

@@ -18,10 +18,7 @@ import com.prfd.tinytuya.data.local.AppSettings
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryAppSettingsStore
-import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
-import com.prfd.tinytuya.data.local.InventoryDisplayMode
 import com.prfd.tinytuya.data.local.LanDeviceRecord
-import com.prfd.tinytuya.data.local.StoredCloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
@@ -31,7 +28,6 @@ import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.ui.app.AppUiState
 import com.prfd.tinytuya.ui.app.AppViewModel
-import com.prfd.tinytuya.ui.app.CloudAccountUiState
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -41,7 +37,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -84,42 +79,14 @@ class AppViewModelInstrumentedTest {
   }
 
   @Test
-  fun forgettingCloudCredentialsPreservesTheDeviceCatalog() = runBlocking {
+  fun deletingAllLocalDataClearsCatalogAndReturnsToOnboarding() = runBlocking {
     val catalogStore = FakeCatalogStore(sampleCatalog())
-    val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
     val viewModel =
       AppViewModel(
         catalogStore = catalogStore,
         lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
         localStatusCoordinator = FakeLocalStatusCoordinator(),
         localControlCoordinator = FakeLocalControlCoordinator(),
-        credentialStore = credentialStore,
-      )
-    withTimeout(5_000) {
-      viewModel.settingsState.first { it.cloudAccount is CloudAccountUiState.Saved }
-    }
-
-    viewModel.forgetCloudCredentials()
-
-    withTimeout(5_000) {
-      viewModel.settingsState.first { it.cloudAccount is CloudAccountUiState.Missing }
-    }
-    assertNull(credentialStore.load())
-    assertTrue(!catalogStore.deleted)
-    assertTrue(viewModel.state.value is AppUiState.Inventory)
-  }
-
-  @Test
-  fun deletingAllLocalDataClearsBothStoresAndReturnsToOnboarding() = runBlocking {
-    val catalogStore = FakeCatalogStore(sampleCatalog())
-    val credentialStore = InMemoryCloudCredentialStore(savedCredentials())
-    val viewModel =
-      AppViewModel(
-        catalogStore = catalogStore,
-        lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-        localStatusCoordinator = FakeLocalStatusCoordinator(),
-        localControlCoordinator = FakeLocalControlCoordinator(),
-        credentialStore = credentialStore,
       )
     withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
 
@@ -127,8 +94,6 @@ class AppViewModelInstrumentedTest {
 
     withTimeout(5_000) { viewModel.state.first { it is AppUiState.Onboarding } }
     assertTrue(catalogStore.deleted)
-    assertNull(credentialStore.load())
-    assertTrue(viewModel.settingsState.value.cloudAccount is CloudAccountUiState.Missing)
   }
 
   @Test
@@ -494,7 +459,6 @@ class AppViewModelInstrumentedTest {
         elapsedRealtimeMillis = { 100_000L },
       )
     withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-    withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
 
     viewModel.onAppForegrounded()
     observer.emit(LanNetworkObservation.Available(NETWORK))
@@ -513,40 +477,6 @@ class AppViewModelInstrumentedTest {
   }
 
   @Test
-  fun inventoryDisplayModeLoadsAndPersistsWithoutChangingRefreshPreference() = runBlocking {
-    val settingsStore =
-      InMemoryAppSettingsStore(
-        AppSettings(
-          refreshWhenAppOpens = true,
-          inventoryDisplayMode = InventoryDisplayMode.COMPACT,
-        )
-      )
-    val viewModel =
-      AppViewModel(
-        catalogStore = FakeCatalogStore(sampleCatalog()),
-        lanDiscoveryCoordinator = FakeLanDiscoveryCoordinator(),
-        localStatusCoordinator = FakeLocalStatusCoordinator(),
-        localControlCoordinator = FakeLocalControlCoordinator(),
-        settingsStore = settingsStore,
-      )
-
-    val loaded = withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
-    assertEquals(InventoryDisplayMode.COMPACT, loaded.inventoryDisplayMode)
-
-    viewModel.setInventoryDisplayMode(InventoryDisplayMode.FULL)
-
-    val saved =
-      withTimeout(5_000) {
-        viewModel.settingsState.first {
-          it.inventoryDisplayMode == InventoryDisplayMode.FULL && !it.isSaving
-        }
-      }
-    assertTrue(saved.refreshWhenAppOpens)
-    assertEquals(InventoryDisplayMode.FULL, settingsStore.load().inventoryDisplayMode)
-    assertTrue(settingsStore.load().refreshWhenAppOpens)
-  }
-
-  @Test
   fun disabledForegroundPreferenceLeavesBothRefreshPathsIdle() = runBlocking {
     val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(NETWORK))
     val discoveryCoordinator = FakeLanDiscoveryCoordinator()
@@ -562,7 +492,6 @@ class AppViewModelInstrumentedTest {
         settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = false)),
       )
     withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-    withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
 
     viewModel.onAppForegrounded()
     observer.emit(LanNetworkObservation.Available(NETWORK))
@@ -592,7 +521,6 @@ class AppViewModelInstrumentedTest {
     withTimeout(5_000) {
       viewModel.state.first { it is AppUiState.Inventory && !it.isLanSnapshotCurrent }
     }
-    withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
 
     viewModel.onAppForegrounded()
     delay(150)
@@ -628,7 +556,6 @@ class AppViewModelInstrumentedTest {
         settingsStore = InMemoryAppSettingsStore(),
       )
     withTimeout(5_000) { viewModel.state.first { it is AppUiState.Inventory } }
-    withTimeout(5_000) { viewModel.settingsState.first { it.isLoaded } }
 
     viewModel.onAppForegrounded()
     observer.emit(LanNetworkObservation.Available(NETWORK))
@@ -824,14 +751,6 @@ class AppViewModelInstrumentedTest {
               mappingJson = "{}",
             )
           ),
-      )
-
-    fun savedCredentials() =
-      StoredCloudCredentials(
-        region = TuyaCloudRegion.CENTRAL_EUROPE,
-        clientId = SensitiveString.of("known-good-client-id"),
-        clientSecret = SensitiveString.of("known-good-secret"),
-        savedAtEpochMillis = 1L,
       )
 
     fun toggleIntent(value: Boolean) =

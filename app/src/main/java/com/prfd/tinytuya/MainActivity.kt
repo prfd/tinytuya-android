@@ -18,6 +18,7 @@ import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.ui.app.AppRoute
 import com.prfd.tinytuya.ui.app.AppViewModel
 import com.prfd.tinytuya.ui.onboarding.OnboardingViewModel
+import com.prfd.tinytuya.ui.settings.SettingsViewModel
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 
 class MainActivity : ComponentActivity() {
@@ -69,10 +70,17 @@ class MainActivity : ComponentActivity() {
           lanNetworkObserver = networkResolver,
           knownDeviceRefreshCoordinator = knownDeviceRefreshCoordinator,
           settingsStore = settingsStore,
+        ),
+      )[AppViewModel::class.java]
+    val settingsViewModel =
+      ViewModelProvider(
+        this,
+        SettingsViewModel.factory(
+          settingsStore = settingsStore,
           credentialStore = credentialStore,
           pythonHealthCheck = { gateway.health() },
         ),
-      )[AppViewModel::class.java]
+      )[SettingsViewModel::class.java]
     val onboardingViewModel =
       ViewModelProvider(
         this,
@@ -83,6 +91,7 @@ class MainActivity : ComponentActivity() {
       TinytuyaTheme {
         AppRoute(
           appViewModel = appViewModel,
+          settingsViewModel = settingsViewModel,
           onboardingViewModel = onboardingViewModel,
         )
       }

@@ -104,7 +104,6 @@ fun SettingsScreen(
             onChanged = onRefreshWhenAppOpensChanged,
           )
         }
-        item { LocalOnlyCard() }
         item { DeleteAllDataButton(onDelete = { confirmDeleteAll = true }) }
         if (state.errorMessage != null) {
           item {
@@ -529,29 +528,6 @@ private fun ForegroundRefreshCard(
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 12.dp),
-      )
-    }
-  }
-}
-
-@Composable
-private fun LocalOnlyCard() {
-  Surface(
-    shape = MaterialTheme.shapes.large,
-    color = MaterialTheme.colorScheme.primaryContainer,
-    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-    modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column(Modifier.padding(18.dp)) {
-      Text("Local means local", style = MaterialTheme.typography.titleMedium)
-      Text(
-        text =
-          "Automatic refresh uses only UDP discovery when necessary and direct " +
-            "TCP status reads on your Wi-Fi. It never signs in to Tuya Cloud and never " +
-            "runs as a hidden background service.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-        modifier = Modifier.padding(top = 7.dp),
       )
     }
   }

@@ -1,8 +1,6 @@
 package com.prfd.tinytuya.data.local
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import com.prfd.tinytuya.data.lan.LanDiscoveryResult
 import com.prfd.tinytuya.data.lan.LanNetworkContext
@@ -16,13 +14,7 @@ import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import java.io.File
 import java.io.FileNotFoundException
-import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -87,17 +79,17 @@ interface DeviceCatalogStore {
 }
 
 /**
- * Stores the entire imported catalog as one authenticated ciphertext.
+ * Stores the entire imported catalog as one plaintext JSON document.
  *
- * The ciphertext lives under [Context.getNoBackupFilesDir], while the AES key is non-exportable and
- * generated inside Android Keystore. No cloud credential is accepted by this API, so it cannot be
- * retained accidentally.
+ * The file lives under [Context.getNoBackupFilesDir], which Android excludes from backup. App
+ * sandboxing and the manifest backup rules protect it; it is deliberately not encrypted so the
+ * store stays simple. No cloud credential is accepted by this API, so it cannot be retained
+ * accidentally.
  */
-class EncryptedDeviceCatalogStore
+class JsonDeviceCatalogStore
 internal constructor(
   context: Context,
   private val catalogDirectory: File = File(context.noBackupFilesDir, CATALOG_DIRECTORY),
-  internal val keyAlias: String = KEY_ALIAS,
   private val currentTimeMillis: () -> Long = System::currentTimeMillis,
 ) : DeviceCatalogStore {
   internal val catalogFile = File(catalogDirectory, CATALOG_FILE)
@@ -246,11 +238,6 @@ internal constructor(
       mutex.withLock {
         try {
           atomicFile.delete()
-          keyStore().let { store ->
-            if (store.containsAlias(keyAlias)) {
-              store.deleteEntry(keyAlias)
-            }
-          }
           catalogDirectory.delete()
           Unit
         } catch (_: Exception) {
@@ -270,21 +257,16 @@ internal constructor(
         } catch (_: FileNotFoundException) {
           return null
         }
-      val encrypted = input.use {
+      val json = input.use {
         if (it.channel.size() !in 1..MAX_CATALOG_BYTES) {
           throw storageError(
             code = "CATALOG_INVALID",
             message = "The saved device catalog has an invalid size.",
           )
         }
-        it.readBytes()
+        String(it.readBytes(), StandardCharsets.UTF_8)
       }
-      val plaintext = decrypt(encrypted)
-      return try {
-        decodeCatalog(String(plaintext, StandardCharsets.UTF_8))
-      } finally {
-        plaintext.fill(0)
-      }
+      return decodeCatalog(json)
     } catch (error: DeviceCatalogStorageException) {
       throw error
     } catch (_: Exception) {
@@ -297,119 +279,17 @@ internal constructor(
 
   private fun writeCatalogLocked(catalog: DeviceCatalog) {
     validateCatalog(catalog)
-    val plaintext = encodeCatalog(catalog).toByteArray(StandardCharsets.UTF_8)
-    try {
-      val encrypted = encrypt(plaintext)
-      if (encrypted.size.toLong() > MAX_CATALOG_BYTES) {
-        throw storageError(
-          code = "CATALOG_TOO_LARGE",
-          message = "The device catalog is too large to store safely.",
-        )
-      }
-      writeAtomically(encrypted)
-    } catch (error: DeviceCatalogStorageException) {
-      throw error
-    } catch (_: Exception) {
+    val bytes = encodeCatalog(catalog).toByteArray(StandardCharsets.UTF_8)
+    if (bytes.size.toLong() > MAX_CATALOG_BYTES) {
       throw storageError(
-        code = "CATALOG_WRITE_FAILED",
-        message = "The device catalog could not be stored safely.",
-      )
-    } finally {
-      plaintext.fill(0)
-    }
-  }
-
-  private fun encrypt(plaintext: ByteArray): ByteArray {
-    try {
-      val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
-      cipher.init(Cipher.ENCRYPT_MODE, keyForEncryption())
-      cipher.updateAAD(ASSOCIATED_DATA)
-      val ciphertext = cipher.doFinal(plaintext)
-      val iv = cipher.iv
-      if (iv.size !in MIN_IV_BYTES..MAX_IV_BYTES) {
-        throw storageError(
-          code = "CATALOG_ENCRYPT_FAILED",
-          message = "Android Keystore returned an invalid encryption nonce.",
-        )
-      }
-
-      return ByteBuffer.allocate(MAGIC.size + 1 + 1 + iv.size + ciphertext.size)
-        .apply {
-          put(MAGIC)
-          put(ENVELOPE_VERSION.toByte())
-          put(iv.size.toByte())
-          put(iv)
-          put(ciphertext)
-        }
-        .array()
-    } catch (error: DeviceCatalogStorageException) {
-      throw error
-    } catch (_: Exception) {
-      throw storageError(
-        code = "CATALOG_ENCRYPT_FAILED",
-        message = "Android Keystore could not encrypt the device catalog.",
+        code = "CATALOG_TOO_LARGE",
+        message = "The device catalog is too large to store safely.",
       )
     }
+    writeAtomically(bytes)
   }
 
-  private fun decrypt(envelope: ByteArray): ByteArray {
-    try {
-      val minimumSize = MAGIC.size + 1 + 1 + MIN_IV_BYTES + GCM_TAG_BYTES
-      if (envelope.size < minimumSize) {
-        throw storageError(
-          code = "CATALOG_INVALID",
-          message = "The saved device catalog is incomplete.",
-        )
-      }
-
-      val buffer = ByteBuffer.wrap(envelope)
-      val magic = ByteArray(MAGIC.size).also(buffer::get)
-      if (!magic.contentEquals(MAGIC)) {
-        throw storageError(
-          code = "CATALOG_INVALID",
-          message = "The saved device catalog uses an unknown format.",
-        )
-      }
-
-      val envelopeVersion = buffer.get().toInt() and 0xff
-      if (envelopeVersion != ENVELOPE_VERSION) {
-        throw storageError(
-          code = "CATALOG_VERSION_UNSUPPORTED",
-          message = "The saved device catalog uses an unsupported encryption format.",
-        )
-      }
-
-      val ivSize = buffer.get().toInt() and 0xff
-      if (ivSize !in MIN_IV_BYTES..MAX_IV_BYTES || buffer.remaining() < ivSize + GCM_TAG_BYTES) {
-        throw storageError(
-          code = "CATALOG_INVALID",
-          message = "The saved device catalog contains an invalid encryption nonce.",
-        )
-      }
-
-      val iv = ByteArray(ivSize).also(buffer::get)
-      val ciphertext = ByteArray(buffer.remaining()).also(buffer::get)
-      val key =
-        existingKey()
-          ?: throw storageError(
-            code = "CATALOG_KEY_UNAVAILABLE",
-            message = "The key for the saved device catalog is no longer available.",
-          )
-      val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
-      cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-      cipher.updateAAD(ASSOCIATED_DATA)
-      return cipher.doFinal(ciphertext)
-    } catch (error: DeviceCatalogStorageException) {
-      throw error
-    } catch (_: Exception) {
-      throw storageError(
-        code = "CATALOG_DECRYPT_FAILED",
-        message = "The saved device catalog failed its integrity check.",
-      )
-    }
-  }
-
-  private fun writeAtomically(encrypted: ByteArray) {
+  private fun writeAtomically(bytes: ByteArray) {
     if (!catalogDirectory.exists() && !catalogDirectory.mkdirs()) {
       throw storageError(
         code = "CATALOG_WRITE_FAILED",
@@ -419,7 +299,7 @@ internal constructor(
 
     var output = atomicFile.startWrite()
     try {
-      output.write(encrypted)
+      output.write(bytes)
       output.flush()
       atomicFile.finishWrite(output)
     } catch (_: Exception) {
@@ -430,46 +310,6 @@ internal constructor(
       )
     }
   }
-
-  private fun keyForEncryption(): SecretKey =
-    existingKey()
-      ?: try {
-        KeyGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_AES,
-            ANDROID_KEYSTORE,
-          )
-          .apply {
-            init(
-              KeyGenParameterSpec.Builder(
-                  keyAlias,
-                  KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(KEY_SIZE_BITS)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-            )
-          }
-          .generateKey()
-      } catch (_: Exception) {
-        throw storageError(
-          code = "CATALOG_KEY_CREATE_FAILED",
-          message = "Android Keystore could not create the device-catalog key.",
-        )
-      }
-
-  private fun existingKey(): SecretKey? =
-    try {
-      keyStore().getKey(keyAlias, null) as? SecretKey
-    } catch (_: Exception) {
-      throw storageError(
-        code = "CATALOG_KEY_UNAVAILABLE",
-        message = "Android Keystore could not open the device-catalog key.",
-      )
-    }
-
-  private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
   private fun encodeCatalog(catalog: DeviceCatalog): String =
     JSONObject()
@@ -902,10 +742,9 @@ internal constructor(
 
   private companion object {
     const val CATALOG_DIRECTORY = "device_catalog"
-    const val CATALOG_FILE = "catalog.v1.enc"
+    const val CATALOG_FILE = "catalog.json"
     const val MIN_SUPPORTED_CATALOG_SCHEMA_VERSION = 1
     const val CATALOG_SCHEMA_VERSION = 4
-    const val ENVELOPE_VERSION = 1
     const val MAX_CATALOG_BYTES = 16L * 1024L * 1024L
     const val MAX_DEVICE_COUNT = 1_000
     const val MAX_LOCAL_STATUS_COUNT = 32
@@ -913,15 +752,5 @@ internal constructor(
     const val MAX_LOCAL_DATA_POINT_VALUE_LENGTH = 8192
     const val MAX_SINGLE_LOCAL_POLL_DURATION_MILLIS = 30_000L
     const val MAX_LOCAL_POLL_DURATION_MILLIS = 120_000L
-    const val MIN_IV_BYTES = 12
-    const val MAX_IV_BYTES = 32
-    const val GCM_TAG_BITS = 128
-    const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
-    const val KEY_SIZE_BITS = 256
-    const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
-    const val KEY_ALIAS = "com.prfd.tinytuya.device_catalog.v1"
-    val MAGIC = byteArrayOf(0x54, 0x54, 0x59, 0x41)
-    val ASSOCIATED_DATA = "TinyTuyaAndroid:device-catalog:v1".toByteArray(StandardCharsets.UTF_8)
   }
 }

@@ -130,7 +130,7 @@ class AppViewModel(
         mutableState.value =
           AppUiState.Recovery(
             code = error.code,
-            message = error.message ?: "Encrypted device storage is unavailable.",
+            message = error.message ?: "Saved device catalog is unavailable.",
           )
       } catch (_: Exception) {
         mutableState.value =

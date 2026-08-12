@@ -25,7 +25,7 @@ This table is maintained alongside the built-in category registry and its nearby
 | Lights | Power, White/Color mode, brightness, color temperature, and validated HSV v2 color | Representative category `dj` bulb |
 | Covers | Open, stop, close, target position, and current position when independently mapped and observed | Synthetic fixtures only; no cover hardware claim |
 
-Every other device class is outside the MVP scope. Unsupported devices can remain in the encrypted
+Every other device class is outside the MVP scope. Unsupported devices can remain in the saved
 catalog so imports are non-destructive and the inventory can explain the limitation, but they cannot
 enter local status or write requests. This includes battery-powered sensors, gateway children,
 gateways, cameras, and locks.

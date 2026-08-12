@@ -9,8 +9,8 @@ import com.prfd.tinytuya.data.local.CloudCredentialStore
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
 import com.prfd.tinytuya.data.local.DeviceCatalogStore
 import com.prfd.tinytuya.data.local.EncryptedCloudCredentialStore
-import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
 import com.prfd.tinytuya.data.local.InMemoryCloudCredentialStore
+import com.prfd.tinytuya.data.local.JsonDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.data.python.CloudCredentials
 import com.prfd.tinytuya.data.python.CloudImportResult
@@ -275,7 +275,7 @@ class OnboardingViewModel(
             cloudImport =
               CloudImportUiState.Error(
                 code = error.code,
-                message = error.message ?: "Encrypted device storage is unavailable.",
+                message = error.message ?: "Saved device catalog is unavailable.",
               )
           )
         }
@@ -354,7 +354,7 @@ class OnboardingViewModel(
   companion object {
     fun factory(
       context: Context,
-      catalogStore: DeviceCatalogStore = EncryptedDeviceCatalogStore(context.applicationContext),
+      catalogStore: DeviceCatalogStore = JsonDeviceCatalogStore(context.applicationContext),
       credentialStore: CloudCredentialStore =
         EncryptedCloudCredentialStore(context.applicationContext),
     ): ViewModelProvider.Factory =

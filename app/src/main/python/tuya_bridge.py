@@ -248,14 +248,14 @@ def _parse_lan_input(network_json, known_devices_json):
 
     if not known_devices or len(known_devices) > LAN_MAX_DEVICE_COUNT:
         return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
-                                    "The encrypted device catalog is empty or too large.")
+                                    "The saved device catalog is empty or too large.")
 
     scanner_devices = []
     known_ids = set()
     for device in known_devices:
         if not isinstance(device, dict):
             return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
-                                        "The encrypted device catalog is invalid.")
+                                        "The saved device catalog is invalid.")
         device_id = str(device.get("id") or "").strip()
         name = str(device.get("name") or "").strip()
         mac = str(device.get("mac") or "").strip()
@@ -267,7 +267,7 @@ def _parse_lan_input(network_json, known_devices_json):
                 or device_id in known_ids
         ):
             return None, None, _failure("LAN_KNOWN_DEVICES_INVALID",
-                                        "The encrypted device catalog is invalid.")
+                                        "The saved device catalog is invalid.")
         known_ids.add(device_id)
         # TinyTuya uses this lookup to label broadcasts. Polling is disabled,
         # so local keys never need to cross this discovery boundary.

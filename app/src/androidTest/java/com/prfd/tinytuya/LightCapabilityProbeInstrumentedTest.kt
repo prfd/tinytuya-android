@@ -3,7 +3,7 @@ package com.prfd.tinytuya
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.prfd.tinytuya.data.lan.LocalDataPointKind
-import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
+import com.prfd.tinytuya.data.local.JsonDeviceCatalogStore
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -25,8 +25,7 @@ class LightCapabilityProbeInstrumentedTest {
   fun writeSanitizedLightCapabilityReportToTargetCache() = runBlocking {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val catalog =
-      EncryptedDeviceCatalogStore(context).load()
-        ?: error("The encrypted device catalog is unavailable.")
+      JsonDeviceCatalogStore(context).load() ?: error("The saved device catalog is unavailable.")
     val lights = catalog.devices.filter { device -> device.category.trim().lowercase() == "dj" }
     assertTrue("Expected one category-dj light.", lights.size == 1)
     val light = lights.single()

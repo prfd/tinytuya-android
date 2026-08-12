@@ -114,7 +114,6 @@ internal constructor(
             }
           }
           vaultDirectory.delete()
-          Unit
         } catch (_: Exception) {
           throw vaultError(
             code = "CREDENTIAL_VAULT_DELETE_FAILED",

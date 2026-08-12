@@ -50,7 +50,7 @@ Read these files in order:
 2. [AppScreen.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppScreen.kt) — the small top-level router which turns `AppUiState` into onboarding, inventory, loading, or recovery and layers the local Settings subdestination over a valid inventory.
 3. [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt) — the main application state machine. Initially read only the state types, `refreshCatalog`, `refreshKnownDevices`, `discoverLan`, and `submitControl`.
 4. [CloudImportModels.kt](app/src/main/java/com/prfd/tinytuya/data/python/CloudImportModels.kt) — cloud credentials, imported devices, and the deliberately redacted `SensitiveString`.
-5. [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) and [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — the separate encrypted security domains for Tuya Cloud credentials and locally usable device data. Initially read only their models and interfaces.
+5. [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) and [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) — the encrypted credential vault and the plaintext device-catalog store. Initially read only their models and interfaces.
 6. [LanDiscoveryModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LanDiscoveryModels.kt), [LocalStatusModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalStatusModels.kt), and [LocalControlModels.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalControlModels.kt) — the small typed vocabulary used by the coordinators and bridge.
 7. [TuyaPythonGateway.kt](app/src/main/java/com/prfd/tinytuya/data/python/TuyaPythonGateway.kt) — the Kotlin side of Chaquopy. Read its interface, the five public methods, and `parseResponse`; skip the detailed JSON fields on the first pass.
 8. [tuya_bridge.py](app/src/main/python/tuya_bridge.py) — the Python boundary. Read the module comment, `_success`, `_failure`, then only the five public functions: `health`, `import_cloud`, `discover_lan`, `poll_local`, and `set_values`.
@@ -79,7 +79,7 @@ Several lists coexist in `DeviceCatalog`. They are not duplicates:
 * **What it means:** The exact Wi-Fi network and discovery generation authorized for writes.
 * **Freshness rule:** Process-only; cleared on catalog reload, leaving inventory for onboarding, a new refresh/scan, deletion, or a default-network change.
 
-This split explains an important UI behavior: an old address can remain encrypted as history without
+This split explains an important UI behavior: an old address can remain saved as history without
 being treated as a device found by the latest scan. A control is available only when the saved
 discovery generation still belongs to the exact active Android network and a fresh status read has
 opened a matching control session in the current app process. A trustworthy saved address may reach
@@ -91,7 +91,7 @@ Follow this path without entering the large screen implementations:
 
 ```text
 MainActivity.onCreate
-  -> construct separate encrypted credential and device-catalog stores
+  -> construct the encrypted credential store and plaintext catalog store
   -> construct ChaquopyTuyaPythonGateway
   -> construct quick-refresh, discovery, status, and control coordinators
   -> obtain AppViewModel and OnboardingViewModel
@@ -131,7 +131,7 @@ CredentialsScreen
   -> normalized JSON envelope
   -> Kotlin response parsing into CloudImportResult
   -> EncryptedCloudCredentialStore.save after accepted newly entered credentials
-  -> EncryptedDeviceCatalogStore.replaceFromCloud
+  -> JsonDeviceCatalogStore.replaceFromCloud
   -> AppRoute asks AppViewModel to reload the catalog and run one post-import LAN discovery
 ```
 
@@ -151,7 +151,7 @@ Read in this order:
 5. In [tuya_bridge.py](app/src/main/python/tuya_bridge.py), read `_parse_cloud_input`, `_bounded_cloud_requests`, `_normalize_cloud_devices`, and `import_cloud`.
 6. Read [CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt), then return to [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) and read `replaceFromCloud`.
 
-The previous device list is sent back to TinyTuya during a sync so its cloud import can preserve useful device information. Cloud credentials are deliberately absent from the catalog API and live in a smaller ciphertext with a different file, schema, authenticated-data label, and Keystore alias.
+The previous device list is sent back to TinyTuya during a sync so its cloud import can preserve useful device information. Cloud credentials are deliberately absent from the catalog API and live in a separate encrypted vault with its own file, schema, authenticated-data label, and Keystore alias.
 
 Security details worth noticing:
 
@@ -201,7 +201,7 @@ Read:
 - `_parse_lan_input`, `_normalize_lan_devices`, and `discover_lan` in [tuya_bridge.py](app/src/main/python/tuya_bridge.py).
 - `mergeLanDiscovery` in [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt).
 
-The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. The encrypted catalog also saves Android's opaque network handle, which distinguishes two Wi-Fi networks even if both assign the phone the same private IP range. That makes an empty scan honestly show “not found” and a network change honestly require “Find devices” without immediately destroying useful encrypted history.
+The latest discovery timestamp is a generation marker. Records heard during that scan receive the new marker; retained older records do not. The saved catalog also saves Android's opaque network handle, which distinguishes two Wi-Fi networks even if both assign the phone the same private IP range. That makes an empty scan honestly show “not found” and a network change honestly require “Find devices” without immediately destroying useful saved history.
 
 ### Part B: poll current DPS values
 
@@ -357,13 +357,13 @@ DeviceLayoutHost
   -> DeviceIntent(device ID, semantic capability ID, semantic value)
   -> AppViewModel.submitControl
   -> DefaultLocalControlCoordinator.execute
-  -> reload the latest encrypted catalog and compare the Wi-Fi/discovery session
+  -> reload the latest saved catalog and compare the Wi-Fi/discovery session
   -> re-resolve the mapped + observed capability and encode a bounded primitive write
   -> TuyaPythonGateway.setLocalValues
   -> tuya_bridge.set_values
   -> send command, then read back current DPS
   -> Kotlin verifies the requested values are in a CONFIRMED result
-  -> merge the observed result into the encrypted catalog
+  -> merge the observed result into the saved catalog
   -> show confirmed state or observed rollback/error
 ```
 
@@ -387,7 +387,7 @@ There are checks at several levels on purpose. The ViewModel prevents conflictin
 
 Checkpoint: find the two mutexes involved in a write. One is per device in `DefaultLocalControlCoordinator`; the other serializes bridge operations in `ChaquopyTuyaPythonGateway`.
 
-## Pass 6: encrypted persistence
+## Pass 6: catalog persistence
 
 Return to [DeviceCatalogStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/DeviceCatalogStore.kt) only after the feature flows make sense.
 
@@ -396,15 +396,15 @@ Read it in this order:
 1. `DeviceCatalog`, `LanDeviceRecord`, and `LocalStatusRecord`.
 2. The `DeviceCatalogStore` interface and its four mutations.
 3. `loadLocked` and `writeCatalogLocked`.
-4. `encrypt`, `decrypt`, `writeAtomically`, and `keyForEncryption`.
+4. `writeAtomically`, `encodeCatalog`, and `decodeCatalog`.
 5. `encodeCatalog` and `decodeCatalog` only when you need the on-disk schema.
 6. The validation functions last.
 
-The full schema-v4 catalog is one authenticated ciphertext in `noBackupFilesDir`. A non-exportable Android Keystore AES-256 key protects it with GCM; authenticated associated data and envelope metadata prevent silent format substitution. `AtomicFile` prevents an interrupted write from replacing the last good catalog. The plaintext byte array is wiped after use.
+The full schema-v4 catalog is one plaintext JSON document in `noBackupFilesDir`. It is not encrypted; app sandboxing and the backup exclusions protect it. `AtomicFile` prevents an interrupted write from replacing the last good catalog.
 
-[CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) applies the same primitives to a much smaller, independent vault. Its decrypted model redacts both identifiers from `toString`, its UI-facing summary contains only the region and a masked Client ID, and deleting its ciphertext and key leaves the device catalog usable.
+[CloudCredentialStore.kt](app/src/main/java/com/prfd/tinytuya/data/local/CloudCredentialStore.kt) keeps credentials in a much smaller, independently encrypted vault. Its decrypted model redacts both identifiers from `toString`, its UI-facing summary contains only the region and a masked Client ID, and deleting its ciphertext and key leaves the device catalog usable.
 
-The encryption envelope version and the catalog schema version solve different problems. The former describes how bytes are encrypted; the latter describes the JSON fields inside the decrypted payload.
+The catalog schema version describes the JSON fields in the saved document. There is no separate envelope version now that the catalog is plaintext.
 
 Checkpoint: follow `forgetCloudCredentials` and verify that it removes only the credential ciphertext and key. Then follow `deleteAllLocalData` and verify that it attempts credential-vault, catalog, and preference deletion even if one store reports a failure.
 
@@ -442,7 +442,7 @@ or:
 - validates the shared envelope and local discovery/status/control responses, including counts, IDs,
   durations, DPS kinds, sizes, uniqueness, and confirmation semantics;
 - leaves cloud-device catalog limits and device-ID uniqueness validation to
-  `EncryptedDeviceCatalogStore`;
+  `JsonDeviceCatalogStore`;
 - converts Python failures into `PythonBridgeException` with stable codes.
 
 [tuya_bridge.py](app/src/main/python/tuya_bridge.py) is deliberately not Android architecture code. It:
@@ -468,7 +468,7 @@ After each production flow, read its nearest test instead of immediately reading
 | Onboarding state and credential lifecycle                    | [OnboardingViewModelInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingViewModelInstrumentedTest.kt) and [OnboardingScreenInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/OnboardingScreenInstrumentedTest.kt)                                                                                                                                                                                                                                                               |
 | Kotlin/Python validation                                     | [TuyaPythonGatewayInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/python/TuyaPythonGatewayInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                                 |
 | Encrypted credential vault and deletion                      | [EncryptedCloudCredentialStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedCloudCredentialStoreInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                          |
-| Encrypted catalog and recovery                               | [EncryptedDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/EncryptedDeviceCatalogStoreInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                              |
+| Catalog persistence and recovery                            | [JsonDeviceCatalogStoreInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/local/JsonDeviceCatalogStoreInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                              |
 | Discovery selection and merge                                | [LanDiscoveryCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LanDiscoveryCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                        |
 | Status eligibility                                           | [LocalStatusCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalStatusCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                          |
 | Write authorization and rollback                             | [LocalControlCoordinatorInstrumentedTest.kt](app/src/androidTest/java/com/prfd/tinytuya/data/lan/LocalControlCoordinatorInstrumentedTest.kt)                                                                                                                                                                                                                                                                                                                                                                        |
@@ -497,6 +497,6 @@ tests. The small tests under `app/src/test` cover app code which has no Android 
   before resolving observed capabilities.
 - **Gateway child** — a Zigbee/BLE-style child reached through a Tuya gateway, not a direct TCP 6668 device.
 - **Discovery generation** — the latest `lastDiscoveryAtEpochMillis` marker used to distinguish current addresses from history.
-- **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and encrypted storage and is never sent to Python or displayed.
+- **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and the saved catalog and is never sent to Python or displayed.
 - **Bridge envelope** — the versioned success/error JSON shared by Kotlin and Python.
-- **Catalog** — the encrypted local aggregate of imported identity, LAN observations, and local status.
+- **Catalog** — the saved local aggregate of imported identity, LAN observations, and local status.

@@ -57,7 +57,7 @@ fun CatalogRecoveryScreen(
           }
         }
         Text(
-          text = "Encrypted storage needs attention",
+          text = "Saved catalog needs attention",
           style = MaterialTheme.typography.headlineMedium,
           textAlign = TextAlign.Center,
           modifier = Modifier.padding(top = 24.dp),
@@ -71,7 +71,7 @@ fun CatalogRecoveryScreen(
         )
         Text(
           text =
-            "TinyTuya will not bypass a failed integrity check or silently replace your data. Reference · ${error.code}",
+            "TinyTuya will not silently replace unreadable local data. Reference · ${error.code}",
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           textAlign = TextAlign.Center,
@@ -100,7 +100,7 @@ fun CatalogRecoveryScreen(
       title = { Text("Start over with an empty catalog?") },
       text = {
         Text(
-          "This permanently removes the encrypted catalog and Keystore key. " +
+          "This permanently removes the saved device catalog. " +
             "You will need to import from Tuya again."
         )
       },

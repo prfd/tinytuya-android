@@ -16,7 +16,6 @@ import com.prfd.tinytuya.data.python.CloudImportedDevice
 import com.prfd.tinytuya.data.python.SensitiveString
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 import java.io.File
-import java.security.KeyStore
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -30,22 +29,19 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class EncryptedDeviceCatalogStoreInstrumentedTest {
+class JsonDeviceCatalogStoreInstrumentedTest {
   private lateinit var catalogDirectory: File
-  private lateinit var keyAlias: String
-  private lateinit var store: EncryptedDeviceCatalogStore
+  private lateinit var store: JsonDeviceCatalogStore
 
   @Before
   fun setUp() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val testId = UUID.randomUUID().toString()
     catalogDirectory = File(context.noBackupFilesDir, "catalog-test-$testId")
-    keyAlias = "com.prfd.tinytuya.test.catalog.$testId"
     store =
-      EncryptedDeviceCatalogStore(
+      JsonDeviceCatalogStore(
         context = context,
         catalogDirectory = catalogDirectory,
-        keyAlias = keyAlias,
         currentTimeMillis = { FIXED_IMPORT_TIME },
       )
   }
@@ -53,11 +49,10 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
   @After fun tearDown() = runBlocking { store.deleteAll() }
 
   @Test
-  fun roundTripKeepsAllDeviceDataInsideCiphertext() = runBlocking {
+  fun roundTripKeepsAllDeviceData() = runBlocking {
     val result = sampleImport()
 
     val saved = store.replaceFromCloud(result)
-    val rawBytes = store.catalogFile.readBytes()
     val loaded = store.load()
 
     assertEquals(FIXED_IMPORT_TIME, saved.importedAtEpochMillis)
@@ -66,9 +61,7 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         InstrumentationRegistry.getInstrumentation().targetContext.noBackupFilesDir.canonicalPath
       )
     )
-    assertFalse(rawBytes.containsSequence(DEVICE_ID.toByteArray()))
-    assertFalse(rawBytes.containsSequence(DEVICE_NAME.toByteArray()))
-    assertFalse(rawBytes.containsSequence(LOCAL_KEY.toByteArray()))
+    assertTrue(store.catalogFile.readText().startsWith("{"))
     assertNotNull(loaded)
     assertEquals(TuyaCloudRegion.CENTRAL_EUROPE, loaded?.region)
     assertEquals(1, loaded?.devices?.size)
@@ -78,34 +71,31 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
   }
 
   @Test
-  fun authenticatedEncryptionRejectsModifiedCiphertext() = runBlocking {
+  fun corruptedJsonIsReportedAsInvalid() = runBlocking {
     store.replaceFromCloud(sampleImport())
     val bytes = store.catalogFile.readBytes()
-    bytes[bytes.lastIndex] = (bytes.last().toInt() xor 0x01).toByte()
+    bytes[0] = 'x'.code.toByte()
     store.catalogFile.writeBytes(bytes)
 
     try {
       store.load()
-      throw AssertionError("Expected modified ciphertext to be rejected")
+      throw AssertionError("Expected corrupted JSON to be rejected")
     } catch (error: DeviceCatalogStorageException) {
-      assertEquals("CATALOG_DECRYPT_FAILED", error.code)
+      assertEquals("CATALOG_INVALID", error.code)
     }
   }
 
   @Test
-  fun lanDiscoveryRecordsAreMergedAndEncrypted() = runBlocking {
+  fun lanDiscoveryRecordsAreMergedAndPersisted() = runBlocking {
     store.replaceFromCloud(sampleImport())
 
     val merged = store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
-    val rawBytes = store.catalogFile.readBytes()
     val loaded = store.load()
 
     assertEquals(4, merged.schemaVersion)
     assertEquals(FIXED_IMPORT_TIME, merged.lastDiscoveryAtEpochMillis)
     assertEquals(NETWORK, merged.lastDiscoveryNetwork)
     assertEquals(2, merged.lanDevices.size)
-    assertFalse(rawBytes.containsSequence(LAN_IP.toByteArray()))
-    assertFalse(rawBytes.containsSequence(UNMATCHED_DEVICE_ID.toByteArray()))
     assertEquals(LAN_IP, loaded?.lanDevices?.first { it.id == DEVICE_ID }?.ip)
     assertEquals(NETWORK, loaded?.lastDiscoveryNetwork)
     assertEquals(
@@ -115,18 +105,16 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
   }
 
   @Test
-  fun localStatusIsMergedAndKeptInsideCiphertext() = runBlocking {
+  fun localStatusIsMergedAndPersisted() = runBlocking {
     store.replaceFromCloud(sampleImport())
     store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
 
     val merged = store.mergeLocalPoll(sampleLocalPoll())
-    val rawBytes = store.catalogFile.readBytes()
     val loaded = store.load()
 
     assertEquals(4, merged.schemaVersion)
     assertEquals(FIXED_IMPORT_TIME, merged.lastLocalPollAtEpochMillis)
     assertEquals(LocalPollDeviceState.RESPONDED, merged.localStatus.single().state)
-    assertFalse(rawBytes.containsSequence(SENSITIVE_DP_VALUE.toByteArray()))
     assertEquals(
       SENSITIVE_DP_VALUE,
       loaded?.localStatus?.single()?.dataPoints?.single()?.value,
@@ -207,15 +195,13 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
   }
 
   @Test
-  fun deleteAllRemovesCiphertextAndKeystoreEntry() = runBlocking {
+  fun deleteAllRemovesCatalogFile() = runBlocking {
     store.replaceFromCloud(sampleImport())
     assertTrue(store.catalogFile.exists())
-    assertTrue(androidKeyStore().containsAlias(keyAlias))
 
     store.deleteAll()
 
     assertFalse(store.catalogFile.exists())
-    assertFalse(androidKeyStore().containsAlias(keyAlias))
     assertNull(store.load())
   }
 
@@ -324,24 +310,14 @@ class EncryptedDeviceCatalogStoreInstrumentedTest {
         ),
     )
 
-  private fun androidKeyStore(): KeyStore =
-    KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-
-  private fun ByteArray.containsSequence(needle: ByteArray): Boolean {
-    if (needle.isEmpty() || needle.size > size) return false
-    return (0..size - needle.size).any { offset ->
-      needle.indices.all { index -> this[offset + index] == needle[index] }
-    }
-  }
-
   private companion object {
     const val FIXED_IMPORT_TIME = 1_753_981_200_000L
-    const val DEVICE_ID = "encrypted-device-id"
-    const val DEVICE_NAME = "Encrypted bedroom lamp"
+    const val DEVICE_ID = "device-id"
+    const val DEVICE_NAME = "Bedroom lamp"
     const val LOCAL_KEY = "private-local-key-value"
     const val LAN_IP = "192.0.2.14"
     const val UNMATCHED_DEVICE_ID = "unmatched-device-id"
-    const val SENSITIVE_DP_VALUE = "encrypted-local-status-value"
+    const val SENSITIVE_DP_VALUE = "local-status-value"
     val NETWORK =
       LanNetworkContext(
         interfaceName = "wlan0",

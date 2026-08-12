@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- Defense in depth for Android 11 and lower. The encrypted catalog is
+    <!-- Defense in depth for Android 11 and lower. The saved device catalog is
          already stored in noBackupFilesDir, which is excluded by the OS. -->
     <exclude domain="root" path="." />
     <exclude domain="file" path="." />

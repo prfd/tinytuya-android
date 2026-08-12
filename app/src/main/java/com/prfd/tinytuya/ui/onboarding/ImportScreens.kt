@@ -147,12 +147,9 @@ private fun errorTitle(code: String): String =
     "CLOUD_SUBSCRIPTION_INACTIVE" -> "Cloud service is inactive"
     "CLOUD_TIMEOUT" -> "Tuya took too long"
     "CLOUD_NETWORK_ERROR" -> "Could not reach Tuya"
-    "CATALOG_KEY_CREATE_FAILED",
-    "CATALOG_KEY_UNAVAILABLE" -> "Secure key unavailable"
     "CATALOG_WRITE_FAILED",
-    "CATALOG_ENCRYPT_FAILED" -> "Could not secure devices"
+    "CATALOG_TOO_LARGE" -> "Could not save devices"
     "CATALOG_READ_FAILED",
-    "CATALOG_DECRYPT_FAILED",
     "CATALOG_INVALID" -> "Local catalog needs attention"
     "CREDENTIAL_VAULT_KEY_CREATE_FAILED",
     "CREDENTIAL_VAULT_KEY_UNAVAILABLE" -> "Credential key unavailable"
@@ -206,7 +203,7 @@ internal fun SuccessScreen(
         if (result.deviceCount == 0) {
           "The project connected successfully and its credentials are encrypted on this device, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
         } else {
-          "The cloud handshake worked. Your cloud account and device catalog are encrypted locally with separate Android Keystore keys."
+          "The cloud handshake worked. Your cloud credentials are encrypted locally, and the device catalog is stored privately on this device."
         },
       style = MaterialTheme.typography.bodyLarge,
       color = MaterialTheme.colorScheme.onSurfaceVariant,

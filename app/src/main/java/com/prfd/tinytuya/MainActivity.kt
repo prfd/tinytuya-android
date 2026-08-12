@@ -13,7 +13,7 @@ import com.prfd.tinytuya.data.lan.DefaultLocalControlCoordinator
 import com.prfd.tinytuya.data.lan.DefaultLocalStatusCoordinator
 import com.prfd.tinytuya.data.local.AndroidAppSettingsStore
 import com.prfd.tinytuya.data.local.EncryptedCloudCredentialStore
-import com.prfd.tinytuya.data.local.EncryptedDeviceCatalogStore
+import com.prfd.tinytuya.data.local.JsonDeviceCatalogStore
 import com.prfd.tinytuya.data.python.ChaquopyTuyaPythonGateway
 import com.prfd.tinytuya.ui.app.AppRoute
 import com.prfd.tinytuya.ui.app.AppViewModel
@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    val catalogStore = EncryptedDeviceCatalogStore(applicationContext)
+    val catalogStore = JsonDeviceCatalogStore(applicationContext)
     val credentialStore = EncryptedCloudCredentialStore(applicationContext)
     val settingsStore = AndroidAppSettingsStore(applicationContext)
 

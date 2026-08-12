@@ -985,7 +985,7 @@ private fun LocalStatusPanel(
       when {
         isReadingStatus ->
           Text(
-            text = "Using the encrypted local key directly on this Wi-Fi.",
+            text = "Using the local key directly on this Wi-Fi.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
@@ -1374,7 +1374,7 @@ private fun lanErrorTitle(code: String): String =
     "LOCAL_POLL_DEVICES_INVALID" -> "Local status could not be read"
     "CATALOG_MISSING",
     "CATALOG_WRITE_FAILED",
-    "CATALOG_ENCRYPT_FAILED" -> "Discovery could not be saved"
+    "CATALOG_TOO_LARGE" -> "Discovery could not be saved"
     else -> "Local discovery did not complete"
   }
 

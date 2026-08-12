@@ -150,8 +150,7 @@ fun SettingsScreen(
       title = { Text("Delete all local data?") },
       text = {
         Text(
-          "This permanently removes the encrypted catalog, its Android Keystore key, " +
-            "app settings, and any saved Tuya Cloud credentials. " +
+          "This permanently removes the saved device catalog, app settings, and any saved Tuya Cloud credentials. " +
             "You will need to import from Tuya again."
         )
       },

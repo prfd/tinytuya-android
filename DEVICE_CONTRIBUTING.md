@@ -132,4 +132,4 @@ rollback at the generic coordinator boundary without adding a device-specific ga
 - [ ] A real-hardware claim names only behavior actually exercised on representative hardware. A
       screenshot proves presentation, not protocol compatibility.
 - [ ] Windows Gradle verification, in-place device installation, and the repository screenshot
-      workflow are completed without clearing encrypted app state.
+      workflow are completed without clearing saved app state.

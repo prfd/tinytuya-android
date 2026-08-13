@@ -75,17 +75,14 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 import com.prfd.tinytuya.device.ui.CompactDeviceLayoutHost
-import com.prfd.tinytuya.device.ui.CompactDeviceLayoutRendererRegistry
-import com.prfd.tinytuya.device.ui.CoverActionsCompactLayoutRenderer
 import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
 import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
 import com.prfd.tinytuya.device.ui.DeviceUiMapper
 import com.prfd.tinytuya.device.ui.DeviceUiModel
-import com.prfd.tinytuya.device.ui.GenericToggleCompactLayoutRenderer
+import com.prfd.tinytuya.device.ui.GenericDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.LightDeviceLayoutRenderer
-import com.prfd.tinytuya.device.ui.LightPowerCompactLayoutRenderer
 import com.prfd.tinytuya.device.ui.ToggleUiModel
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
@@ -99,15 +96,7 @@ private val inventoryDeviceLayoutRegistry =
     listOf(
       CoverDeviceLayoutRenderer,
       LightDeviceLayoutRenderer,
-    )
-  )
-
-private val inventoryCompactDeviceLayoutRegistry =
-  CompactDeviceLayoutRendererRegistry(
-    listOf(
-      GenericToggleCompactLayoutRenderer,
-      LightPowerCompactLayoutRenderer,
-      CoverActionsCompactLayoutRenderer,
+      GenericDeviceLayoutRenderer,
     )
   )
 
@@ -763,7 +752,7 @@ private fun CompactInventoryDeviceCard(
         Spacer(Modifier.width(10.dp))
         CompactDeviceLayoutHost(
           device = item.deviceUiModel,
-          registry = inventoryCompactDeviceLayoutRegistry,
+          registry = inventoryDeviceLayoutRegistry,
           controlState = control,
           onIntent = onIntent,
           modifier = Modifier.widthIn(max = 168.dp),

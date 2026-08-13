@@ -309,10 +309,13 @@ Then read the presentation pipeline:
   in `:device-core`, followed by
   [DeviceLayoutRenderers.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceLayoutRenderers.kt),
   [LightDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/LightDeviceLayoutRenderer.kt),
-  and [CoverDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/CoverDeviceLayoutRenderer.kt)
-  in `:device-ui` define stable arrangement hints, the explicit renderer/fallback contract, and the
-  reusable compound layouts.
-  A compound renderer consumes only safe capability IDs; all unconsumed capabilities remain atomic.
+  [CoverDeviceLayoutRenderer.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/CoverDeviceLayoutRenderer.kt),
+  and [DeviceCompactControls.kt](device-ui/src/main/java/com/prfd/tinytuya/device/ui/DeviceCompactControls.kt)
+  in `:device-ui` define stable arrangement hints and the single renderer/fallback contract with
+  full and compact surfaces. A compound renderer consumes only safe capability IDs; all
+  unconsumed capabilities remain atomic. Compact cards select through the same registry with
+  `CompactDeviceLayoutHost`; a renderer that rejects a device on the compact surface simply shows
+  no card controls.
 - [LocalDataPointInspection.kt](app/src/main/java/com/prfd/tinytuya/data/lan/LocalDataPointInspection.kt)
   builds the safe inspector from already bounded local-status data and the same normalized schema
   boundary; the app-side helper parses raw mapping JSON, while the `:device-ui` module does not.

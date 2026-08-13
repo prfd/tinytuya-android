@@ -13,19 +13,31 @@ import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 /**
  * Compile-time extension point for a genuinely different arrangement of known safe primitives.
  *
- * [prepare] is a non-composable, deterministic selection step returning the capabilities the layout
- * understands. Returning null, throwing, naming an absent capability, or returning an empty set
- * rejects the renderer and selects the generic atomic fallback. [Content] receives no schema, DPS
- * binding, transport, network, catalog, or secret-bearing model and may emit only semantic
- * [DeviceIntent] values.
+ * Every renderer implements both the full inventory surface and the compact card surface.
+ * [prepareFull] and [prepareCompact] are non-composable, deterministic selection steps; returning
+ * null, throwing, naming an absent capability, or returning an empty set rejects the renderer for
+ * that surface. A rejected full surface selects the generic atomic fallback; a rejected compact
+ * surface renders no compact controls. Content composables receive no schema, DPS binding,
+ * transport, network, catalog, or secret-bearing model and may emit only semantic [DeviceIntent]
+ * values.
  */
 interface DeviceLayoutRenderer {
   val layoutId: DeviceLayoutId
 
-  fun prepare(device: DeviceUiModel): Set<CapabilityId>?
+  fun prepareFull(device: DeviceUiModel): Set<CapabilityId>?
+
+  fun prepareCompact(device: DeviceUiModel): Set<CapabilityId>?
 
   @Composable
-  fun Content(
+  fun FullContent(
+    device: DeviceUiModel,
+    controlState: DeviceControlUiState,
+    onIntent: (DeviceIntent) -> Unit,
+    modifier: Modifier,
+  )
+
+  @Composable
+  fun CompactContent(
     device: DeviceUiModel,
     controlState: DeviceControlUiState,
     onIntent: (DeviceIntent) -> Unit,
@@ -42,12 +54,21 @@ class DeviceLayoutRendererRegistry(renderers: List<DeviceLayoutRenderer>) {
     require(byLayoutId.size == this.renderers.size) { "Device layout renderer IDs must be unique." }
   }
 
-  internal fun prepare(device: DeviceUiModel): PreparedDeviceLayout? {
+  internal fun prepareFull(device: DeviceUiModel): PreparedDeviceLayout? =
+    prepare(device) { renderer -> renderer.prepareFull(device) }
+
+  internal fun prepareCompact(device: DeviceUiModel): PreparedDeviceLayout? =
+    prepare(device) { renderer -> renderer.prepareCompact(device) }
+
+  private fun prepare(
+    device: DeviceUiModel,
+    select: (DeviceLayoutRenderer) -> Set<CapabilityId>?,
+  ): PreparedDeviceLayout? {
     val layoutId = device.layoutId ?: return null
     val renderer = byLayoutId[layoutId] ?: return null
     val availableIds = device.capabilities.mapTo(mutableSetOf()) { capability -> capability.id }
     val consumedIds =
-      runCatching { renderer.prepare(device)?.toSet() }
+      runCatching { select(renderer)?.toSet() }
         .getOrNull()
         ?.takeIf { ids -> ids.isNotEmpty() && ids.all(availableIds::contains) } ?: return null
     return PreparedDeviceLayout(renderer, consumedIds)
@@ -59,8 +80,8 @@ class DeviceLayoutRendererRegistry(renderers: List<DeviceLayoutRenderer>) {
 }
 
 /**
- * Renders a prepared compound/custom layout, then atomically renders capabilities it did not use.
- * Missing or rejected renderers render the complete generic capability list.
+ * Renders a prepared compound/custom full layout, then atomically renders capabilities it did not
+ * use. Missing or rejected renderers render the complete generic capability list.
  */
 @Composable
 fun DeviceLayoutHost(
@@ -70,16 +91,16 @@ fun DeviceLayoutHost(
   onIntent: (DeviceIntent) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val prepared = remember(device, registry) { registry.prepare(device) }
+  val prepared = remember(device, registry) { registry.prepareFull(device) }
   Column(modifier = modifier) {
-    if (prepared != null) {
-      prepared.renderer.Content(
+    prepared
+      ?.renderer
+      ?.FullContent(
         device = device,
         controlState = controlState,
         onIntent = onIntent,
         modifier = Modifier,
       )
-    }
     val consumedCapabilityIds = prepared?.consumedCapabilityIds.orEmpty()
     val remaining =
       device.capabilities.filter { capability -> capability.id !in consumedCapabilityIds }
@@ -97,18 +118,39 @@ fun DeviceLayoutHost(
   }
 }
 
+/**
+ * Renders the compact-card surface of a prepared renderer. Missing or rejected renderers render
+ * nothing, preserving the compact card's summary-only behavior.
+ */
+@Composable
+fun CompactDeviceLayoutHost(
+  device: DeviceUiModel,
+  registry: DeviceLayoutRendererRegistry,
+  controlState: DeviceControlUiState,
+  onIntent: (DeviceIntent) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val prepared = remember(device, registry) { registry.prepareCompact(device) } ?: return
+  prepared.renderer.CompactContent(
+    device = device,
+    controlState = controlState,
+    onIntent = onIntent,
+    modifier = modifier,
+  )
+}
+
 internal data class PreparedDeviceLayout(
   val renderer: DeviceLayoutRenderer,
   val consumedCapabilityIds: Set<CapabilityId>,
 )
 
-private fun List<CapabilityUiModel>.genericSectionTitle(): String? {
+internal fun List<CapabilityUiModel>.genericSectionTitle(): String? {
   if (isEmpty()) return null
   val writableCount = count(CapabilityUiModel::writable)
-  return when {
-    writableCount == 0 -> "At a glance"
-    writableCount == 1 && size == 1 -> "Control"
-    writableCount == size -> "Controls"
+  return when (writableCount) {
+    0 -> "At a glance"
+    1 if size == 1 -> "Control"
+    size -> "Controls"
     else -> "Controls and readings"
   }
 }

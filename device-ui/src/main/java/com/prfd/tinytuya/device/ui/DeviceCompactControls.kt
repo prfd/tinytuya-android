@@ -1,3 +1,4 @@
+/** Reusable compact controls and the compact-card surface of device layouts. */
 package com.prfd.tinytuya.device.ui
 
 import androidx.compose.foundation.BorderStroke
@@ -19,7 +20,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,88 +37,52 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
-import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 
-/** Safe, bounded layout contract for the everyday controls shown by a compact device card. */
-interface CompactDeviceLayoutRenderer {
-  val layoutId: DeviceLayoutId
-
-  fun prepare(device: DeviceUiModel): Set<CapabilityId>?
-
-  @Composable
-  fun Content(
-    device: DeviceUiModel,
-    controlState: DeviceControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-    modifier: Modifier,
-  )
-}
-
 /**
- * Explicit compact-renderer registry with the same fail-closed preparation rules as full layouts.
+ * Generic layout for ordinary profiles: the full surface renders every resolved capability as the
+ * standard atomic list, while the compact surface exposes only Boolean toggles.
  */
-class CompactDeviceLayoutRendererRegistry(renderers: List<CompactDeviceLayoutRenderer>) {
-  val renderers: List<CompactDeviceLayoutRenderer> = renderers.toList()
-  private val byLayoutId = this.renderers.associateBy(CompactDeviceLayoutRenderer::layoutId)
-
-  init {
-    require(byLayoutId.size == this.renderers.size) {
-      "Compact device layout renderer IDs must be unique."
-    }
-  }
-
-  internal fun prepare(device: DeviceUiModel): PreparedCompactDeviceLayout? {
-    val layoutId = device.layoutId ?: return null
-    val renderer = byLayoutId[layoutId] ?: return null
-    val availableIds = device.capabilities.mapTo(mutableSetOf()) { capability -> capability.id }
-    val consumedIds =
-      runCatching { renderer.prepare(device)?.toSet() }
-        .getOrNull()
-        ?.takeIf { ids -> ids.isNotEmpty() && ids.all(availableIds::contains) } ?: return null
-    return PreparedCompactDeviceLayout(renderer, consumedIds)
-  }
-
-  companion object {
-    val EMPTY = CompactDeviceLayoutRendererRegistry(emptyList())
-  }
-}
-
-@Composable
-fun CompactDeviceLayoutHost(
-  device: DeviceUiModel,
-  registry: CompactDeviceLayoutRendererRegistry,
-  controlState: DeviceControlUiState,
-  onIntent: (DeviceIntent) -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val prepared = remember(device, registry) { registry.prepare(device) } ?: return
-  prepared.renderer.Content(
-    device = device,
-    controlState = controlState,
-    onIntent = onIntent,
-    modifier = modifier,
-  )
-}
-
-/** Compact fallback for profiles whose everyday controls are one or more Boolean toggles. */
-object GenericToggleCompactLayoutRenderer : CompactDeviceLayoutRenderer {
+object GenericDeviceLayoutRenderer : DeviceLayoutRenderer {
   override val layoutId = StandardDeviceLayoutIds.GENERIC_CONTROLS
 
-  override fun prepare(device: DeviceUiModel): Set<CapabilityId>? =
+  override fun prepareFull(device: DeviceUiModel): Set<CapabilityId>? =
+    device.capabilities
+      .mapTo(linkedSetOf(), CapabilityUiModel::id)
+      .takeIf(Set<CapabilityId>::isNotEmpty)
+
+  override fun prepareCompact(device: DeviceUiModel): Set<CapabilityId>? =
     device.capabilities
       .filterIsInstance<ToggleUiModel>()
       .mapTo(linkedSetOf(), ToggleUiModel::id)
       .takeIf(Set<CapabilityId>::isNotEmpty)
 
   @Composable
-  override fun Content(
+  override fun FullContent(
     device: DeviceUiModel,
     controlState: DeviceControlUiState,
     onIntent: (DeviceIntent) -> Unit,
     modifier: Modifier,
   ) {
-    val capabilityIds = requireNotNull(prepare(device))
+    val capabilityIds = requireNotNull(prepareFull(device))
+    DeviceCapabilityList(
+      device = device,
+      controlState = controlState,
+      onIntent = onIntent,
+      modifier = modifier.padding(top = 16.dp),
+      capabilityIds = capabilityIds,
+      sectionTitle = device.capabilities.genericSectionTitle(),
+    )
+  }
+
+  @Composable
+  override fun CompactContent(
+    device: DeviceUiModel,
+    controlState: DeviceControlUiState,
+    onIntent: (DeviceIntent) -> Unit,
+    modifier: Modifier,
+  ) {
+    val capabilityIds = requireNotNull(prepareCompact(device))
     val toggles =
       device.capabilities.filterIsInstance<ToggleUiModel>().filter { capability ->
         capability.id in capabilityIds
@@ -134,82 +98,6 @@ object GenericToggleCompactLayoutRenderer : CompactDeviceLayoutRenderer {
           capability = capability,
           controlState = controlState,
           showLabel = toggles.size > 1,
-          onIntent = onIntent,
-        )
-      }
-    }
-  }
-}
-
-/** Compact light layout intentionally exposes only the semantic power capability. */
-object LightPowerCompactLayoutRenderer : CompactDeviceLayoutRenderer {
-  override val layoutId = StandardDeviceLayoutIds.LIGHT
-
-  override fun prepare(device: DeviceUiModel): Set<CapabilityId>? =
-    device.capabilities
-      .filterIsInstance<ToggleUiModel>()
-      .singleOrNull { capability -> capability.id == POWER_ID }
-      ?.let { capability -> setOf(capability.id) }
-
-  @Composable
-  override fun Content(
-    device: DeviceUiModel,
-    controlState: DeviceControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-    modifier: Modifier,
-  ) {
-    val capability =
-      requireNotNull(
-        device.capabilities.filterIsInstance<ToggleUiModel>().singleOrNull { toggle ->
-          toggle.id == POWER_ID
-        }
-      )
-    CompactToggleButton(
-      deviceId = device.deviceId,
-      capability = capability,
-      controlState = controlState,
-      showLabel = false,
-      onIntent = onIntent,
-      modifier = modifier,
-    )
-  }
-}
-
-/** Compact cover layout keeps the complete reviewed Open / Stop / Close safety vocabulary. */
-object CoverActionsCompactLayoutRenderer : CompactDeviceLayoutRenderer {
-  override val layoutId = StandardDeviceLayoutIds.COVER
-
-  override fun prepare(device: DeviceUiModel): Set<CapabilityId>? =
-    device.capabilities
-      .filterIsInstance<ActionGroupUiModel>()
-      .singleOrNull { capability -> capability.id == COVER_ACTIONS_ID }
-      ?.takeIf { capability -> capability.actions.size == 3 }
-      ?.let { capability -> setOf(capability.id) }
-
-  @Composable
-  override fun Content(
-    device: DeviceUiModel,
-    controlState: DeviceControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-    modifier: Modifier,
-  ) {
-    val capability =
-      requireNotNull(
-        device.capabilities.filterIsInstance<ActionGroupUiModel>().singleOrNull { actionGroup ->
-          actionGroup.id == COVER_ACTIONS_ID
-        }
-      )
-    Row(
-      modifier = modifier.horizontalScroll(rememberScrollState()),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-      verticalAlignment = Alignment.Top,
-    ) {
-      capability.actions.forEach { action ->
-        CompactActionButton(
-          deviceId = device.deviceId,
-          capability = capability,
-          action = action,
-          controlState = controlState,
           onIntent = onIntent,
         )
       }
@@ -294,7 +182,7 @@ fun CompactToggleButton(
 }
 
 @Composable
-private fun CompactActionButton(
+internal fun CompactActionButton(
   deviceId: String,
   capability: ActionGroupUiModel,
   action: ChoiceUiOption,
@@ -379,11 +267,6 @@ private fun CompactPowerIcon(modifier: Modifier = Modifier) {
   }
 }
 
-internal data class PreparedCompactDeviceLayout(
-  val renderer: CompactDeviceLayoutRenderer,
-  val consumedCapabilityIds: Set<CapabilityId>,
-)
-
 private val ChoiceUiOption.compactSymbol: String
   get() =
     when (label.lowercase()) {
@@ -399,6 +282,4 @@ private fun compactToggleTag(id: CapabilityId): String =
 private fun compactActionTag(label: String): String =
   "compact_action_${label.lowercase().replace(' ', '_')}"
 
-private val POWER_ID = CapabilityId("power")
-private val COVER_ACTIONS_ID = CapabilityId("cover.actions")
 private val COMPACT_CONTROL_SIZE = 48.dp

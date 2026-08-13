@@ -14,9 +14,10 @@ needs app transport, persistence, Python, or secret models is proposing a new ar
 
 1. **Known primitives, standard layout:** add a family definition, capability specs, registration,
    and fixtures. This is the ordinary path.
-2. **Known primitives, different arrangement:** do the above and add one safe `DeviceLayoutRenderer`,
-   its explicit app registration, accessibility semantics, and Compose tests. The complete atomic
-   fallback must remain useful when the renderer is removed.
+2. **Known primitives, different arrangement:** do the above and add one safe `DeviceLayoutRenderer`
+   implementing both the full and compact surfaces, one explicit app registration entry,
+   accessibility semantics, and Compose tests. The complete atomic fallback must remain useful when
+   the renderer is removed.
 3. **New semantics:** propose a bounded core model, codec, authorization rules, confirmation policy,
    privacy review, and reusable UI before writing device-specific code.
 

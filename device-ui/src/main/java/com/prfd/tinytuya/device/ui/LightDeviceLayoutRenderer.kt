@@ -53,7 +53,7 @@ import kotlin.math.sin
 object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
   override val layoutId = StandardDeviceLayoutIds.LIGHT
 
-  override fun prepare(device: DeviceUiModel): Set<CapabilityId>? {
+  override fun prepareFull(device: DeviceUiModel): Set<CapabilityId>? {
     val power = device.capability<ToggleUiModel>(POWER_ID) ?: return null
     val mode = device.capability<ChoiceUiModel>(MODE_ID) ?: return null
     val modeValues = mode.choices.mapTo(mutableSetOf()) { choice -> choice.wireValue }
@@ -70,7 +70,7 @@ object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
   }
 
   @Composable
-  override fun Content(
+  override fun FullContent(
     device: DeviceUiModel,
     controlState: DeviceControlUiState,
     onIntent: (DeviceIntent) -> Unit,
@@ -176,6 +176,36 @@ object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
       }
       LightControlFeedback(device.deviceId, controlState)
     }
+  }
+
+  /** Compact light layout intentionally exposes only the semantic power capability. */
+  override fun prepareCompact(device: DeviceUiModel): Set<CapabilityId>? =
+    device.capabilities
+      .filterIsInstance<ToggleUiModel>()
+      .singleOrNull { capability -> capability.id == POWER_ID }
+      ?.let { capability -> setOf(capability.id) }
+
+  @Composable
+  override fun CompactContent(
+    device: DeviceUiModel,
+    controlState: DeviceControlUiState,
+    onIntent: (DeviceIntent) -> Unit,
+    modifier: Modifier,
+  ) {
+    val capability =
+      requireNotNull(
+        device.capabilities.filterIsInstance<ToggleUiModel>().singleOrNull { toggle ->
+          toggle.id == POWER_ID
+        }
+      )
+    CompactToggleButton(
+      deviceId = device.deviceId,
+      capability = capability,
+      controlState = controlState,
+      showLabel = false,
+      onIntent = onIntent,
+      modifier = modifier,
+    )
   }
 }
 

@@ -16,8 +16,7 @@ object BuiltinDeviceFamilyIds {
 
 /**
  * Built-in device families selected exclusively by the normalized category imported from Tuya
- * Cloud. Outlet and Light devices have representative hardware evidence; Cover devices currently
- * have synthetic coverage only. Detailed public claims live in `SUPPORTED_DEVICES.md`.
+ * Cloud. Detailed public claims live in `SUPPORTED_DEVICES.md`.
  */
 object BuiltinDeviceFamilies {
   val definitions: List<DeviceFamilyDefinition> =

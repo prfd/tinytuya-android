@@ -16,7 +16,6 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.core.profile.DeviceIdentity
 import com.prfd.tinytuya.device.core.profile.DevicePresentation
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
-import com.prfd.tinytuya.device.core.schema.DpSchema
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 
 /** App adapter over the final profile, policy, and resolved-capability model. */

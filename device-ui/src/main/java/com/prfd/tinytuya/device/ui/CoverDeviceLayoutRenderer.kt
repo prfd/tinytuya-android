@@ -1,7 +1,12 @@
 package com.prfd.tinytuya.device.ui
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.prfd.tinytuya.device.core.capability.CapabilityId
@@ -12,7 +17,7 @@ import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
 object CoverDeviceLayoutRenderer : DeviceLayoutRenderer {
   override val layoutId = StandardDeviceLayoutIds.COVER
 
-  override fun prepare(device: DeviceUiModel): Set<CapabilityId>? = buildSet {
+  override fun prepareFull(device: DeviceUiModel): Set<CapabilityId>? = buildSet {
     device.capability<ActionGroupUiModel>(ACTIONS_ID)?.let { capability -> add(capability.id) }
     device.capability<RangeUiModel>(POSITION_ID)?.let { capability -> add(capability.id) }
     device.capability<MeasurementUiModel>(POSITION_READING_ID)?.let { capability ->
@@ -22,13 +27,13 @@ object CoverDeviceLayoutRenderer : DeviceLayoutRenderer {
     .takeIf(Set<CapabilityId>::isNotEmpty)
 
   @Composable
-  override fun Content(
+  override fun FullContent(
     device: DeviceUiModel,
     controlState: DeviceControlUiState,
     onIntent: (DeviceIntent) -> Unit,
     modifier: Modifier,
   ) {
-    val capabilityIds = requireNotNull(prepare(device))
+    val capabilityIds = requireNotNull(prepareFull(device))
     val hasWritableControl =
       device.capabilities.any { capability ->
         capability.id in capabilityIds && capability.writable
@@ -41,6 +46,44 @@ object CoverDeviceLayoutRenderer : DeviceLayoutRenderer {
       capabilityIds = capabilityIds,
       sectionTitle = if (hasWritableControl) "Cover controls" else "Cover position",
     )
+  }
+
+  /** Compact cover layout keeps the complete reviewed Open / Stop / Close safety vocabulary. */
+  override fun prepareCompact(device: DeviceUiModel): Set<CapabilityId>? =
+    device.capabilities
+      .filterIsInstance<ActionGroupUiModel>()
+      .singleOrNull { capability -> capability.id == ACTIONS_ID }
+      ?.takeIf { capability -> capability.actions.size == 3 }
+      ?.let { capability -> setOf(capability.id) }
+
+  @Composable
+  override fun CompactContent(
+    device: DeviceUiModel,
+    controlState: DeviceControlUiState,
+    onIntent: (DeviceIntent) -> Unit,
+    modifier: Modifier,
+  ) {
+    val capability =
+      requireNotNull(
+        device.capabilities.filterIsInstance<ActionGroupUiModel>().singleOrNull { actionGroup ->
+          actionGroup.id == ACTIONS_ID
+        }
+      )
+    Row(
+      modifier = modifier.horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.Top,
+    ) {
+      capability.actions.forEach { action ->
+        CompactActionButton(
+          deviceId = device.deviceId,
+          capability = capability,
+          action = action,
+          controlState = controlState,
+          onIntent = onIntent,
+        )
+      }
+    }
   }
 }
 

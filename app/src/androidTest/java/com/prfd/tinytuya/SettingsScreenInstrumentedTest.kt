@@ -44,8 +44,8 @@ class SettingsScreenInstrumentedTest {
     composeRule
       .onNodeWithText("goes straight to the saved devices", substring = true)
       .assertExists()
-    composeRule.onNodeWithText("never signs in to Tuya Cloud", substring = true).assertExists()
-    composeRule.onNodeWithText("hidden background service", substring = true).assertExists()
+    composeRule.onNodeWithText("reads their status", substring = true).assertExists()
+    composeRule.onNodeWithText("keep both actions manual", substring = true).assertExists()
   }
 
   @Test

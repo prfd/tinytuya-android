@@ -103,6 +103,13 @@ android {
     }
 }
 
+
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility")
+    }
+}
+
 chaquopy {
     defaultConfig {
         version = "3.11"

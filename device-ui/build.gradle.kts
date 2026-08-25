@@ -26,6 +26,12 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility")
+    }
+}
+
 ktfmt {
     googleStyle()
     maxWidth.set(100)

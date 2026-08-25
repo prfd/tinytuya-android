@@ -13,6 +13,7 @@ java {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_11)
+        freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility")
     }
 }
 

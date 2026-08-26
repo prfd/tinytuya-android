@@ -75,15 +75,15 @@ import com.prfd.tinytuya.device.core.profile.DeviceFamilyId
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilies
 import com.prfd.tinytuya.device.profiles.BuiltinDeviceFamilyIds
 import com.prfd.tinytuya.device.ui.CompactDeviceLayoutHost
-import com.prfd.tinytuya.device.ui.CoverDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.DeviceControlUiState as LocalControlUiState
 import com.prfd.tinytuya.device.ui.DeviceLayoutHost
 import com.prfd.tinytuya.device.ui.DeviceLayoutRendererRegistry
 import com.prfd.tinytuya.device.ui.DeviceUiMapper
 import com.prfd.tinytuya.device.ui.DeviceUiModel
-import com.prfd.tinytuya.device.ui.GenericDeviceLayoutRenderer
-import com.prfd.tinytuya.device.ui.LightDeviceLayoutRenderer
 import com.prfd.tinytuya.device.ui.ToggleUiModel
+import com.prfd.tinytuya.device.ui.layouts.CoverDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.layouts.GenericDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.layouts.LightDeviceLayoutRenderer
 import com.prfd.tinytuya.ui.app.LanDiscoveryUiState
 import com.prfd.tinytuya.ui.app.LocalRefreshPhase
 import com.prfd.tinytuya.ui.components.BrandMark

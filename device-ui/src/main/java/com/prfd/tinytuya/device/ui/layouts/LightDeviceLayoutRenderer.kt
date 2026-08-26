@@ -1,4 +1,4 @@
-package com.prfd.tinytuya.device.ui
+package com.prfd.tinytuya.device.ui.layouts
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -42,6 +42,17 @@ import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.capability.TuyaHsvColor
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
+import com.prfd.tinytuya.device.ui.CapabilityUiModel
+import com.prfd.tinytuya.device.ui.ChoiceUiModel
+import com.prfd.tinytuya.device.ui.ColorUiModel
+import com.prfd.tinytuya.device.ui.CompactToggleButton
+import com.prfd.tinytuya.device.ui.DeviceCapabilityList
+import com.prfd.tinytuya.device.ui.DeviceControlUiState
+import com.prfd.tinytuya.device.ui.DeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.DeviceUiModel
+import com.prfd.tinytuya.device.ui.MeasurementUiModel
+import com.prfd.tinytuya.device.ui.RangeUiModel
+import com.prfd.tinytuya.device.ui.ToggleUiModel
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -49,7 +60,7 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Current reusable compound arrangement for first-release Tuya HSV lights. */
+/** Current reusable compound arrangement for Tuya HSV lights. */
 object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
   override val layoutId = StandardDeviceLayoutIds.LIGHT
 
@@ -61,6 +72,7 @@ object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
     return buildSet {
       add(power.id)
       add(mode.id)
+      // Optional capabilities, not sure if it's a good idea
       device.capability<RangeUiModel>(BRIGHTNESS_ID)?.let { add(it.id) }
       device.capability<RangeUiModel>(TEMPERATURE_ID)?.let { add(it.id) }
       device.capability<ColorUiModel>(COLOR_ID)?.let { add(it.id) }
@@ -78,6 +90,7 @@ object LightDeviceLayoutRenderer : DeviceLayoutRenderer {
   ) {
     val power = requireNotNull(device.capability<ToggleUiModel>(POWER_ID))
     val mode = requireNotNull(device.capability<ChoiceUiModel>(MODE_ID))
+    // Render generic power button
     DeviceCapabilityList(
       device = device,
       controlState = controlState,
@@ -243,7 +256,6 @@ private fun LightRangeSlider(
   LaunchedEffect(capability.currentValue, pending) {
     if (!pending) progress = capability.progressFor(capability.currentValue)
   }
-  val alignedValue = capability.valueFor(progress)
   val percentage = (progress * 100f).roundToInt().coerceIn(0, 100)
   Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
     Row(

@@ -21,6 +21,9 @@ import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
+import com.prfd.tinytuya.device.ui.layouts.CoverDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.layouts.GenericDeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.layouts.LightDeviceLayoutRenderer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -558,7 +561,7 @@ class DeviceLayoutRenderersInstrumentedTest {
         listOf(
           GenericDeviceLayoutRenderer,
           LightDeviceLayoutRenderer,
-          CoverDeviceLayoutRenderer,
+            CoverDeviceLayoutRenderer,
         )
       )
     composeRule.setContent {

@@ -4,14 +4,10 @@ package com.prfd.tinytuya.device.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,73 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
-import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
-
-/**
- * Generic layout for ordinary profiles: the full surface renders every resolved capability as the
- * standard atomic list, while the compact surface exposes only Boolean toggles.
- */
-object GenericDeviceLayoutRenderer : DeviceLayoutRenderer {
-  override val layoutId = StandardDeviceLayoutIds.GENERIC_CONTROLS
-
-  override fun prepareFull(device: DeviceUiModel): Set<CapabilityId>? =
-    device.capabilities
-      .mapTo(linkedSetOf(), CapabilityUiModel::id)
-      .takeIf(Set<CapabilityId>::isNotEmpty)
-
-  override fun prepareCompact(device: DeviceUiModel): Set<CapabilityId>? =
-    device.capabilities
-      .filterIsInstance<ToggleUiModel>()
-      .mapTo(linkedSetOf(), ToggleUiModel::id)
-      .takeIf(Set<CapabilityId>::isNotEmpty)
-
-  @Composable
-  override fun FullContent(
-    device: DeviceUiModel,
-    controlState: DeviceControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-    modifier: Modifier,
-  ) {
-    val capabilityIds = requireNotNull(prepareFull(device))
-    DeviceCapabilityList(
-      device = device,
-      controlState = controlState,
-      onIntent = onIntent,
-      modifier = modifier.padding(top = 16.dp),
-      capabilityIds = capabilityIds,
-      sectionTitle = device.capabilities.genericSectionTitle(),
-    )
-  }
-
-  @Composable
-  override fun CompactContent(
-    device: DeviceUiModel,
-    controlState: DeviceControlUiState,
-    onIntent: (DeviceIntent) -> Unit,
-    modifier: Modifier,
-  ) {
-    val capabilityIds = requireNotNull(prepareCompact(device))
-    val toggles =
-      device.capabilities.filterIsInstance<ToggleUiModel>().filter { capability ->
-        capability.id in capabilityIds
-      }
-    Row(
-      modifier = modifier.horizontalScroll(rememberScrollState()),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-      verticalAlignment = Alignment.Top,
-    ) {
-      toggles.forEach { capability ->
-        CompactToggleButton(
-          deviceId = device.deviceId,
-          capability = capability,
-          controlState = controlState,
-          showLabel = toggles.size > 1,
-          onIntent = onIntent,
-        )
-      }
-    }
-  }
-}
 
 @Composable
 fun CompactToggleButton(

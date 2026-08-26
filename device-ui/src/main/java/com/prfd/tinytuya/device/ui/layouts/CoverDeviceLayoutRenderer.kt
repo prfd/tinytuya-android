@@ -1,4 +1,4 @@
-package com.prfd.tinytuya.device.ui
+package com.prfd.tinytuya.device.ui.layouts
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +12,15 @@ import androidx.compose.ui.unit.dp
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.DeviceIntent
 import com.prfd.tinytuya.device.core.profile.StandardDeviceLayoutIds
+import com.prfd.tinytuya.device.ui.ActionGroupUiModel
+import com.prfd.tinytuya.device.ui.CapabilityUiModel
+import com.prfd.tinytuya.device.ui.CompactActionButton
+import com.prfd.tinytuya.device.ui.DeviceCapabilityList
+import com.prfd.tinytuya.device.ui.DeviceControlUiState
+import com.prfd.tinytuya.device.ui.DeviceLayoutRenderer
+import com.prfd.tinytuya.device.ui.DeviceUiModel
+import com.prfd.tinytuya.device.ui.MeasurementUiModel
+import com.prfd.tinytuya.device.ui.RangeUiModel
 
 /** Reusable cover arrangement composed entirely from action, range, and measurement primitives. */
 object CoverDeviceLayoutRenderer : DeviceLayoutRenderer {

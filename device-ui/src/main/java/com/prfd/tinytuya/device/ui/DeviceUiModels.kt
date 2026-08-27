@@ -13,6 +13,7 @@ import com.prfd.tinytuya.device.core.capability.ResolvedSafeText
 import com.prfd.tinytuya.device.core.capability.ResolvedToggle
 import com.prfd.tinytuya.device.core.profile.DeviceLayoutId
 
+/** Safe, display-oriented model of a single device capability shown by a layout. */
 sealed interface CapabilityUiModel {
   val id: CapabilityId
   val label: String

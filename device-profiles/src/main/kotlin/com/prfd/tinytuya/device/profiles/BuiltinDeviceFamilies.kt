@@ -14,6 +14,15 @@ object BuiltinDeviceFamilyIds {
   val COVER = DeviceFamilyId("cover")
 }
 
+private class DeclarativeDeviceFamily(
+  override val id: DeviceFamilyId,
+  override val presentation: DevicePresentation,
+  override val categories: Set<String>,
+) : DeviceFamilyDefinition {
+  override fun capabilitySpecs(schema: DpSchema): List<CapabilitySpec> =
+    BuiltinCapabilitySpecs.forFamily(id, schema)
+}
+
 /**
  * Built-in device families selected exclusively by the normalized category imported from Tuya
  * Cloud. Detailed public claims live in `SUPPORTED_DEVICES.md`.
@@ -57,13 +66,4 @@ object BuiltinDeviceFamilies {
     )
 
   val registry = DeviceFamilyRegistry(definitions)
-}
-
-private class DeclarativeDeviceFamily(
-  override val id: DeviceFamilyId,
-  override val presentation: DevicePresentation,
-  override val categories: Set<String>,
-) : DeviceFamilyDefinition {
-  override fun capabilitySpecs(schema: DpSchema): List<CapabilitySpec> =
-    BuiltinCapabilitySpecs.forFamily(id, schema)
 }

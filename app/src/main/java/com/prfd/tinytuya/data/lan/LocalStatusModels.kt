@@ -33,6 +33,12 @@ data class LocalPollRequest(
   val devices: List<LocalPollDevice>,
 )
 
+/**
+ * One normalized Tuya data point (DP) reported by a device over the local network.
+ *
+ * A device's `dps` dict arrives from TinyTuya as raw DP id/value pairs and is normalized before
+ * crossing the bridge: [id] is the numeric DP id as a string.
+ */
 data class LocalDataPoint(
   val id: String,
   val kind: LocalDataPointKind,

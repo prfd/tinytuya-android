@@ -1,15 +1,27 @@
 package com.prfd.tinytuya.device.core.capability
 
-/** Primitive kinds accepted from a platform-specific local-status adapter. */
+/**
+ * The primitive value kinds a platform-specific local-status adapter may declare for one observed
+ * DP value.
+ */
 enum class ObservedDataPointKind {
   BOOLEAN,
   INTEGER,
   DECIMAL,
   STRING,
+  /** An opaque structured payload (for example JSON) passed through without structural parsing. */
   STRUCTURED,
+  /** An explicitly absent value whose normalized string representation is empty. */
   NULL,
 }
 
+/**
+ * Unvalidated raw input for one observed DP value, supplied by a platform-specific adapter.
+ *
+ * [DeviceObservation.normalize] is the only consumer and performs all ID, value, and size checks;
+ * constructing this class validates nothing. [id] is the DP ID as a string, [kind] is the
+ * adapter-declared primitive kind, and [value] is the raw text that must match that kind.
+ */
 class ObservedDataPointInput(
   val id: String,
   val kind: ObservedDataPointKind,
@@ -18,6 +30,11 @@ class ObservedDataPointInput(
   override fun toString(): String = "ObservedDataPointInput(id=$id, kind=$kind, value=[REDACTED])"
 }
 
+/**
+ * A validated, immutable observed DP value inside a [DeviceObservation].
+ *
+ * Instances are created only by [DeviceObservation.normalize].
+ */
 class ObservedDataPoint
 internal constructor(
   val id: String,
@@ -28,11 +45,17 @@ internal constructor(
 }
 
 /**
- * A bounded, adapter-neutral DPS snapshot.
+ * An immutable, bounded, adapter-neutral snapshot of one device's local observed DP values.
  *
- * Freshness is supplied by the application, which owns discovery and polling timestamps. Device
- * profiles never receive this object. Duplicate IDs invalidate that ID, and an oversized snapshot
- * is rejected as a whole so input ordering cannot affect authorization.
+ * [normalize] is the fail-closed boundary between platform-specific status adapters and the pure
+ * capability core. Freshness is not computed here: the application supplies [isFresh] from its own
+ * discovery and polling timestamps, and [CapabilityResolver] refuses stale observations. Device
+ * profiles never receive this object.
+ *
+ * A snapshot keeps at most [MAX_DATA_POINT_COUNT] points. More input rejects the whole snapshot via
+ * [rejectedAsOversized], so a malformed payload cannot decide which subset becomes writable.
+ * Duplicate IDs invalidate that ID, while individually malformed values are dropped; valid points
+ * remain usable.
  */
 class DeviceObservation
 private constructor(
@@ -40,20 +63,32 @@ private constructor(
   val isFresh: Boolean,
   val rejectedAsOversized: Boolean,
 ) {
+  /** The accepted data points, sorted by numeric DP ID. */
   val dataPoints: List<ObservedDataPoint> = dataPoints.toList()
+
   private val dataPointsById = this.dataPoints.associateBy(ObservedDataPoint::id)
 
+  /** Returns the validated point for [id], or `null` when it is absent, invalid, or duplicated. */
   operator fun get(id: String): ObservedDataPoint? = dataPointsById[id]
 
   companion object {
+    /** Maximum number of data points accepted from a single adapter snapshot. */
     const val MAX_DATA_POINT_COUNT = 256
+
+    /** Maximum raw string length accepted for any observed value. */
     const val MAX_VALUE_LENGTH = 4_096
+
     private const val MAX_DATA_POINT_ID_LENGTH = 8
 
     private val DATA_POINT_ID = Regex("[0-9]+")
     private val INTEGER = Regex("-?[0-9]+")
     private val DECIMAL = Regex("-?[0-9]+(?:\\.[0-9]+)?")
 
+    /**
+     * Returns an empty snapshot with no data points and the given freshness flag.
+     *
+     * The default [isFresh] is `false`, matching the common case of "no usable observation".
+     */
     fun empty(isFresh: Boolean = false): DeviceObservation =
       DeviceObservation(
         dataPoints = emptyList(),
@@ -61,6 +96,7 @@ private constructor(
         rejectedAsOversized = false,
       )
 
+    /** Validates raw adapter inputs into an immutable, sorted [DeviceObservation]. */
     fun normalize(
       inputs: Iterable<ObservedDataPointInput>,
       isFresh: Boolean,

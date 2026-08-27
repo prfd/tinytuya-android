@@ -5,20 +5,30 @@ import com.prfd.tinytuya.device.core.schema.DpDefinition
 import com.prfd.tinytuya.device.core.schema.DpSchema
 import java.math.BigDecimal
 
-/** The only component allowed to construct resolved capabilities. */
 object CapabilityResolver {
   const val MAX_CAPABILITY_COUNT = 64
 
+  /**
+   * Resolves the family's [specs] into concrete [ResolvedCapability] instances by pairing each
+   * spec's candidate DP codes with the imported cloud [DpSchema] and the latest local
+   * [DeviceObservation].
+   *
+   * Resolution fails closed: when [access] is denied, the schema or observation is unusable (empty
+   * or oversized), the observation is stale, or the specs are malformed, the result is
+   * [ResolvedDeviceCapabilities.EMPTY]. Individual specs that cannot be matched to a schema
+   * definition, an observed data point, and a valid value are omitted rather than failing the whole
+   * device.
+   */
   fun resolve(
     specs: List<CapabilitySpec>,
-    schema: DpSchema,
+    dpSchema: DpSchema,
     observation: DeviceObservation,
     access: CapabilityAccess,
   ): ResolvedDeviceCapabilities {
     if (
       access == CapabilityAccess.DENIED ||
-        schema.isEmpty ||
-        schema.rejectedAsOversized ||
+        dpSchema.isEmpty ||
+        dpSchema.rejectedAsOversized ||
         !observation.isFresh ||
         observation.rejectedAsOversized ||
         specs.size > MAX_CAPABILITY_COUNT ||
@@ -29,18 +39,18 @@ object CapabilityResolver {
 
     return ResolvedDeviceCapabilities(
       specs.mapNotNull { spec ->
-        runCatching { resolveOne(spec, schema, observation, access) }.getOrNull()
+        runCatching { resolveOne(spec, dpSchema, observation, access) }.getOrNull()
       }
     )
   }
 
   private fun resolveOne(
     spec: CapabilitySpec,
-    schema: DpSchema,
+    dpSchema: DpSchema,
     observation: DeviceObservation,
     access: CapabilityAccess,
   ): ResolvedCapability? {
-    val definition = selectDefinition(spec.codeCandidates, schema) ?: return null
+    val definition = selectDefinition(spec.codeCandidates, dpSchema) ?: return null
     val point = observation[definition.id] ?: return null
     val code = definition.code ?: return null
     val writable = spec.writable && access == CapabilityAccess.READ_WRITE
@@ -276,9 +286,9 @@ object CapabilityResolver {
     return ResolvedSafeText(spec.id, spec.label, definition.id, code, value)
   }
 
-  private fun selectDefinition(codes: List<String>, schema: DpSchema): DpDefinition? {
+  private fun selectDefinition(codes: List<String>, dpSchema: DpSchema): DpDefinition? {
     codes.forEach { code ->
-      val matches = schema.definitions.filter { definition -> definition.code == code }
+      val matches = dpSchema.definitions.filter { definition -> definition.code == code }
       if (matches.size > 1) return null
       if (matches.size == 1) return matches.single()
     }

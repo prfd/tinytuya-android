@@ -8,6 +8,20 @@ enum class CapabilityAccess {
   READ_WRITE,
 }
 
+/**
+ * A concrete capability resolved from a family capability spec, the imported cloud DP schema, and a
+ * matching local DP observation.
+ *
+ * Implementations are produced by [CapabilityResolver] and expose a display-safe model plus the
+ * exact Tuya mapping metadata needed to identify the backing data point.
+ *
+ * @property id Stable capability identifier used by UI, intents, and authorization.
+ * @property label User-facing capability name supplied by the device family.
+ * @property dataPointId Numeric Tuya DP id that backs this capability.
+ * @property code Tuya DP mapping code for the backing data point.
+ * @property writable Whether a control command may target this capability, derived from both the
+ *   capability spec and the applied access policy.
+ */
 sealed interface ResolvedCapability {
   val id: CapabilityId
   val label: String

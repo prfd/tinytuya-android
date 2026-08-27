@@ -2,7 +2,14 @@ package com.prfd.tinytuya.device.core.schema
 
 import java.math.BigDecimal
 
-/** A bounded, normalized view of the Tuya mapping declared for one DPS ID. */
+/**
+ * A bounded, normalized view of the Tuya mapping declared for one DPS ID.
+ *
+ * [id] is the numeric DP identifier as a string (the mapping key, e.g. `"1"` or `"20"`). It is the
+ * stable identity used for schema lookups and duplicate detection. [code] is the optional semantic
+ * code declared in the mapping (e.g. `"switch_1"`); it is what capability resolution matches
+ * against, so a null or invalid code simply leaves the DP without a resolvable capability.
+ */
 data class DpDefinition
 internal constructor(
   val id: String,
@@ -51,10 +58,12 @@ internal constructor(
 )
 
 /**
- * Adapter-neutral input used to construct a [DpSchema].
+ * Raw input describing one DP, used to construct a [DpSchema].
  *
- * JSON belongs outside the pure Kotlin core. Android and future import adapters supply only bounded
- * primitive strings here; [DpSchema.normalize] performs the final sanitization and size checks.
+ * [DpSchema.normalize] turns a collection of these into a [DpSchema], which holds the resulting
+ * normalized [DpDefinition] list. JSON parsing belongs outside the pure Kotlin core: Android and
+ * future import adapters supply only bounded primitive strings here, and normalization performs the
+ * final sanitization and size checks.
  */
 data class DpDefinitionInput(
   val id: String,

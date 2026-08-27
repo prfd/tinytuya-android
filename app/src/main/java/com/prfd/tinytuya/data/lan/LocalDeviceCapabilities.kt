@@ -35,20 +35,20 @@ object LocalDeviceCapabilityRegistry {
     status: LocalStatusRecord?,
     lastDiscoveryAtEpochMillis: Long?,
   ): LocalDeviceProfile {
-    val schema = parseTuyaDpSchema(device.mappingJson)
+    val dpSchema = parseTuyaDpSchema(device.mappingJson)
     val classification = classify(device)
     val definition = classification.family
     val specs =
       definition
         ?.let { matched ->
-          runCatching { matched.capabilitySpecs(schema) }.getOrDefault(emptyList())
+          runCatching { matched.capabilitySpecs(dpSchema) }.getOrDefault(emptyList())
         }
         .orEmpty()
     val capabilityAccess = capabilityAccess(definition != null, classification.restriction, specs)
     val capabilities =
       CapabilityResolver.resolve(
         specs = specs,
-        schema = schema,
+        dpSchema = dpSchema,
         observation = status.toObservation(lastDiscoveryAtEpochMillis),
         access = capabilityAccess,
       )

@@ -63,7 +63,7 @@ class CapabilityCommandAuthorizerTest {
     val readOnly =
       CapabilityResolver.resolve(
         specs = SPECS,
-        schema = SCHEMA,
+        dpSchema = SCHEMA,
         observation = OBSERVATION,
         access = CapabilityAccess.READ_ONLY,
       )
@@ -80,7 +80,7 @@ class CapabilityCommandAuthorizerTest {
   private fun resolveWritableCapabilities(): ResolvedDeviceCapabilities =
     CapabilityResolver.resolve(
       specs = SPECS,
-      schema = SCHEMA,
+      dpSchema = SCHEMA,
       observation = OBSERVATION,
       access = CapabilityAccess.READ_WRITE,
     )

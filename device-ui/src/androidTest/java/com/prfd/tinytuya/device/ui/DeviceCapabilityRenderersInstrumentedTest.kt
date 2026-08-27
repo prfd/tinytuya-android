@@ -13,7 +13,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import com.prfd.tinytuya.device.core.capability.CapabilityAccess
-import com.prfd.tinytuya.device.core.capability.CapabilityChoice
 import com.prfd.tinytuya.device.core.capability.CapabilityId
 import com.prfd.tinytuya.device.core.capability.CapabilityResolver
 import com.prfd.tinytuya.device.core.capability.CapabilityTone
@@ -50,7 +49,7 @@ class DeviceCapabilityRenderersInstrumentedTest {
               writable = true,
             )
           ),
-        schema = DpSchema.normalize(listOf(DpDefinitionInput("19", "switch", "Boolean"))),
+        dpSchema = DpSchema.normalize(listOf(DpDefinitionInput("19", "switch", "Boolean"))),
         observation =
           DeviceObservation.normalize(
             listOf(ObservedDataPointInput("19", ObservedDataPointKind.BOOLEAN, "true")),

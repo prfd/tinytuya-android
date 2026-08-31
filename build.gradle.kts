@@ -86,3 +86,11 @@ subprojects {
         }
     }
 }
+
+tasks.register("ktfmtFormatAll") {
+    dependsOn(
+        subprojects.mapNotNull { project ->
+            project.tasks.findByName("ktfmtFormat")
+        }
+    )
+}

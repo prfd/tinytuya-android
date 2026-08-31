@@ -1,28 +1,26 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    alias(libs.plugins.kotlin.jvm)
-    alias(libs.plugins.ktfmt.gradle)
+  alias(libs.plugins.kotlin.jvm)
+  alias(libs.plugins.ktfmt.gradle)
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+  sourceCompatibility = JavaVersion.VERSION_11
+  targetCompatibility = JavaVersion.VERSION_11
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
-        freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility")
-    }
+  compilerOptions {
+    jvmTarget.set(JvmTarget.JVM_11)
+    freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility")
+  }
 }
 
 ktfmt {
-    googleStyle()
-    maxWidth.set(100)
-    removeUnusedImports.set(false)
+  googleStyle()
+  maxWidth.set(100)
+  removeUnusedImports.set(false)
 }
 
-dependencies {
-    testImplementation(libs.junit)
-}
+dependencies { testImplementation(libs.junit) }

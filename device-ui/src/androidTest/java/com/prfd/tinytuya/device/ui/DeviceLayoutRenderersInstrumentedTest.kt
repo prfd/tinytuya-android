@@ -561,7 +561,7 @@ class DeviceLayoutRenderersInstrumentedTest {
         listOf(
           GenericDeviceLayoutRenderer,
           LightDeviceLayoutRenderer,
-            CoverDeviceLayoutRenderer,
+          CoverDeviceLayoutRenderer,
         )
       )
     composeRule.setContent {

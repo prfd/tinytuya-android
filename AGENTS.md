@@ -18,7 +18,7 @@ These instructions apply to the entire repository.
 ## Workflow
 
 - Inspect `git status` and relevant diffs before and after changes.
-- Before commiting your work, format your code with ktfmt: `./gradlew ktfmtFormatAndroidTest ktfmtFormatMain ktfmtFormatTest -q`
+- After finishing your work, format your code: `./gradlew ktfmtFormatAll -q`
 
 ## Project guardrails
 

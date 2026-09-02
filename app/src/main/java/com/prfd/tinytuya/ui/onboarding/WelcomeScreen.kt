@@ -235,9 +235,9 @@ private fun HomeNetworkIllustration() {
       val houseTop = center.y - houseHeight * 0.30f
       val roof =
         Path().apply {
-          moveTo(houseLeft - 2.dp.toPx(), houseTop + 5.dp.toPx())
+          moveTo(houseLeft - 2.dp.toPx(), houseTop + 8.dp.toPx())
           lineTo(center.x, houseTop - 48.dp.toPx())
-          lineTo(houseLeft + houseWidth + 2.dp.toPx(), houseTop + 5.dp.toPx())
+          lineTo(houseLeft + houseWidth + 2.dp.toPx(), houseTop + 8.dp.toPx())
           close()
         }
       drawPath(roof, primary)

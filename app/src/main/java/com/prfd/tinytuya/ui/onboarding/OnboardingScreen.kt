@@ -35,7 +35,7 @@ import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 
 private const val TUYA_SETUP_GUIDE_URL =
-  "https://developer.tuya.com/en/docs/developer/apply-cloud-api-key?id=Kff30z8sv62ah"
+  "https://github.com/prfd/tinytuya-android/blob/master/TUYA_CLOUD.md"
 
 private sealed interface OnboardingDestination {
   data object Welcome : OnboardingDestination
@@ -76,7 +76,7 @@ fun OnboardingRoute(
     onStartSetup = viewModel::showSetupGuide,
     onSkipGuide = viewModel::showCredentials,
     onBack = back,
-    onOpenOfficialGuide = {
+    onOpenGuide = {
       runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, TUYA_SETUP_GUIDE_URL.toUri()))
       }
@@ -124,7 +124,7 @@ fun OnboardingScreen(
   onStartSetup: () -> Unit,
   onSkipGuide: () -> Unit,
   onBack: () -> Unit,
-  onOpenOfficialGuide: () -> Unit,
+  onOpenGuide: () -> Unit,
   onRegionChanged: (TuyaCloudRegion) -> Unit,
   onClientIdChanged: (String) -> Unit,
   onClientSecretChanged: (String) -> Unit,
@@ -160,7 +160,7 @@ fun OnboardingScreen(
           OnboardingDestination.SetupGuide ->
             SetupGuideScreen(
               onBack = onBack,
-              onOpenOfficialGuide = onOpenOfficialGuide,
+              onOpenGuide = onOpenGuide,
               onContinue = onSkipGuide,
             )
 

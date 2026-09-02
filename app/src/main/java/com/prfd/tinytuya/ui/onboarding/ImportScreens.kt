@@ -189,7 +189,7 @@ internal fun SuccessScreen(
         Text(
           text =
             when (result.deviceCount) {
-              0 -> "No linked devices yet"
+              0 -> "No devices found"
               1 -> "1 device found"
               else -> "${result.deviceCount} devices found"
             },
@@ -201,7 +201,7 @@ internal fun SuccessScreen(
     Text(
       text =
         if (result.deviceCount == 0) {
-          "The project connected successfully and its credentials are encrypted on this device, but Tuya returned no linked devices. Review account linking or add devices in Smart Life."
+          "The project connected successfully and its credentials are encrypted on this device, but Tuya returned no linked devices."
         } else {
           "The cloud handshake worked. Your cloud credentials are encrypted locally, and the device catalog is stored privately on this device."
         },
@@ -216,7 +216,9 @@ internal fun SuccessScreen(
           "${result.missingLocalKeyCount} ${if (result.missingLocalKeyCount == 1) "device is" else "devices are"} missing a local key and cannot be controlled locally yet."
       )
     }
-    result.warnings.forEach { warning -> WarningCard(text = warning) }
+    if (result.warnings.any { it == "NO_DEVICES" }) {
+      WarningCard(text = "This usually means that Tuya API refused to send device information, check if got added devices and your IoT Core service subscription.")
+    }
 
     if (result.devices.isNotEmpty()) {
       Text(
@@ -295,7 +297,7 @@ private fun SuccessPreview() {
           region = TuyaCloudRegion.WESTERN_AMERICA,
           deviceCount = 3,
           missingLocalKeyCount = 1,
-          warnings = emptyList(),
+          warnings = listOf("MISSING_LOCAL_KEYS"),
           devices =
             listOf(
               CloudImportedDevice(

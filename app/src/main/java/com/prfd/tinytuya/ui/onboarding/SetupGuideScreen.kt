@@ -1,6 +1,5 @@
 package com.prfd.tinytuya.ui.onboarding
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,10 +13,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +27,7 @@ import com.prfd.tinytuya.ui.theme.TinytuyaTheme
 @Composable
 internal fun SetupGuideScreen(
   onBack: () -> Unit,
-  onOpenOfficialGuide: () -> Unit,
+  onOpenGuide: () -> Unit,
   onContinue: () -> Unit,
 ) {
   Column(
@@ -43,48 +40,47 @@ internal fun SetupGuideScreen(
     Spacer(Modifier.height(28.dp))
     Eyebrow("ONE-TIME SETUP")
     Text(
-      text = "Create your cloud handshake",
+      text = "Create and use your Tuya Developer Platform account",
       style = MaterialTheme.typography.headlineMedium,
       modifier = Modifier.padding(top = 8.dp),
     )
     Text(
       text =
-        "Tuya's API gives TinyTuya the device IDs and local keys needed for direct LAN control. After import, normal use does not need the cloud.",
+        "Tuya Platform gives TinyTuya the device IDs and local keys needed for direct LAN control. After import, normal use does not need the cloud.",
       style = MaterialTheme.typography.bodyLarge,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
     )
     SetupStep(
       number = "1",
-      title = "Pair devices in Smart Life",
+      title = "Pair your devices",
       body =
-        "Add each device to the Smart Life app and confirm it responds there. Use the same Smart Life account in the linking step below.",
+        "Pair your Tuya devices using Smart Life App or Tuya Smart App. Do not use a 'guest' account.",
     )
     SetupStep(
       number = "2",
-      title = "Create a Smart Home project",
+      title = "Create a Cloud project",
       body =
-        "On the Tuya Developer Platform, create a Cloud project with Development Method set to Smart Home. Select the data center that matches your Smart Life account.",
+        "On the Tuya Developer Platform, create a Cloud project with Development Method and Industry set to Smart Home. On API Services, make sure that \"IoT Core\" and \"Authorization Token Management\" are enabled.",
       accent = true,
     )
-    SecondScreenNote()
     SetupStep(
       number = "3",
       title = "Link your app account",
       body =
-        "Open Devices › Link App Account › Add App Account. Scan the QR code with Smart Life and keep Automatic Link selected.",
+        "Go to Devices › Link App Account › Add App Account. Scan the QR code with Smart Life and keep Automatic Link selected.",
     )
     SetupStep(
       number = "4",
-      title = "Copy the authorization key",
-      body =
-        "From the project's Overview, copy the Client ID and Client Secret. Tuya may require an active IoT Core plan or trial; its availability and terms can change.",
+      title = "Copy the Client ID and secret",
+      body = "From the project's Overview tab, copy the Client ID and Client Secret. Make sure to remember the project location.",
+      accent = true,
     )
     OutlinedButton(
-      onClick = onOpenOfficialGuide,
+      onClick = onOpenGuide,
       modifier = Modifier.fillMaxWidth().height(54.dp),
     ) {
-      Text("Open Tuya's official guide  ↗")
+      Text("Open detailed guide ↗")
     }
     Spacer(Modifier.height(14.dp))
     PrimaryActionButton(
@@ -101,7 +97,7 @@ private fun SetupGuidePreview() {
   TinytuyaTheme(darkTheme = false) {
     SetupGuideScreen(
       onBack = {},
-      onOpenOfficialGuide = {},
+      onOpenGuide = {},
       onContinue = {},
     )
   }
@@ -153,46 +149,6 @@ private fun SetupStep(
           style = MaterialTheme.typography.bodyMedium,
           color = content.copy(alpha = 0.78f),
           modifier = Modifier.padding(top = 5.dp),
-        )
-      }
-    }
-  }
-}
-
-@Composable
-private fun SecondScreenNote() {
-  OutlinedCard(
-    colors =
-      CardDefaults.outlinedCardColors(
-        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
-      ),
-    border =
-      BorderStroke(
-        1.dp,
-        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
-      ),
-    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-  ) {
-    Row(modifier = Modifier.padding(16.dp)) {
-      Text(
-        text = "QR",
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onTertiaryContainer,
-        modifier = Modifier.padding(top = 2.dp),
-      )
-      Spacer(Modifier.width(14.dp))
-      Column {
-        Text(
-          text = "Keep a second screen nearby",
-          style = MaterialTheme.typography.titleMedium,
-          color = MaterialTheme.colorScheme.onTertiaryContainer,
-        )
-        Text(
-          text =
-            "You will display a QR code in the developer portal and scan it with Smart Life on this phone.",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.78f),
-          modifier = Modifier.padding(top = 4.dp),
         )
       }
     }

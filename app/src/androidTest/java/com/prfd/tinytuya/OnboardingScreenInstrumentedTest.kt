@@ -77,7 +77,7 @@ class OnboardingScreenInstrumentedTest {
           onStartSetup = {},
           onSkipGuide = {},
           onBack = {},
-          onOpenOfficialGuide = {},
+          onOpenGuide = {},
           onRegionChanged = {},
           onClientIdChanged = {},
           onClientSecretChanged = {},

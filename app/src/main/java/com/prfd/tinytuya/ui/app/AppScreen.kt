@@ -92,6 +92,7 @@ fun AppRoute(
           discovery = destination.discovery,
           control = destination.control,
           isLanSnapshotCurrent = destination.isLanSnapshotCurrent,
+          networkReverificationPending = destination.networkReverificationPending,
           displayMode = settingsState.inventoryDisplayMode,
           isDisplayModeSaving = settingsState.isSaving,
           onDisplayModeChanged = settingsViewModel::setInventoryDisplayMode,

@@ -75,6 +75,13 @@ interface DeviceCatalogStore {
 
   suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog
 
+  /**
+   * Rebinds the saved discovery network identity without touching the generation marker, LAN
+   * records, or status. Used when a verification poll re-proved reachability after Android changed
+   * only the opaque network handle or the phone's own address on the same subnet.
+   */
+  suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog
+
   suspend fun deleteAll()
 }
 
@@ -180,6 +187,28 @@ internal constructor(
             lastLocalPollAtEpochMillis = polledAt,
             localStatus = (polledRecords.values + retainedRecords).sortedBy { it.id },
           )
+        writeCatalogLocked(catalog)
+        catalog
+      }
+    }
+
+  override suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog =
+    withContext(Dispatchers.IO) {
+      mutex.withLock {
+        validateDiscoveryNetwork(network)
+        val previous =
+          loadLocked()
+            ?: throw storageError(
+              code = "CATALOG_MISSING",
+              message = "Import devices before updating the saved network.",
+            )
+        if (previous.lastDiscoveryAtEpochMillis == null) {
+          throw storageError(
+            code = "CATALOG_INVALID",
+            message = "Discover devices before updating the saved network.",
+          )
+        }
+        val catalog = previous.copy(lastDiscoveryNetwork = network)
         writeCatalogLocked(catalog)
         catalog
       }

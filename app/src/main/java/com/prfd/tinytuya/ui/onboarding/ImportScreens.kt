@@ -217,7 +217,10 @@ internal fun SuccessScreen(
       )
     }
     if (result.warnings.any { it == "NO_DEVICES" }) {
-      WarningCard(text = "This usually means that Tuya API refused to send device information, check if got added devices and your IoT Core service subscription.")
+      WarningCard(
+        text =
+          "This usually means that Tuya API refused to send device information, check if got added devices and your IoT Core service subscription."
+      )
     }
 
     if (result.devices.isNotEmpty()) {

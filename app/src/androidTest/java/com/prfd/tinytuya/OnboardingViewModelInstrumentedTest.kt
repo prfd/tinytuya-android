@@ -253,6 +253,10 @@ class OnboardingViewModelInstrumentedTest {
       network: com.prfd.tinytuya.data.lan.LanNetworkContext,
     ): DeviceCatalog = error("LAN discovery is not used by this onboarding test.")
 
+    override suspend fun rebindDiscoveryNetwork(
+      network: com.prfd.tinytuya.data.lan.LanNetworkContext
+    ): DeviceCatalog = error("Network rebinding is not used by this onboarding test.")
+
     override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
       error("Local polling is not used by this onboarding test.")
 

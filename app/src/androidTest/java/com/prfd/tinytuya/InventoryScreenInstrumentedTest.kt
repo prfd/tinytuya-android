@@ -147,6 +147,26 @@ class InventoryScreenInstrumentedTest {
   }
 
   @Test
+  fun reverificationPollRendersTheSameRefreshingAffordanceAsAQuickRefresh() {
+    setInventoryContent(
+      catalog = controlledCatalog(),
+      discovery = LanDiscoveryUiState.ReadingStatus,
+      control = LocalControlUiState.Unavailable,
+      isLanSnapshotCurrent = false,
+      networkReverificationPending = true,
+    )
+
+    composeRule.onNodeWithText("Reading saved devices directly on this Wi-Fi…").assertExists()
+    composeRule.onNodeWithTag("inventory_refresh_button").assertExists()
+    composeRule.onNodeWithText("Refreshing").assertExists()
+    composeRule.onNodeWithTag("inventory_refresh_button").assertIsNotEnabled()
+    composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
+    composeRule.onNodeWithText("Local").assertExists()
+    // While reading, the per-device panel shows the same progress line as a normal poll.
+    composeRule.onNodeWithText("Reading status…").assertExists()
+  }
+
+  @Test
   fun verifiedLocalSwitchInvokesTheTypedControlCallback() {
     var request: DeviceIntent? = null
     setInventoryContent(
@@ -415,6 +435,7 @@ class InventoryScreenInstrumentedTest {
     discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
     control: LocalControlUiState = LocalControlUiState.Unavailable,
     isLanSnapshotCurrent: Boolean = true,
+    networkReverificationPending: Boolean = false,
     onRefreshKnownDevices: () -> Unit = {},
     onDiscoverLan: () -> Unit = {},
     onIntent: (DeviceIntent) -> Unit = {},
@@ -429,6 +450,7 @@ class InventoryScreenInstrumentedTest {
           discovery = discovery,
           control = control,
           isLanSnapshotCurrent = isLanSnapshotCurrent,
+          networkReverificationPending = networkReverificationPending,
           displayMode = displayMode,
           onDisplayModeChanged = onDisplayModeChanged,
           onRefreshKnownDevices = onRefreshKnownDevices,

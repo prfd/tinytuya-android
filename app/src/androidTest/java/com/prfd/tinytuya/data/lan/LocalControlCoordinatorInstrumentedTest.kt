@@ -504,6 +504,9 @@ class LocalControlCoordinatorInstrumentedTest {
       network: LanNetworkContext,
     ): DeviceCatalog = error("Not used")
 
+    override suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog =
+      error("Not used")
+
     override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog {
       mergeCount += 1
       val records =

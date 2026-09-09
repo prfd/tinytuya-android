@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
       DefaultKnownDeviceRefreshCoordinator(
         networkResolver = networkResolver,
         localStatusCoordinator = localStatusCoordinator,
+        catalogStore = catalogStore,
       )
 
     appViewModel =

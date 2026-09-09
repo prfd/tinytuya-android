@@ -136,6 +136,9 @@ class LanDiscoveryCoordinatorInstrumentedTest {
 
     override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog = error("Not used")
 
+    override suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog =
+      error("Not used")
+
     override suspend fun deleteAll() = Unit
   }
 

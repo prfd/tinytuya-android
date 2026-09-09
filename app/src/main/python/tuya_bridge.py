@@ -523,6 +523,7 @@ LOCAL_POLL_SOCKET_TIMEOUT_SECONDS = 2.5
 # responded.
 LOCAL_POLL_ATTEMPT_DELAYS_SECONDS = (0.0, 2.0, 5.0)
 LOCAL_POLL_WORKER_COUNT = 4
+LOCAL_POLL_MAX_ATTEMPTS = len(LOCAL_POLL_ATTEMPT_DELAYS_SECONDS)
 LOCAL_POLL_PROTOCOLS = frozenset(("3.1", "3.2", "3.3", "3.4", "3.5"))
 
 
@@ -531,13 +532,13 @@ def _parse_local_poll_input(network_json, devices_json):
         network = json.loads(network_json)
         devices = json.loads(devices_json)
     except (TypeError, ValueError):
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_INPUT_INVALID",
             "Local status input is not valid JSON.",
         )
 
     if not isinstance(network, dict) or not isinstance(devices, list):
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_INPUT_INVALID",
             "Local status input has an invalid shape.",
         )
@@ -547,14 +548,31 @@ def _parse_local_poll_input(network_json, devices_json):
         prefix_length = int(network.get("prefix_length"))
         broadcast_address = ipaddress.IPv4Address(str(network.get("broadcast_ipv4") or ""))
     except (TypeError, ValueError, ipaddress.AddressValueError):
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_NETWORK_INVALID",
             "The selected Wi-Fi network is invalid.",
         )
 
+    raw_max_attempts = network.get("max_attempts")
+    if raw_max_attempts is None:
+        max_attempts = LOCAL_POLL_MAX_ATTEMPTS
+    else:
+        try:
+            max_attempts = int(raw_max_attempts)
+        except (TypeError, ValueError):
+            return None, None, None, _failure(
+                "LOCAL_POLL_ATTEMPTS_INVALID",
+                "The local status attempt count is invalid.",
+            )
+        if max_attempts not in range(1, LOCAL_POLL_MAX_ATTEMPTS + 1):
+            return None, None, None, _failure(
+                "LOCAL_POLL_ATTEMPTS_INVALID",
+                "The local status attempt count is out of range.",
+            )
+
     interface_name = str(network.get("interface_name") or "").strip()
     if not interface_name or len(interface_name) > 64 or prefix_length not in range(1, 31):
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_NETWORK_INVALID",
             "The selected Wi-Fi network cannot be used for local status.",
         )
@@ -567,13 +585,13 @@ def _parse_local_poll_input(network_json, devices_json):
         or local_address in (interface.network.network_address, interface.network.broadcast_address)
         or broadcast_address != interface.network.broadcast_address
     ):
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_NETWORK_INVALID",
             "The selected Wi-Fi addresses are inconsistent.",
         )
 
     if not devices or len(devices) > LOCAL_POLL_MAX_DEVICE_COUNT:
-        return None, None, _failure(
+        return None, None, None, _failure(
             "LOCAL_POLL_DEVICES_INVALID",
             "The local status request is empty or too large.",
         )
@@ -582,7 +600,7 @@ def _parse_local_poll_input(network_json, devices_json):
     seen_ids = set()
     for item in devices:
         if not isinstance(item, dict):
-            return None, None, _failure(
+            return None, None, None, _failure(
                 "LOCAL_POLL_DEVICES_INVALID",
                 "The local status request contains an invalid device.",
             )
@@ -593,7 +611,7 @@ def _parse_local_poll_input(network_json, devices_json):
             address = ipaddress.IPv4Address(str(item.get("ip") or ""))
             local_key.encode("latin1")
         except (UnicodeEncodeError, ipaddress.AddressValueError):
-            return None, None, _failure(
+            return None, None, None, _failure(
                 "LOCAL_POLL_DEVICES_INVALID",
                 "The local status request contains an invalid device.",
             )
@@ -607,7 +625,7 @@ def _parse_local_poll_input(network_json, devices_json):
             or address not in interface.network
             or address in (local_address, interface.network.network_address, interface.network.broadcast_address)
         ):
-            return None, None, _failure(
+            return None, None, None, _failure(
                 "LOCAL_POLL_DEVICES_INVALID",
                 "The local status request contains an invalid device.",
             )
@@ -621,7 +639,7 @@ def _parse_local_poll_input(network_json, devices_json):
             }
         )
 
-    return interface.network, normalized, None
+    return interface.network, normalized, max_attempts, None
 
 
 def _normalize_local_data_points(dps):
@@ -709,7 +727,7 @@ def _local_poll_error(error_number):
     return "error", "LOCAL_STATUS_FAILED"
 
 
-def _poll_one_local_device(tinytuya, config):
+def _poll_one_local_device(tinytuya, config, attempt_delays):
     import socket
 
     started_at = time.monotonic()
@@ -718,7 +736,7 @@ def _poll_one_local_device(tinytuya, config):
     data_points = []
     warnings = set()
     attempt_count = 0
-    for delay_seconds in LOCAL_POLL_ATTEMPT_DELAYS_SECONDS:
+    for delay_seconds in attempt_delays:
         if delay_seconds:
             time.sleep(delay_seconds)
         attempt_count += 1
@@ -790,7 +808,9 @@ def _poll_one_local_device(tinytuya, config):
 def poll_local(network_json, devices_json):
     """Read current DPS from freshly discovered direct Wi-Fi devices."""
 
-    network, devices, input_error = _parse_local_poll_input(network_json, devices_json)
+    network, devices, max_attempts, input_error = _parse_local_poll_input(
+        network_json, devices_json
+    )
     if input_error:
         return input_error
 
@@ -801,6 +821,7 @@ def poll_local(network_json, devices_json):
         del network  # Validation boundary only; every target was checked against it.
         logging.getLogger("tinytuya").setLevel(logging.WARNING)
         started_at = time.monotonic()
+        attempt_delays = LOCAL_POLL_ATTEMPT_DELAYS_SECONDS[:max_attempts]
         worker_count = min(LOCAL_POLL_WORKER_COUNT, len(devices))
         with ThreadPoolExecutor(
             max_workers=worker_count,
@@ -808,7 +829,7 @@ def poll_local(network_json, devices_json):
         ) as executor:
             polled = list(
                 executor.map(
-                    lambda config: _poll_one_local_device(tinytuya, config),
+                    lambda config: _poll_one_local_device(tinytuya, config, attempt_delays),
                     devices,
                 )
             )
@@ -872,7 +893,7 @@ def _parse_local_control_input(network_json, device_json, changes_json):
             "Local control input has an invalid shape.",
         )
 
-    network, devices, device_error = _parse_local_poll_input(
+    network, devices, _max_attempts, device_error = _parse_local_poll_input(
         network_json,
         json.dumps([device], ensure_ascii=False, separators=(",", ":")),
     )

@@ -21,6 +21,7 @@ import com.prfd.tinytuya.data.lan.NoOpLanNetworkObserver
 import com.prfd.tinytuya.data.lan.UnavailableKnownDeviceRefreshCoordinator
 import com.prfd.tinytuya.data.lan.hasCurrentKnownStatusTargets
 import com.prfd.tinytuya.data.lan.hasPreviouslyMatchedStatusTargets
+import com.prfd.tinytuya.data.lan.sameSubnet
 import com.prfd.tinytuya.data.local.AppSettingsStore
 import com.prfd.tinytuya.data.local.DeviceCatalog
 import com.prfd.tinytuya.data.local.DeviceCatalogStorageException
@@ -44,6 +45,12 @@ sealed interface AppUiState {
     val discovery: LanDiscoveryUiState = LanDiscoveryUiState.Idle,
     val control: LocalControlUiState = LocalControlUiState.Unavailable,
     val isLanSnapshotCurrent: Boolean = true,
+    /**
+     * True when Android changed only the network identity details (handle or local address) but the
+     * subnet still matches the saved snapshot. The next quick refresh re-verifies by polling; a
+     * failed verification clears this and demands an explicit Find devices.
+     */
+    val networkReverificationPending: Boolean = false,
   ) : AppUiState
 
   data class Recovery(
@@ -173,7 +180,8 @@ class AppViewModel(
         current.discovery is LanDiscoveryUiState.Scanning ||
           current.discovery is LanDiscoveryUiState.ReadingStatus ||
           current.control is LocalControlUiState.Sending -> "busy"
-        !current.isLanSnapshotCurrent -> "snapshot_not_current"
+        !current.isLanSnapshotCurrent && !current.networkReverificationPending ->
+          "snapshot_not_current"
         !current.catalog.hasCurrentKnownStatusTargets() -> "no_current_targets"
         else -> null
       }
@@ -211,6 +219,7 @@ class AppViewModel(
             discovery = LanDiscoveryUiState.Completed,
             control = LocalControlUiState.Ready,
             isLanSnapshotCurrent = true,
+            networkReverificationPending = false,
           )
         refreshTrace.completed()
       } catch (error: CancellationException) {
@@ -218,29 +227,39 @@ class AppViewModel(
         throw error
       } catch (error: LocalStatusException) {
         refreshTrace.failed(error.code)
+        val unverified = error.code == LOCAL_REFRESH_UNVERIFIED
         val snapshotCurrent =
-          if (error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED) {
-            false
-          } else {
-            catalogIsCurrentNow(
-              catalog = current.catalog,
-              fallback = current.isLanSnapshotCurrent,
-            )
+          when {
+            error.code == LOCAL_REFRESH_DISCOVERY_REQUIRED || unverified -> false
+            else ->
+              catalogIsCurrentNow(
+                catalog = current.catalog,
+                fallback = current.isLanSnapshotCurrent,
+              )
           }
         mutableState.value =
           current.copy(
             discovery =
-              if (snapshotCurrent) {
-                LanDiscoveryUiState.Error(
-                  code = error.code,
-                  message = error.message ?: "Local device status could not be read.",
-                  phase = LocalRefreshPhase.STATUS,
-                )
-              } else {
-                changedNetworkError()
+              when {
+                unverified ->
+                  LanDiscoveryUiState.Error(
+                    code = error.code,
+                    message =
+                      error.message ?: "The saved devices did not answer. Find devices again.",
+                    phase = LocalRefreshPhase.STATUS,
+                  )
+                snapshotCurrent ->
+                  LanDiscoveryUiState.Error(
+                    code = error.code,
+                    message = error.message ?: "Local device status could not be read.",
+                    phase = LocalRefreshPhase.STATUS,
+                  )
+                else -> changedNetworkError()
               },
             control = LocalControlUiState.Unavailable,
             isLanSnapshotCurrent = snapshotCurrent,
+            networkReverificationPending =
+              if (unverified) false else current.networkReverificationPending,
           )
       } catch (error: DeviceCatalogStorageException) {
         refreshTrace.failed(error.code)
@@ -688,13 +707,16 @@ class AppViewModel(
       )
       return
     }
-    if (!current.isLanSnapshotCurrent || !current.catalog.hasCurrentKnownStatusTargets()) {
+    if (
+      (!current.isLanSnapshotCurrent && !current.networkReverificationPending) ||
+        !current.catalog.hasCurrentKnownStatusTargets()
+    ) {
       foregroundRefreshPending = false
       LocalRefreshDiagnostics.refreshSkipped(
         trigger = LocalRefreshTrigger.FOREGROUND,
         mode = LocalRefreshMode.STATUS,
         reason =
-          if (current.isLanSnapshotCurrent) {
+          if (current.isLanSnapshotCurrent || current.networkReverificationPending) {
             "no_current_targets"
           } else {
             "snapshot_not_current"
@@ -753,11 +775,26 @@ class AppViewModel(
           val busy =
             current.discovery is LanDiscoveryUiState.Scanning ||
               current.discovery is LanDiscoveryUiState.ReadingStatus
+          // A same-subnet identity change (new handle or address on the same network) stays calm:
+          // control is unavailable, but the next quick refresh re-verifies by polling instead of
+          // demanding a new discovery. A genuinely different network keeps the honest error.
+          val reverify =
+            observation is LanNetworkObservation.Available &&
+              current.catalog.lastDiscoveryNetwork?.let { sameSubnet(observation.network, it) } ==
+                true
+          val priorError = current.discovery as? LanDiscoveryUiState.Error
           mutableState.value =
             current.copy(
-              discovery = if (busy) current.discovery else changedNetworkError(),
+              discovery =
+                when {
+                  busy -> current.discovery
+                  reverify && priorError?.code == LAN_NETWORK_CHANGED -> LanDiscoveryUiState.Idle
+                  reverify -> current.discovery
+                  else -> changedNetworkError()
+                },
               control = LocalControlUiState.Unavailable,
               isLanSnapshotCurrent = false,
+              networkReverificationPending = reverify,
             )
         } else if (!current.isLanSnapshotCurrent) {
           val priorError = current.discovery as? LanDiscoveryUiState.Error
@@ -771,6 +808,7 @@ class AppViewModel(
                 },
               control = LocalControlUiState.Unavailable,
               isLanSnapshotCurrent = true,
+              networkReverificationPending = false,
             )
         }
         maybeStartForegroundRefresh()
@@ -779,20 +817,24 @@ class AppViewModel(
   }
 
   private fun inventoryFromCatalog(catalog: DeviceCatalog): AppUiState.Inventory {
+    val observation = latestNetworkObservation
     val snapshotCurrent =
-      latestNetworkObservation?.let { observation ->
-        catalogMatchesObservation(catalog, observation)
-      } ?: true
+      observation?.let { current -> catalogMatchesObservation(catalog, current) } ?: true
+    val reverify =
+      !snapshotCurrent &&
+        observation is LanNetworkObservation.Available &&
+        catalog.lastDiscoveryNetwork?.let { sameSubnet(observation.network, it) } == true
     return AppUiState.Inventory(
       catalog = catalog,
       discovery =
-        if (catalog.lastDiscoveryAtEpochMillis != null && !snapshotCurrent) {
+        if (catalog.lastDiscoveryAtEpochMillis != null && !snapshotCurrent && !reverify) {
           changedNetworkError()
         } else {
           LanDiscoveryUiState.Idle
         },
       control = LocalControlUiState.Unavailable,
       isLanSnapshotCurrent = snapshotCurrent,
+      networkReverificationPending = reverify,
     )
   }
 
@@ -857,6 +899,7 @@ class AppViewModel(
         discovery = changedNetworkError(),
         control = LocalControlUiState.Unavailable,
         isLanSnapshotCurrent = false,
+        networkReverificationPending = false,
       )
   }
 
@@ -906,6 +949,7 @@ class AppViewModel(
 
     private const val LAN_NETWORK_CHANGED = "LAN_NETWORK_CHANGED"
     private const val LOCAL_REFRESH_DISCOVERY_REQUIRED = "LOCAL_REFRESH_DISCOVERY_REQUIRED"
+    private const val LOCAL_REFRESH_UNVERIFIED = "LOCAL_REFRESH_UNVERIFIED"
     private const val FOREGROUND_REFRESH_COOLDOWN_MILLIS = 30_000L
   }
 }

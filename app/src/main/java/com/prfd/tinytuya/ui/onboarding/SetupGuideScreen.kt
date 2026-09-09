@@ -73,7 +73,8 @@ internal fun SetupGuideScreen(
     SetupStep(
       number = "4",
       title = "Copy the Client ID and secret",
-      body = "From the project's Overview tab, copy the Client ID and Client Secret. Make sure to remember the project location.",
+      body =
+        "From the project's Overview tab, copy the Client ID and Client Secret. Make sure to remember the project location.",
       accent = true,
     )
     OutlinedButton(

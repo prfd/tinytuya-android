@@ -112,6 +112,79 @@ class LocalStatusCoordinatorInstrumentedTest {
     assertFalse(catalog.hasPreviouslyMatchedStatusTargets())
   }
 
+  @Test
+  fun pollUnmergedOrdersSuccessFirstLimitsTheSubsetAndNeverMerges() = runBlocking {
+    val catalog = verificationCatalog(deviceCount = 5)
+    val gateway = FakeGateway { request ->
+      LocalPollResult(
+        contractVersion = 1,
+        deviceCount = request.devices.size,
+        respondedDeviceCount = request.devices.size,
+        offlineDeviceCount = 0,
+        errorDeviceCount = 0,
+        durationMillis = 10L,
+        warnings = emptyList(),
+        devices =
+          request.devices.map { device ->
+            LocalPolledDevice(
+              id = device.id,
+              state = LocalPollDeviceState.RESPONDED,
+              errorCode = "",
+              durationMillis = 10L,
+              dataPoints = emptyList(),
+            )
+          },
+      )
+    }
+    val store = FakeStore(catalog)
+    val coordinator = DefaultLocalStatusCoordinator(gateway, store)
+
+    val result = coordinator.pollUnmerged(catalog, NETWORK, maxAttempts = 1, limit = 4)
+
+    // fresh-3 responded last; it leads, then the remaining ids in order, truncated to 4.
+    assertEquals(
+      listOf("fresh-3", "fresh-1", "fresh-2", "fresh-4"),
+      gateway.request?.devices?.map { it.id },
+    )
+    assertEquals(1, gateway.request?.maxAttempts)
+    assertEquals(4, result.respondedDeviceCount)
+    assertEquals(0, store.mergeCount)
+  }
+
+  @Test
+  fun pollUnmergedKeepsTheFullLadderWhenMaxAttemptsIsThree() = runBlocking {
+    val catalog = verificationCatalog(deviceCount = 2)
+    val gateway = FakeGateway { samplePollResult() }
+    val store = FakeStore(catalog)
+    val coordinator = DefaultLocalStatusCoordinator(gateway, store)
+
+    coordinator.pollUnmerged(catalog, NETWORK, maxAttempts = 3, limit = 4)
+
+    assertEquals(3, gateway.request?.maxAttempts)
+    assertEquals(listOf("fresh-1", "fresh-2"), gateway.request?.devices?.map { it.id })
+    assertEquals(0, store.mergeCount)
+  }
+
+  @Test
+  fun pollUnmergedWithoutEligibleTargetsReturnsAnEmptyResultWithoutPython() = runBlocking {
+    val catalog =
+      sampleCatalog().let { source ->
+        source.copy(
+          devices = source.devices.filter { device -> device.id == "gateway" },
+          lanDevices = source.lanDevices.filter { device -> device.id == "gateway" },
+        )
+      }
+    val gateway = FakeGateway { error("Protected devices must not reach Python") }
+    val store = FakeStore(catalog)
+    val coordinator = DefaultLocalStatusCoordinator(gateway, store)
+
+    val result = coordinator.pollUnmerged(catalog, NETWORK, maxAttempts = 1, limit = 4)
+
+    assertEquals(0, result.deviceCount)
+    assertEquals(null, gateway.request)
+    assertEquals(0, store.mergeCount)
+  }
+
   private class FakeGateway(private val poll: suspend (LocalPollRequest) -> LocalPollResult) :
     TuyaPythonGateway {
     var request: LocalPollRequest? = null
@@ -147,6 +220,9 @@ class LocalStatusCoordinatorInstrumentedTest {
       result: LanDiscoveryResult,
       network: LanNetworkContext,
     ): DeviceCatalog = error("Not used")
+
+    override suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog =
+      error("Not used")
 
     override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog {
       mergeCount += 1
@@ -262,5 +338,32 @@ class LocalStatusCoordinatorInstrumentedTest {
             )
           ),
       )
+
+    /** Current-generation catalog with [deviceCount] eligible direct devices. */
+    fun verificationCatalog(deviceCount: Int): DeviceCatalog {
+      val ids = (1..deviceCount).map { index -> "fresh-$index" }
+      return DeviceCatalog(
+        schemaVersion = 2,
+        importedAtEpochMillis = 1L,
+        region = TuyaCloudRegion.WESTERN_AMERICA,
+        devices = ids.map { id -> cloudDevice(id = id) },
+        lastDiscoveryAtEpochMillis = 10L,
+        lanDevices =
+          ids.mapIndexed { index, id ->
+            lanDevice(id = id, lastSeenAt = 10L, ip = "192.168.10.${42 + index}")
+          },
+        localStatus =
+          listOf(
+            LocalStatusRecord(
+              id = "fresh-3",
+              state = LocalPollDeviceState.RESPONDED,
+              errorCode = "",
+              durationMillis = 10L,
+              dataPoints = emptyList(),
+              polledAtEpochMillis = 11L,
+            )
+          ),
+      )
+    }
   }
 }

@@ -31,6 +31,12 @@ class LocalPollDevice(
 data class LocalPollRequest(
   val network: LanNetworkContext,
   val devices: List<LocalPollDevice>,
+  /**
+   * Optional per-device attempt-count override (1..3). Absent keeps the bridge default of the full
+   * retry ladder; verification probes pass 1 because cross-device redundancy substitutes for
+   * per-device retries.
+   */
+  val maxAttempts: Int? = null,
 )
 
 /**

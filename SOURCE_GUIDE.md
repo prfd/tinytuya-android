@@ -63,23 +63,29 @@ Several lists coexist in `DeviceCatalog`. They are not duplicates:
 #### **LAN observation**
 * **Type & Owner:** `LanDeviceRecord` plus `lastDiscoveryNetwork` in `DeviceCatalog`
 * **What it means:** An ID was heard at an IP and protocol version on one exact Android network.
-* **Freshness rule:** Current only when its timestamp belongs to the latest generation and the observed Android network handle still matches.
+* **Freshness rule:** Current only when its timestamp belongs to the latest generation and the
+  observed Android network handle still matches. A same-subnet handle or address change leaves
+  the snapshot *stale but re-verifiable*: the next quick refresh may re-prove it by polling.
 
 #### **Local status**
 * **Type & Owner:** `LocalStatusRecord` in `DeviceCatalog.localStatus`
 * **What it means:** The latest normalized DPS values or offline/error result.
-* **Freshness rule:** Safe for current controls only when it is a successful response polled at or after the current discovery generation.
+* **Freshness rule:** Safe for current controls only when it is a successful response polled at
+  or after the current discovery generation.
 
 #### **Control session**
 * **Type & Owner:** `controlNetwork` and `controlDiscoveryAtEpochMillis` in `AppViewModel`
 * **What it means:** The exact Wi-Fi network and discovery generation authorized for writes.
-* **Freshness rule:** Process-only; cleared on catalog reload, leaving inventory for onboarding, a new refresh/scan, deletion, or a default-network change.
+* **Freshness rule:** Process-only; cleared on catalog reload, leaving inventory for onboarding, a
+  new refresh/scan, deletion, or a default-network change.
 
 This split explains an important UI behavior: an old address can remain saved as history without
 being treated as a device found by the latest scan. A control is available only when the saved
 discovery generation still belongs to the exact active Android network and a fresh status read has
-opened a matching control session in the current app process. A trustworthy saved address may reach
-that state through quick refresh without repeating UDP discovery.
+opened a matching control session in the current app process — or when a verification poll has
+re-proven a same-subnet network by successfully polling the saved addresses and rebinding the
+snapshot. A trustworthy saved address may reach that state through quick refresh without
+repeating UDP discovery.
 
 ## Pass 1: startup and routing
 
@@ -228,17 +234,31 @@ The coordinator supplies local keys only to the bounded status operation after a
 AppViewModel.refreshKnownDevices
   -> DefaultKnownDeviceRefreshCoordinator.refresh
   -> AndroidLanNetworkResolver.resolve
-  -> require exact equality with DeviceCatalog.lastDiscoveryNetwork
-  -> LocalStatusCoordinator.poll using the current discovery generation
+  -> exact network match?
+       yes -> LocalStatusCoordinator.poll using the current discovery generation
+              -> Inventory state becomes Completed + control Ready
+       same subnet, changed handle/address -> verification tier (see below)
+       different subnet -> LOCAL_REFRESH_DISCOVERY_REQUIRED, Find devices required
   -> TinyTuya TCP 6668 status calls
-  -> Inventory state becomes Completed + control Ready
 ```
 
-Read [KnownDeviceRefreshCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinator.kt) in full. It is intentionally small: it requires at least one eligible, previously matched target, re-resolves the active Android network, compares the complete network identity including its opaque handle, and only then delegates to the same bounded status coordinator used after discovery. It does not own or call a discovery coordinator, which makes the “no UDP on quick refresh” boundary explicit.
+The **verification tier** treats a successful poll as the strongest network-identity proof. When
+Android changes only the opaque network handle or the phone's own address but the subnet still
+matches, the coordinator runs a bounded `LocalStatusCoordinator.pollUnmerged` against the saved
+addresses — never merging first, so a wrong network can never overwrite last-known-good status
+with offline records. Up to four devices are polled, ordered success-first then by id; a
+household of four or fewer targets keeps the full retry ladder because it has no cross-device
+redundancy, while larger households probe with a single attempt (`LocalPollRequest.maxAttempts`,
+bounded 1..3 by the bridge). Zero responses fail with `LOCAL_REFRESH_UNVERIFIED`; at least one
+response rebinds the saved network identity through
+`DeviceCatalogStore.rebindDiscoveryNetwork` — generation marker, LAN records, and status
+untouched — and then merges a full status poll.
 
-Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding, never-matched inventories, and untrusted network or address generations; suppresses duplicate starts for 30 seconds; and uses only the quick path for a trustworthy snapshot. It never falls back to discovery or calls Tuya Cloud. There is no timer or background service.
+Read [KnownDeviceRefreshCoordinator.kt](app/src/main/java/com/prfd/tinytuya/data/lan/KnownDeviceRefreshCoordinator.kt) in full. It requires at least one eligible, previously matched target, re-resolves the active Android network, and compares it in two steps: exact identity (including the opaque handle) takes the fast path, same-subnet identity enters the verification tier, and anything else demands discovery. It does not own or call a discovery coordinator, which makes the “no UDP on quick refresh” boundary explicit.
 
-`LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`.
+Then read `onAppForegrounded` and `maybeStartForegroundRefresh` in [AppViewModel.kt](app/src/main/java/com/prfd/tinytuya/ui/app/AppViewModel.kt). Foreground refresh waits for settings, catalog, and a usable network observation; skips onboarding, never-matched inventories, and untrusted address generations — but a same-subnet handle change marked `networkReverificationPending` is allowed through so the poll can re-verify it; suppresses duplicate starts for 30 seconds; and uses only the quick path. It never falls back to discovery or calls Tuya Cloud. There is no timer or background service.
+
+`LanDiscoveryUiState.Error.phase` records whether a failure belongs to address discovery or status refresh. The inventory uses that ownership to keep discovery errors inside `FindDevicesCard` and status errors beside the compact refresh action in `DeviceInventoryHeader`. `LOCAL_REFRESH_UNVERIFIED` reports the observed fact — the saved devices did not answer on this Wi-Fi — and clears the pending re-verification so only an explicit action retries it.
 
 Checkpoint: explain why a device may have a `LanDeviceRecord` but still not be polled. Common reasons
 are that its category is not in the supported family registry, the record belongs to an older
@@ -496,6 +516,6 @@ tests. The small tests under `app/src/test` cover app code which has no Android 
   before resolving observed capabilities.
 - **Gateway child** — a Zigbee/BLE-style child reached through a Tuya gateway, not a direct TCP 6668 device.
 - **Discovery generation** — the latest `lastDiscoveryAtEpochMillis` marker used to distinguish current addresses from history.
-- **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and the saved catalog and is never sent to Python or displayed.
+- **Network handle** — Android's opaque identity for one exact `Network`; it stays in Kotlin and the saved catalog and is never sent to Python or displayed. It is the fast-path match key for quick refresh, not the sole authority: a same-subnet handle change may be re-verified by polling.
 - **Bridge envelope** — the versioned success/error JSON shared by Kotlin and Python.
 - **Catalog** — the saved local aggregate of imported identity, LAN observations, and local status.

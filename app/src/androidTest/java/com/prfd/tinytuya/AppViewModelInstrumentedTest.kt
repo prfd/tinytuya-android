@@ -285,10 +285,55 @@ class AppViewModelInstrumentedTest {
   }
 
   @Test
-  fun savedLanSnapshotIsRejectedOnAnotherNetworkWithTheSameSubnet() = runBlocking {
-    val observer =
-      FakeLanNetworkObserver(
-        LanNetworkObservation.Available(NETWORK.copy(networkHandle = NETWORK.networkHandle + 1))
+  fun sameSubnetIdentityChangeCalmsDiscoveryAndReverifiesByQuickRefresh() = runBlocking {
+    val changedHandle = NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+    val refreshed = discoveredCatalog().copy(lastLocalPollAtEpochMillis = 6L)
+    val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(changedHandle))
+    val knownCoordinator = FakeKnownDeviceRefreshCoordinator(refreshed, network = changedHandle)
+    val viewModel =
+      AppViewModel(
+        FakeCatalogStore(discoveredCatalog()),
+        FakeLanDiscoveryCoordinator(),
+        FakeLocalStatusCoordinator(),
+        FakeLocalControlCoordinator(),
+        observer,
+        knownDeviceRefreshCoordinator = knownCoordinator,
+        settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = true)),
+      )
+
+    val invalidated =
+      withTimeout(5_000) {
+        viewModel.state.first { it is AppUiState.Inventory && !it.isLanSnapshotCurrent }
+      }
+        as AppUiState.Inventory
+    assertTrue(invalidated.control is LocalControlUiState.Unavailable)
+    assertTrue(invalidated.discovery !is LanDiscoveryUiState.Error)
+
+    viewModel.onAppForegrounded()
+
+    val verified =
+      withTimeout(5_000) {
+        viewModel.state.first {
+          it is AppUiState.Inventory && it.control is LocalControlUiState.Ready
+        }
+      }
+        as AppUiState.Inventory
+    assertTrue(verified.isLanSnapshotCurrent)
+    assertEquals(6L, verified.catalog.lastLocalPollAtEpochMillis)
+    assertEquals(1, knownCoordinator.callCount)
+  }
+
+  @Test
+  fun unverifiedReverificationDemandsDiscoveryAndKeepsControlUnavailable() = runBlocking {
+    val changedHandle = NETWORK.copy(networkHandle = NETWORK.networkHandle + 1)
+    val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(changedHandle))
+    val knownCoordinator =
+      FakeKnownDeviceRefreshCoordinator(
+        error =
+          LocalStatusException(
+            code = "LOCAL_REFRESH_UNVERIFIED",
+            message = "The saved devices did not answer on this Wi-Fi. Find devices again.",
+          )
       )
     val viewModel =
       AppViewModel(
@@ -297,24 +342,26 @@ class AppViewModelInstrumentedTest {
         FakeLocalStatusCoordinator(),
         FakeLocalControlCoordinator(),
         observer,
+        knownDeviceRefreshCoordinator = knownCoordinator,
+        settingsStore = InMemoryAppSettingsStore(AppSettings(refreshWhenAppOpens = true)),
       )
+    withTimeout(5_000) {
+      viewModel.state.first { it is AppUiState.Inventory && !it.isLanSnapshotCurrent }
+    }
+
+    viewModel.onAppForegrounded()
 
     val state =
       withTimeout(5_000) {
         viewModel.state.first {
           it is AppUiState.Inventory &&
             it.discovery is LanDiscoveryUiState.Error &&
-            !it.isLanSnapshotCurrent
+            (it.discovery as LanDiscoveryUiState.Error).code == "LOCAL_REFRESH_UNVERIFIED"
         }
       }
         as AppUiState.Inventory
-
-    assertEquals(
-      "LAN_NETWORK_CHANGED",
-      (state.discovery as LanDiscoveryUiState.Error).code,
-    )
     assertTrue(state.control is LocalControlUiState.Unavailable)
-    assertEquals(NETWORK.localIpv4, state.catalog.lastDiscoveryNetwork?.localIpv4)
+    assertTrue(!state.isLanSnapshotCurrent)
   }
 
   @Test
@@ -377,7 +424,9 @@ class AppViewModelInstrumentedTest {
     viewModel.submitControl(toggleIntent(true))
     withTimeout(5_000) { controlCoordinator.started.await() }
     observer.emit(
-      LanNetworkObservation.Available(NETWORK.copy(networkHandle = NETWORK.networkHandle + 1))
+      LanNetworkObservation.Available(
+        NETWORK.copy(localIpv4 = "192.168.20.5", broadcastIpv4 = "192.168.20.255")
+      )
     )
     withTimeout(5_000) {
       viewModel.state.first { it is AppUiState.Inventory && !it.isLanSnapshotCurrent }
@@ -503,7 +552,7 @@ class AppViewModelInstrumentedTest {
 
   @Test
   fun foregroundOnChangedWifiDoesNotScanOrPollSavedAddresses() = runBlocking {
-    val changedNetwork = NETWORK.copy(networkHandle = 202L)
+    val changedNetwork = NETWORK.copy(localIpv4 = "192.168.20.5", broadcastIpv4 = "192.168.20.255")
     val observer = FakeLanNetworkObserver(LanNetworkObservation.Available(changedNetwork))
     val discoveryCoordinator = FakeLanDiscoveryCoordinator()
     val statusCoordinator = FakeLocalStatusCoordinator()
@@ -627,6 +676,13 @@ class AppViewModelInstrumentedTest {
       callCount += 1
       return result ?: catalog
     }
+
+    override suspend fun pollUnmerged(
+      catalog: DeviceCatalog,
+      network: LanNetworkContext,
+      maxAttempts: Int,
+      limit: Int,
+    ): LocalPollResult = error("Verification polling is not used by this app-routing test.")
   }
 
   private class FakeLocalControlCoordinator(private val result: DeviceCatalog? = null) :
@@ -689,6 +745,9 @@ class AppViewModelInstrumentedTest {
 
     override suspend fun mergeLocalPoll(result: LocalPollResult): DeviceCatalog =
       error("Local status is not used by this app-routing test.")
+
+    override suspend fun rebindDiscoveryNetwork(network: LanNetworkContext): DeviceCatalog =
+      error("Network rebinding is not used by this app-routing test.")
 
     override suspend fun deleteAll() {
       deleted = true

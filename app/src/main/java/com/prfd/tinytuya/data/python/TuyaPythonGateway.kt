@@ -133,7 +133,7 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
             .getModule(BRIDGE_MODULE)
             .callAttr(
               "poll_local",
-              request.network.toBridgeJson().toString(),
+              request.network.toBridgeJson(maxAttempts = request.maxAttempts).toString(),
               request.devices.toLocalPollBridgeJson().toString(),
             )
             .toString()
@@ -562,13 +562,17 @@ class ChaquopyTuyaPythonGateway(context: Context) : TuyaPythonGateway {
       }
     }
 
-  private fun LanNetworkContext.toBridgeJson(timeoutSeconds: Int? = null): JSONObject =
+  private fun LanNetworkContext.toBridgeJson(
+    timeoutSeconds: Int? = null,
+    maxAttempts: Int? = null,
+  ): JSONObject =
     JSONObject().apply {
       put("interface_name", interfaceName)
       put("local_ipv4", localIpv4)
       put("prefix_length", prefixLength)
       put("broadcast_ipv4", broadcastIpv4)
       timeoutSeconds?.let { put("timeout_seconds", it) }
+      maxAttempts?.let { put("max_attempts", it) }
     }
 
   private fun List<LocalPollDevice>.toLocalPollBridgeJson(): JSONArray =

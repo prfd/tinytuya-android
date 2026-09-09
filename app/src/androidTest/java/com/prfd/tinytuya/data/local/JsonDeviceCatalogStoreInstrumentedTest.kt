@@ -86,6 +86,41 @@ class JsonDeviceCatalogStoreInstrumentedTest {
   }
 
   @Test
+  fun rebindDiscoveryNetworkReplacesOnlyTheNetworkIdentity() = runBlocking {
+    store.replaceFromCloud(sampleImport())
+    val discovered = store.mergeLanDiscovery(sampleDiscovery(), NETWORK)
+    val polled = store.mergeLocalPoll(sampleLocalPoll())
+
+    val rebound = store.rebindDiscoveryNetwork(REBOUND_NETWORK)
+    val loaded = store.load()
+
+    assertEquals(REBOUND_NETWORK, rebound.lastDiscoveryNetwork)
+    assertEquals(REBOUND_NETWORK, loaded?.lastDiscoveryNetwork)
+    assertEquals(discovered.lastDiscoveryAtEpochMillis, rebound.lastDiscoveryAtEpochMillis)
+    assertEquals(discovered.lanDevices, rebound.lanDevices)
+    assertEquals(polled.lastLocalPollAtEpochMillis, rebound.lastLocalPollAtEpochMillis)
+    assertEquals(polled.localStatus, rebound.localStatus)
+    // SensitiveString compares by identity, so compare device identity plus the revealed key.
+    assertEquals(
+      polled.devices.map { Triple(it.id, it.name, it.localKey.reveal()) },
+      rebound.devices.map { Triple(it.id, it.name, it.localKey.reveal()) },
+    )
+  }
+
+  @Test
+  fun rebindDiscoveryNetworkRequiresADiscoveredCatalog() = runBlocking {
+    store.replaceFromCloud(sampleImport())
+
+    try {
+      store.rebindDiscoveryNetwork(REBOUND_NETWORK)
+      throw AssertionError("Expected rebinding without a discovery generation to be rejected")
+    } catch (error: DeviceCatalogStorageException) {
+      assertEquals("CATALOG_INVALID", error.code)
+    }
+    assertNull(store.load()?.lastDiscoveryNetwork)
+  }
+
+  @Test
   fun lanDiscoveryRecordsAreMergedAndPersisted() = runBlocking {
     store.replaceFromCloud(sampleImport())
 
@@ -326,5 +361,6 @@ class JsonDeviceCatalogStoreInstrumentedTest {
         broadcastIpv4 = "192.0.2.255",
         networkHandle = 41L,
       )
+    val REBOUND_NETWORK = NETWORK.copy(localIpv4 = "192.0.2.9", networkHandle = 97L)
   }
 }

@@ -122,6 +122,41 @@ class TuyaPythonGatewayInstrumentedTest {
   }
 
   @Test
+  fun localPollRejectsMaxAttemptsOutsideTheBoundedRangeBeforeOpeningSockets() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val gateway = ChaquopyTuyaPythonGateway(context)
+
+    for (maxAttempts in listOf(0, 4)) {
+      try {
+        gateway.pollLocal(
+          LocalPollRequest(
+            network =
+              LanNetworkContext(
+                interfaceName = "wlan0",
+                localIpv4 = "192.168.10.25",
+                prefixLength = 24,
+                broadcastIpv4 = "192.168.10.255",
+              ),
+            devices =
+              listOf(
+                LocalPollDevice(
+                  id = "known-device",
+                  ip = "192.168.10.42",
+                  localKey = SensitiveString.of("0123456789abcdef"),
+                  protocolVersion = "3.5",
+                )
+              ),
+            maxAttempts = maxAttempts,
+          )
+        )
+        fail("Expected max_attempts=$maxAttempts to be rejected before opening sockets")
+      } catch (error: PythonBridgeException) {
+        assertEquals("LOCAL_POLL_ATTEMPTS_INVALID", error.code)
+      }
+    }
+  }
+
+  @Test
   fun localControlRejectsAddressOutsideSelectedWifiBeforeWriting() = runBlocking {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val gateway = ChaquopyTuyaPythonGateway(context)

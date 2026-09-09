@@ -235,4 +235,46 @@ internal fun ipv4BroadcastAddress(address: Inet4Address, prefixLength: Int): Str
   return requireNotNull(InetAddress.getByAddress(broadcastBytes).hostAddress)
 }
 
+internal fun ipv4NetworkAddress(address: Inet4Address, prefixLength: Int): String {
+  require(prefixLength in 1..30) { "IPv4 prefix must define a network." }
+  val networkBytes =
+    address.address
+      .mapIndexed { index, byte ->
+        val networkBits = (prefixLength - index * 8).coerceIn(0, 8)
+        val mask =
+          if (networkBits == 0) {
+            0
+          } else {
+            (0xff shl (8 - networkBits)) and 0xff
+          }
+        ((byte.toInt() and 0xff) and mask).toByte()
+      }
+      .toByteArray()
+  return requireNotNull(InetAddress.getByAddress(networkBytes).hostAddress)
+}
+
+/**
+ * Returns true when both contexts describe the same IPv4 subnet. Every identity detail Android may
+ * change on a simple reconnect — interface name, local address, broadcast address, and the opaque
+ * network handle — is deliberately ignored. Same-subnet is only a hint that the saved device
+ * addresses are still worth polling; a successful poll remains the reachability proof.
+ */
+fun sameSubnet(a: LanNetworkContext, b: LanNetworkContext): Boolean {
+  if (a.prefixLength != b.prefixLength) return false
+  val addressA =
+    try {
+      InetAddress.getByName(a.localIpv4) as? Inet4Address
+    } catch (_: Exception) {
+      null
+    } ?: return false
+  val addressB =
+    try {
+      InetAddress.getByName(b.localIpv4) as? Inet4Address
+    } catch (_: Exception) {
+      null
+    } ?: return false
+  return ipv4NetworkAddress(addressA, a.prefixLength) ==
+    ipv4NetworkAddress(addressB, b.prefixLength)
+}
+
 private const val NETWORK_CALLBACK_TIMEOUT_MILLIS = 1_500L

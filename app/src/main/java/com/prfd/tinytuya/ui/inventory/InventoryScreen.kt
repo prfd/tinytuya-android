@@ -213,6 +213,7 @@ fun InventoryScreen(
   discovery: LanDiscoveryUiState,
   control: LocalControlUiState,
   isLanSnapshotCurrent: Boolean = true,
+  networkReverificationPending: Boolean = false,
   displayMode: InventoryDisplayMode = InventoryDisplayMode.FULL,
   isDisplayModeSaving: Boolean = false,
   onDisplayModeChanged: (InventoryDisplayMode) -> Unit = {},
@@ -222,8 +223,14 @@ fun InventoryScreen(
   onOpenSettings: () -> Unit,
 ) {
   var focusedDeviceId by remember { mutableStateOf<String?>(null) }
+  // While a same-subnet re-verification is pending or running, the saved discovery generation is
+  // treated as the current candidate set, so the poll renders exactly like a normal quick
+  // refresh: refresh affordance, per-device status panels, and Local badges. A failed
+  // verification clears the pending flag and the UI reverts to the honest stale rendering.
   val currentDiscoveryAtEpochMillis =
-    catalog.lastDiscoveryAtEpochMillis.takeIf { isLanSnapshotCurrent }
+    catalog.lastDiscoveryAtEpochMillis.takeIf {
+      isLanSnapshotCurrent || networkReverificationPending
+    }
   val inventoryItems =
     remember(
       catalog.devices,
@@ -300,6 +307,7 @@ fun InventoryScreen(
             catalog = catalog,
             currentDiscoveryAtEpochMillis = currentDiscoveryAtEpochMillis,
             discovery = discovery,
+            networkReverificationPending = networkReverificationPending,
             isControlBusy = control is LocalControlUiState.Sending,
             onRefreshKnownDevices = onRefreshKnownDevices,
           )
@@ -516,6 +524,7 @@ private fun DeviceInventoryHeader(
   catalog: DeviceCatalog,
   currentDiscoveryAtEpochMillis: Long?,
   discovery: LanDiscoveryUiState,
+  networkReverificationPending: Boolean,
   isControlBusy: Boolean,
   onRefreshKnownDevices: () -> Unit,
 ) {
@@ -568,6 +577,7 @@ private fun DeviceInventoryHeader(
           text =
             when {
               isReadingStatus -> "Reading saved devices directly on this Wi-Fi…"
+              networkReverificationPending -> "Refresh to verify the saved devices on this Wi-Fi."
               currentDiscoveryAtEpochMillis == null ->
                 "Find devices to match their current local addresses."
               matchedCount == 0 -> "No secured devices matched in the last search."
@@ -1352,6 +1362,8 @@ private fun lanErrorTitle(code: String): String =
   when (code) {
     "LAN_NETWORK_CHANGED" -> "Wi-Fi changed since refresh"
     "LOCAL_REFRESH_DISCOVERY_REQUIRED" -> "Find devices again"
+    "LOCAL_REFRESH_UNVERIFIED" -> "Devices did not answer"
+    "LOCAL_POLL_ATTEMPTS_INVALID" -> "Local status could not be read"
     "LAN_WIFI_UNAVAILABLE" -> "Connect to your device Wi-Fi"
     "LAN_PERMISSION_DENIED" -> "Local network access was blocked"
     "LAN_PORT_UNAVAILABLE" -> "Discovery ports are busy"

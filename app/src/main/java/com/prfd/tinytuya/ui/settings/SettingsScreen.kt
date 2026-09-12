@@ -89,7 +89,12 @@ fun SettingsScreen(
             )
           }
         }
-        item { TinyTuyaHealthCard(state = state.tinyTuyaHealth) }
+        item {
+          TinyTuyaHealthCard(
+            state = state.tinyTuyaHealth,
+            isRefreshing = state.isHealthCheckRunning,
+          )
+        }
         item {
           CloudAccountCard(
             state = state.cloudAccount,
@@ -332,7 +337,10 @@ private fun CloudAccountCard(
 }
 
 @Composable
-private fun TinyTuyaHealthCard(state: TinyTuyaHealthUiState) {
+private fun TinyTuyaHealthCard(
+  state: TinyTuyaHealthUiState,
+  isRefreshing: Boolean,
+) {
   val isHealthy =
     state is TinyTuyaHealthUiState.Ready &&
       state.health.crypto.gcmAvailable &&
@@ -380,7 +388,7 @@ private fun TinyTuyaHealthCard(state: TinyTuyaHealthUiState) {
             modifier = Modifier.padding(top = 3.dp),
           )
         }
-        if (state is TinyTuyaHealthUiState.Loading) {
+        if (state is TinyTuyaHealthUiState.Loading || isRefreshing) {
           CircularProgressIndicator(
             modifier = Modifier.size(22.dp),
             strokeWidth = 2.5.dp,
@@ -491,7 +499,7 @@ private fun ForegroundRefreshCard(
       Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
           Text(
-            text = "Refresh when app opens",
+            text = "Poll & verify saved devices on start",
             style = MaterialTheme.typography.titleMedium,
           )
           Text(
@@ -501,12 +509,6 @@ private fun ForegroundRefreshCard(
             modifier = Modifier.padding(top = 3.dp),
           )
         }
-        if (state.isSaving) {
-          CircularProgressIndicator(
-            modifier = Modifier.padding(end = 14.dp).size(22.dp),
-            strokeWidth = 2.5.dp,
-          )
-        }
         Switch(
           checked = state.refreshWhenAppOpens,
           onCheckedChange = onChanged,
@@ -514,21 +516,6 @@ private fun ForegroundRefreshCard(
           modifier = Modifier.testTag("refresh_when_open_switch"),
         )
       }
-      Text(
-        text =
-          "On the same verified Wi-Fi, TinyTuya goes straight to the saved devices " +
-            "and reads their status. If that network snapshot is no longer trustworthy, " +
-            "it finds the previously matched devices again first.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 13.dp),
-      )
-      Text(
-        text = "Enabled by default. Turn this off to keep both actions manual.",
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 12.dp),
-      )
     }
   }
 }

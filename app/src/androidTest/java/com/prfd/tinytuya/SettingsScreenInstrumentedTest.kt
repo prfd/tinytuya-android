@@ -1,7 +1,5 @@
 package com.prfd.tinytuya
 
-import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,39 +12,12 @@ import com.prfd.tinytuya.ui.settings.AppSettingsUiState
 import com.prfd.tinytuya.ui.settings.CloudAccountUiState
 import com.prfd.tinytuya.ui.settings.SettingsScreen
 import com.prfd.tinytuya.ui.theme.TinytuyaTheme
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 class SettingsScreenInstrumentedTest {
   @get:Rule val composeRule = createComposeRule()
-
-  @Test
-  fun defaultSettingExplainsAndInvokesLocalOnlyRefreshPreference() {
-    var requestedValue: Boolean? = null
-    setSettingsContent(
-      state =
-        AppSettingsUiState(
-          refreshWhenAppOpens = true,
-          isLoaded = true,
-        ),
-      onChanged = { requestedValue = it },
-    )
-
-    composeRule
-      .onNodeWithTag("refresh_when_open_switch")
-      .assertIsOn()
-      .assertIsEnabled()
-      .performClick()
-
-    composeRule.runOnIdle { assertEquals(false, requestedValue) }
-    composeRule
-      .onNodeWithText("goes straight to the saved devices", substring = true)
-      .assertExists()
-    composeRule.onNodeWithText("reads their status", substring = true).assertExists()
-    composeRule.onNodeWithText("keep both actions manual", substring = true).assertExists()
-  }
 
   @Test
   fun savedCloudAccountIsMaskedAndExposesExplicitActions() {

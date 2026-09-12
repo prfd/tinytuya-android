@@ -60,7 +60,7 @@ fun DeviceCapabilityList(
     sectionTitle?.let { title ->
       Text(
         text = title,
-        style = MaterialTheme.typography.titleSmall,
+        style = MaterialTheme.typography.titleLarge,
         modifier = Modifier.padding(bottom = 5.dp),
       )
     }
@@ -560,8 +560,6 @@ internal fun controlPresentation(
     when {
       !capability.writable -> "Read only"
       state is DeviceControlUiState.Unavailable -> "Refresh status to enable control."
-      applies && state is DeviceControlUiState.Sending -> state.intent.sendingMessage
-      applies && state is DeviceControlUiState.Confirmed -> "Confirmed directly by the device."
       applies && state is DeviceControlUiState.Error -> state.message
       else -> null
     }
@@ -596,21 +594,6 @@ private fun alignRangeProgress(progress: Float, capability: RangeUiModel): Int {
 
 private fun capabilityTag(kind: String, id: CapabilityId): String =
   "capability_${kind}_${id.value.replace('.', '_')}"
-
-private val DeviceIntent.sendingMessage: String
-  get() =
-    when (this) {
-      is DeviceIntent.SetToggle ->
-        if (value) {
-          "Turning on and confirming…"
-        } else {
-          "Turning off and confirming…"
-        }
-      is DeviceIntent.SetRange -> "Updating value and confirming…"
-      is DeviceIntent.SetChoice -> "Changing selection and confirming…"
-      is DeviceIntent.InvokeAction -> "Sending action and confirming…"
-      is DeviceIntent.SetColor -> "Updating color and confirming…"
-    }
 
 /**
  * Material renders one tick for every discrete slider step. Fine-grained ranges still snap through

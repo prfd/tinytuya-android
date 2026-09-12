@@ -414,20 +414,10 @@ private fun InventoryHeader(
         Text("Settings")
       }
     }
-    Spacer(Modifier.height(28.dp))
+    Spacer(Modifier.height(16.dp))
     Text(
       text = "Your local home",
       style = MaterialTheme.typography.headlineMedium,
-    )
-    Text(
-      text =
-        when {
-          catalog.devices.size == 1 -> "1 secured device is stored for private local control."
-          else -> "${catalog.devices.size} secured devices are stored for private local control."
-        },
-      style = MaterialTheme.typography.bodyLarge,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.padding(top = 8.dp),
     )
   }
 }
@@ -548,7 +538,7 @@ private fun DeviceInventoryHeader(
         currentDiscoveryAtEpochMillis != null && timestamp >= currentDiscoveryAtEpochMillis
       }
       ?.let { timestamp ->
-        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
       }
   val canRefreshKnownDevices =
     currentDiscoveryAtEpochMillis != null && catalog.hasCurrentKnownStatusTargets()
@@ -582,9 +572,9 @@ private fun DeviceInventoryHeader(
                 "Find devices to match their current local addresses."
               matchedCount == 0 -> "No secured devices matched in the last search."
               currentStatusReadAt != null && matchedCount == 1 ->
-                "$currentResponseCount of 1 device answered · $currentStatusReadAt"
+                "$currentResponseCount of 1 device answered\n$currentStatusReadAt"
               currentStatusReadAt != null ->
-                "$currentResponseCount of $matchedCount devices answered · $currentStatusReadAt"
+                "$currentResponseCount of $matchedCount devices answered\n$currentStatusReadAt"
               matchedCount == 1 -> "1 device matched · Refresh to read its current status."
               else -> "$matchedCount devices matched · Refresh to read their current status."
             },
@@ -887,10 +877,10 @@ private fun InventoryDeviceCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
+          LocalAvailabilityLabel(item.localAvailability)
         }
         Spacer(Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
-          LocalAvailabilityLabel(item.localAvailability)
           when {
             profile.capabilityAccess == CapabilityAccess.READ_ONLY ->
               Text(
@@ -960,9 +950,9 @@ private fun LocalStatusPanel(
         ?.let { currentStatus -> inspectLocalDataPoints(device, currentStatus.dataPoints) }
     }
 
-  Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+  Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Column(Modifier.padding(top = 14.dp)) {
+    Column(Modifier.padding(top = 8.dp)) {
       val statusTitle =
         when {
           isReadingStatus -> "Reading status…"
@@ -1113,9 +1103,9 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
     ) {
       Text(
         if (expanded) {
-          "Hide device data"
+          "Hide device data points"
         } else {
-          "Show all device data · ${inspection.totalCount}"
+          "Show device data points · ${inspection.totalCount}"
         }
       )
     }
@@ -1127,21 +1117,6 @@ private fun LocalDpsInspector(inspection: LocalDataPointInspection) {
         modifier = Modifier.fillMaxWidth().testTag("dps_inspector_panel"),
       ) {
         Column(Modifier.padding(12.dp)) {
-          Text(
-            text = "ALL LOCAL DEVICE DATA · READ ONLY",
-            style = MaterialTheme.typography.labelLarge,
-            fontSize = 10.sp,
-            letterSpacing = 1.3.sp,
-            color = MaterialTheme.colorScheme.primary,
-          )
-          Text(
-            text =
-              "Boolean, numeric, enum, and safe mapped text values are shown. " +
-                "Structured and potentially sensitive values stay hidden.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-          )
           inspection.dataPoints.forEach { dataPoint ->
             Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
               Row(
@@ -1279,7 +1254,7 @@ private fun DeviceProfileMark(
     contentColor = contentColor,
     modifier = Modifier.testTag("device_profile_badge"),
   ) {
-    Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
       if (
         profile.restriction == DeviceAccessRestriction.NONE &&
           profile.familyId == BuiltinDeviceFamilyIds.OUTLET

@@ -478,34 +478,11 @@ private fun LightControlFeedback(deviceId: String, controlState: DeviceControlUi
     }?.takeIf { intent ->
       intent.deviceId == deviceId && intent.capabilityId.value.startsWith("light.")
     } ?: return
-  val text =
-    when (controlState) {
-      is DeviceControlUiState.Sending ->
-        when (intent) {
-          is DeviceIntent.SetChoice -> "Changing mode and confirming…"
-          is DeviceIntent.SetRange ->
-            when (intent.capabilityId) {
-              BRIGHTNESS_ID -> "Updating brightness and confirming…"
-              TEMPERATURE_ID -> "Updating color temperature and confirming…"
-              else -> "Updating value and confirming…"
-            }
-          is DeviceIntent.SetColor -> "Updating color and brightness…"
-          else -> "Sending change and confirming…"
-        }
-      is DeviceControlUiState.Confirmed -> "Confirmed directly by the light."
-      is DeviceControlUiState.Error -> controlState.message
-      DeviceControlUiState.Ready,
-      DeviceControlUiState.Unavailable -> return
-    }
+  if (controlState !is DeviceControlUiState.Error) return
   Text(
-    text = text,
+    text = controlState.message,
     style = MaterialTheme.typography.bodySmall,
-    color =
-      if (controlState is DeviceControlUiState.Error) {
-        MaterialTheme.colorScheme.error
-      } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-      },
+    color = MaterialTheme.colorScheme.error,
     modifier = Modifier.padding(top = 12.dp).testTag("light_control_feedback"),
   )
 }

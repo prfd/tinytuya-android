@@ -28,6 +28,7 @@ data class AppSettingsUiState(
   val errorMessage: String? = null,
   val cloudAccount: CloudAccountUiState = CloudAccountUiState.Loading,
   val tinyTuyaHealth: TinyTuyaHealthUiState = TinyTuyaHealthUiState.Loading,
+  val isHealthCheckRunning: Boolean = false,
 )
 
 sealed interface TinyTuyaHealthUiState {
@@ -77,18 +78,24 @@ class SettingsViewModel(
     val healthCheck = pythonHealthCheck
     if (healthCheck == null) {
       mutableState.value =
-        mutableState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Unavailable)
+        mutableState.value.copy(
+          tinyTuyaHealth = TinyTuyaHealthUiState.Unavailable,
+          isHealthCheckRunning = false,
+        )
       return
     }
 
     val operationVersion = ++pythonHealthOperationVersion
-    mutableState.value = mutableState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Loading)
+    mutableState.value = mutableState.value.copy(isHealthCheckRunning = true)
     viewModelScope.launch {
       try {
         val health = healthCheck()
         if (operationVersion != pythonHealthOperationVersion) return@launch
         mutableState.value =
-          mutableState.value.copy(tinyTuyaHealth = TinyTuyaHealthUiState.Ready(health))
+          mutableState.value.copy(
+            tinyTuyaHealth = TinyTuyaHealthUiState.Ready(health),
+            isHealthCheckRunning = false,
+          )
       } catch (error: CancellationException) {
         throw error
       } catch (error: PythonBridgeException) {
@@ -100,7 +107,8 @@ class SettingsViewModel(
                 code = error.code,
                 message =
                   error.message ?: "The embedded TinyTuya runtime could not be initialized.",
-              )
+              ),
+            isHealthCheckRunning = false,
           )
       } catch (_: Exception) {
         if (operationVersion != pythonHealthOperationVersion) return@launch
@@ -110,7 +118,8 @@ class SettingsViewModel(
               TinyTuyaHealthUiState.Error(
                 code = "BRIDGE_HEALTH_FAILED",
                 message = "The embedded TinyTuya runtime could not be initialized.",
-              )
+              ),
+            isHealthCheckRunning = false,
           )
       }
     }

@@ -207,7 +207,7 @@ class InventoryScreenInstrumentedTest {
     composeRule.onNodeWithTag("inventory_list").performScrollToIndex(3)
 
     composeRule.onNodeWithTag("capability_toggle_switch_1").assertIsOn().assertIsNotEnabled()
-    composeRule.onNodeWithText("Turning off and confirming…").assertExists()
+    composeRule.onNodeWithText("Turning off and confirming…").assertDoesNotExist()
     composeRule.onNodeWithTag("capability_control_progress").assertExists()
   }
 

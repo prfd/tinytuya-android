@@ -94,3 +94,11 @@ tasks.register("ktfmtFormatAll") {
         }
     )
 }
+
+tasks.register("ktfmtCheckAll") {
+    dependsOn(
+        subprojects.mapNotNull { project ->
+            project.tasks.findByName("ktfmtCheck")
+        }
+    )
+}

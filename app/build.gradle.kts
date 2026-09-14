@@ -14,6 +14,61 @@ val hasReleaseSigningProperties = releaseSigningPropertyNames.all {
   keystoreProperties.containsKey(it)
 }
 
+// Release versioning. The canonical version and versionCode live in gradle.properties.
+// versionName resolution:
+//   - HEAD is exactly on a tag "v<version>" matching tinytuya.version -> "<version>"
+//   - otherwise -> "<version>-g<short-hash>" so every dev build is traceable
+val releaseVersion = providers.gradleProperty("tinytuya.version").orElse("").get()
+val releaseVersionCodeProperty = providers.gradleProperty("tinytuya.versionCode").orElse("").get()
+
+if (releaseVersion.isEmpty() || releaseVersionCodeProperty.isEmpty()) {
+  throw GradleException(
+    "Missing tinytuya.version or tinytuya.versionCode in gradle.properties; " +
+      "release versioning requires both."
+  )
+}
+
+val releaseVersionCode =
+  releaseVersionCodeProperty.toIntOrNull()?.takeIf { it > 0 }
+    ?: throw GradleException(
+      "tinytuya.versionCode must be a positive integer, got: $releaseVersionCodeProperty"
+    )
+
+fun runGit(vararg args: String): String? =
+  try {
+    val process =
+      ProcessBuilder(listOf("git") + args).directory(rootDir).redirectErrorStream(true).start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    process.waitFor()
+    if (process.exitValue() == 0 && output.isNotEmpty()) output else null
+  } catch (e: Exception) {
+    null
+  }
+
+val exactReleaseTag = runGit("describe", "--exact-match", "--tags", "--match", "v*", "HEAD")
+val shortCommitHash = runGit("rev-parse", "--short", "HEAD")
+val releaseVersionName =
+  when {
+    exactReleaseTag != null -> {
+      val taggedVersion = exactReleaseTag.removePrefix("v")
+      if (taggedVersion != releaseVersion) {
+        throw GradleException(
+          "Git tag $exactReleaseTag does not match tinytuya.version=$releaseVersion in " +
+            "gradle.properties. Bump tinytuya.version (and tinytuya.versionCode), commit, and " +
+            "re-tag before building the release."
+        )
+      }
+      releaseVersion
+    }
+    shortCommitHash != null -> "$releaseVersion-g$shortCommitHash"
+    else -> {
+      logger.warn(
+        "Git unavailable; versionName falls back to $releaseVersion without a commit suffix."
+      )
+      releaseVersion
+    }
+  }
+
 val verifyReleaseSigning by tasks.registering {
   group = "verification"
   description = "Verifies release signing properties are present and the keystore exists."
@@ -51,6 +106,8 @@ plugins {
   alias(libs.plugins.ktfmt.gradle)
 }
 
+val abiTargets = listOf("arm64-v8a")
+
 android {
   namespace = "com.prfd.tinytuya"
   compileSdk { version = release(37) { minorApiLevel = 1 } }
@@ -59,13 +116,13 @@ android {
     applicationId = "com.prfd.tinytuya"
     minSdk = 29
     targetSdk = 37
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = releaseVersionCode
+    versionName = releaseVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     testInstrumentationRunnerArguments["notAnnotation"] = "com.prfd.tinytuya.ManualTestProbe"
 
-    ndk { abiFilters += listOf("arm64-v8a") }
+    ndk { abiFilters += abiTargets }
   }
 
   if (hasReleaseSigningProperties) {
@@ -91,6 +148,15 @@ android {
     targetCompatibility = JavaVersion.VERSION_11
   }
   buildFeatures { compose = true }
+}
+
+androidComponents {
+  val abiToken = abiTargets.singleOrNull() ?: "universal"
+  onVariants { variant ->
+    variant.outputs.forEach { output ->
+      output.outputFileName.set("tinytuya-android-$abiToken-$releaseVersionName.apk")
+    }
+  }
 }
 
 kotlin { compilerOptions { freeCompilerArgs.add("-Xconsistent-data-class-copy-visibility") } }

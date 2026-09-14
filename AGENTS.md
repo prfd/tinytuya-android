@@ -22,4 +22,4 @@ These instructions apply to the entire repository.
 
 ## Project guardrails
 
-- Read `SOURCE_GUIDE.md` to get a grasp of the app architecture.
+- Read `docs/SOURCE_GUIDE.md` to get a grasp of the app architecture.

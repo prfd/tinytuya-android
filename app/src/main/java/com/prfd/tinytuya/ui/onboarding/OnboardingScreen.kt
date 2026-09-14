@@ -35,7 +35,7 @@ import com.prfd.tinytuya.data.python.CloudImportResult
 import com.prfd.tinytuya.data.python.TuyaCloudRegion
 
 private const val TUYA_SETUP_GUIDE_URL =
-  "https://github.com/prfd/tinytuya-android/blob/master/TUYA_CLOUD.md"
+  "https://github.com/prfd/tinytuya-android/blob/master/docs/TUYA_CLOUD.md"
 
 private sealed interface OnboardingDestination {
   data object Welcome : OnboardingDestination

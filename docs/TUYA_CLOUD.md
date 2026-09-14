@@ -1,3 +1,5 @@
+# Tuya Cloud setup
+
 > [!NOTE]
 > Those instructions may change anytime at Tuya's discretion.
 

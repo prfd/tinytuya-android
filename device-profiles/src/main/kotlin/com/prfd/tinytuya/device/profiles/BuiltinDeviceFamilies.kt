@@ -25,7 +25,7 @@ private class DeclarativeDeviceFamily(
 
 /**
  * Built-in device families selected exclusively by the normalized category imported from Tuya
- * Cloud. Detailed public claims live in `SUPPORTED_DEVICES.md`.
+ * Cloud. Detailed public claims live in `docs/SUPPORTED_DEVICES.md`.
  */
 object BuiltinDeviceFamilies {
   val definitions: List<DeviceFamilyDefinition> =
